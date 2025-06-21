@@ -174,12 +174,11 @@ bool read_process_memory(
 	void *buffer,
 	size_t size)
 {
-
 	struct task_struct *task;
 	struct mm_struct *mm;
 	struct pid *pid_struct;
 	phys_addr_t pa;
-	bool result = false;
+	size_t bytes_read = 0;
 
 	pid_struct = find_get_pid(pid);
 	if (!pid_struct)
@@ -189,32 +188,52 @@ bool read_process_memory(
 	task = get_pid_task(pid_struct, PIDTYPE_PID);
 	if (!task)
 	{
+		put_pid(pid_struct);
 		return false;
 	}
 	mm = get_task_mm(task);
 	if (!mm)
 	{
+		put_task_struct(task);
+		put_pid(pid_struct);
 		return false;
 	}
 
-	pa = translate_linear_address(mm, addr);
-	if (pa)
+	while (bytes_read < size)
 	{
-		result = read_physical_address(pa, buffer, size);
-	}
-	else
-	{
-		if (find_vma(mm, addr))
+		size_t bytes_to_read;
+		size_t offset_in_page = (addr + bytes_read) & (PAGE_SIZE - 1);
+		
+		bytes_to_read = PAGE_SIZE - offset_in_page;
+		if (bytes_to_read > size - bytes_read)
 		{
-			if (clear_user(buffer, size) == 0)
-			{
-				result = true;
-			}
+			bytes_to_read = size - bytes_read;
 		}
+
+		pa = translate_linear_address(mm, addr + bytes_read);
+		if (pa == 0)
+		{
+			mmput(mm);
+			put_task_struct(task);
+			put_pid(pid_struct);
+			return false;
+		}
+
+		if (!read_physical_address(pa, (char *)buffer + bytes_read, bytes_to_read))
+		{
+			mmput(mm);
+			put_task_struct(task);
+			put_pid(pid_struct);
+			return false;
+		}
+
+		bytes_read += bytes_to_read;
 	}
 
 	mmput(mm);
-	return result;
+	put_task_struct(task);
+	put_pid(pid_struct);
+	return true;
 }
 
 bool write_process_memory(
@@ -223,12 +242,11 @@ bool write_process_memory(
 	void *buffer,
 	size_t size)
 {
-
 	struct task_struct *task;
 	struct mm_struct *mm;
 	struct pid *pid_struct;
 	phys_addr_t pa;
-	bool result = false;
+	size_t bytes_written = 0;
 
 	pid_struct = find_get_pid(pid);
 	if (!pid_struct)
@@ -238,20 +256,51 @@ bool write_process_memory(
 	task = get_pid_task(pid_struct, PIDTYPE_PID);
 	if (!task)
 	{
+		put_pid(pid_struct);
 		return false;
 	}
+
 	mm = get_task_mm(task);
 	if (!mm)
 	{
+		put_task_struct(task);
+		put_pid(pid_struct);
 		return false;
 	}
 
-	pa = translate_linear_address(mm, addr);
-	if (pa)
+	while (bytes_written < size)
 	{
-		result = write_physical_address(pa, buffer, size);
+		size_t bytes_to_write;
+		size_t offset_in_page = (addr + bytes_written) & (PAGE_SIZE - 1);
+
+
+		bytes_to_write = PAGE_SIZE - offset_in_page;
+		if (bytes_to_write > size - bytes_written)
+		{
+			bytes_to_write = size - bytes_written;
+		}
+		pa = translate_linear_address(mm, addr + bytes_written);
+		if (pa == 0)
+		{
+			mmput(mm);
+			put_task_struct(task);
+			put_pid(pid_struct);
+			return false;
+		}
+
+		if (!write_physical_address(pa, (char __user *)buffer + bytes_written, bytes_to_write))
+		{
+			mmput(mm);
+			put_task_struct(task);
+			put_pid(pid_struct);
+			return false;
+		}
+
+		bytes_written += bytes_to_write;
 	}
 
 	mmput(mm);
-	return result;
+	put_task_struct(task);
+	put_pid(pid_struct);
+	return true;
 }
