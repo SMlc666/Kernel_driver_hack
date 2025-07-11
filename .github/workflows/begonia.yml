@@ -12,9 +12,9 @@ jobs:
     - uses: actions/checkout@v4
     - name: pkg install
       run: |
-        pkg update
-        pkg upgrade
-        pkg install git -y
+        apt update
+        apt upgrade
+        apt install git -y
     - name: git begonia kernel code
       run: git clone --branch begonia-r-oss --depth 1 https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git  
     - name: debug show tree
