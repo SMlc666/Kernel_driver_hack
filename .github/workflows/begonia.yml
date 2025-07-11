@@ -1,10 +1,7 @@
 name: C/C++ CI
 
 on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -13,11 +10,12 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    - name: configure
-      run: ./configure
-    - name: make
-      run: make
-    - name: make check
-      run: make check
-    - name: make distcheck
-      run: make distcheck
+    - name: pkg install
+      run: |
+        pkg update
+        pkg upgrade
+        pkg install git -y
+    - name: git begonia kernel code
+      run: git clone --branch begonia-r-oss --depth 1 https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git  
+    - name: debug show tree
+      run: ls
