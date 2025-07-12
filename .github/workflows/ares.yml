@@ -49,7 +49,7 @@ jobs:
 
     - name: Clone kernel source
       run: |
-        git clone --branch ares-r-oss --depth 1 https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git
+        git clone --branch lxr --depth 1 https://github.com/Tkpointz/android_kernel_aresin.git
 
     - name: Build Kernel
       run: |
@@ -60,7 +60,7 @@ jobs:
         export PATH="$GITHUB_WORKSPACE/toolchains/clang-aosp/bin:$PATH"
         
         # Change to kernel source directory
-        cd Xiaomi_Kernel_OpenSource
+        cd android_kernel_aresin
 
         # Build command based on the reference config
         # This includes setting the defconfig and then compiling
@@ -70,7 +70,7 @@ jobs:
              CROSS_COMPILE="$GITHUB_WORKSPACE/toolchains/gcc-64/bin/aarch64-linux-android-" \
              CROSS_COMPILE_ARM32="$GITHUB_WORKSPACE/toolchains/gcc-32/bin/arm-linux-androideabi-" \
              LD=ld.lld \
-             ares_user_defconfig
+             aresin_defconfig
 
         make -j$(nproc) O=out \
              CC=clang \
@@ -90,7 +90,7 @@ jobs:
         # -C: 指向内核源码的输出目录 (O=out)
         # M=: 指向你的模块源码目录 (包含 Makefile 的地方)
         # modules: 是构建模块的目标
-        make -j$(nproc) -C Xiaomi_Kernel_OpenSource/out \
+        make -j$(nproc) -C android_kernel_aresin/out \
              M=$GITHUB_WORKSPACE/kernel \
              CC=clang \
              CLANG_TRIPLE=aarch64-linux-gnu- \
@@ -103,7 +103,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: Kernel-Image-begonia
-        path: Xiaomi_Kernel_OpenSource/out/arch/arm64/boot/Image.gz
+        path: android_kernel_aresin/out/arch/arm64/boot/Image.gz
     - name: Upload Kernel Module
       uses: actions/upload-artifact@v4
       with:
