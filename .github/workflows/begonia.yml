@@ -78,9 +78,35 @@ jobs:
              CROSS_COMPILE="$GITHUB_WORKSPACE/toolchains/gcc-64/bin/aarch64-linux-android-" \
              CROSS_COMPILE_ARM32="$GITHUB_WORKSPACE/toolchains/gcc-32/bin/arm-linux-androideabi-" \
              LD=ld.lld
+    - name: Build Custom Kernel Module
+      run: |
+        # Set the same environment variables as the kernel build
+        export KBUILD_BUILD_USER="GitHub"
+        export KBUILD_BUILD_HOST="Actions"
+        export ARCH=arm64
+        export PATH="$GITHUB_WORKSPACE/toolchains/clang-aosp/bin:$PATH"
+
+        # Build the external module
+        # -C: 指向内核源码的输出目录 (O=out)
+        # M=: 指向你的模块源码目录 (包含 Makefile 的地方)
+        # modules: 是构建模块的目标
+        make -j$(nproc) -C Xiaomi_Kernel_OpenSource/out \
+             M=$GITHUB_WORKSPACE/kernel \
+             CC=clang \
+             CLANG_TRIPLE=aarch64-linux-gnu- \
+             CROSS_COMPILE="$GITHUB_WORKSPACE/toolchains/gcc-64/bin/aarch64-linux-android-" \
+             CROSS_COMPILE_ARM32="$GITHUB_WORKSPACE/toolchains/gcc-32/bin/arm-linux-androideabi-" \
+             LD=ld.lld \
+             modules
 
     - name: Upload Kernel Image
       uses: actions/upload-artifact@v4
       with:
         name: Kernel-Image-begonia
         path: Xiaomi_Kernel_OpenSource/out/arch/arm64/boot/Image.gz
+    - name: Upload Kernel Module
+      uses: actions/upload-artifact@v4
+      with:
+        name: Kernel-Module-khack
+        # 编译后的 .ko 文件会生成在你的模块源码目录中
+        path: kernel/khack.ko
