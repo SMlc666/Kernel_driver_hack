@@ -37,9 +37,9 @@ jobs:
     - name: Configure kernel
       run: |
           cd Xiaomi_Kernel_OpenSource
-          make LLVM=1 begonia_user_defconfig
+          make HOSTCC=gcc HOSTLD=ld LLVM=1 begonia_user_defconfig
 
     - name: Compile kernel
       run: |
           cd Xiaomi_Kernel_OpenSource
-          make LLVM=1 -j$(nproc)
+          make HOSTCC=gcc HOSTLD=ld LLVM=1 -j$(nproc)
