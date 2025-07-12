@@ -4,7 +4,9 @@
 #include <linux/tty.h>
 #include <linux/mm.h>
 #include <linux/version.h>
-
+#if(LINUX_VERSION_CODE >= KERNEL_VERSION(4,14,83))
+#include <linux/sched/mm.h>
+#endif
 #define ARC_PATH_MAX 256
 
 extern struct mm_struct *get_task_mm(struct task_struct *task);
