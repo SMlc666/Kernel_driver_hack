@@ -1,56 +1,86 @@
-name: C/C++ CI
+name: Build Kernel CI
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-
+    name: Build Xiaomi Begonia Kernel
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout
+      uses: actions/checkout@v4
 
-    - name: Install dependencies
+    - name: Install Dependencies
       run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential bc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev libfl-dev
-          sudo apt-get install -y curl git ftp lftp wget libarchive-tools ccache 
-          sudo apt-get install -y zip unzip tar gzip bzip2 rar unrar
+        sudo apt-get update
+        sudo apt-get install -y \
+          git ccache automake flex lzop bison gperf build-essential zip curl zlib1g-dev \
+          g++-multilib libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev \
+          squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make optipng maven \
+          libssl-dev pwgen libswitch-perl policycoreutils minicom libxml-sax-base-perl \
+          libxml-simple-perl bc libc6-dev-i386 lib32ncurses5-dev libx11-dev lib32z-dev \
+          libgl1-mesa-dev xsltproc unzip device-tree-compiler
+
+    - name: Download Toolchains
+      run: |
+        # Create a directory for all toolchains
+        mkdir -p $GITHUB_WORKSPACE/toolchains
+        cd $GITHUB_WORKSPACE/toolchains
+
+        # Download AOSP Clang r383902 (from android11-release)
+        echo "Downloading AOSP Clang..."
+        mkdir clang-aosp
+        wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android11-release/clang-r383902.tar.gz
+        tar -C clang-aosp/ -zxf clang-r383902.tar.gz
+
+        # Download AOSP GCC 64-bit
+        echo "Downloading AOSP GCC 64-bit..."
+        mkdir gcc-64
+        wget -q -O gcc-aarch64.tar.gz https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/tags/android-12.1.0_r27.tar.gz
+        tar -C gcc-64/ -zxf gcc-aarch64.tar.gz
+
+        # Download AOSP GCC 32-bit
+        echo "Downloading AOSP GCC 32-bit..."
+        mkdir gcc-32
+        wget -q -O gcc-arm.tar.gz https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/+archive/refs/tags/android-12.1.0_r27.tar.gz
+        tar -C gcc-32/ -zxf gcc-arm.tar.gz
 
     - name: Clone kernel source
-      run: git clone --branch begonia-r-oss --depth 1 https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git
-
-    - name: Clone Proton Clang
-      run: git clone --depth 1 https://github.com/kdrag0n/proton-clang.git
-
-    - name: Set up environment variables
       run: |
-          echo "PATH=$PWD/proton-clang/bin:$PATH" >> $GITHUB_ENV
-          echo "CC=$PWD/proton-clang/bin/clang" >> $GITHUB_ENV
-          echo "CXX=$PWD/proton-clang/bin/clang++" >> $GITHUB_ENV
-          echo "ARCH=arm64" >> $GITHUB_ENV
-          echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
-          echo "CROSS_COMPILE_ARM32=arm-linux-gnueabi-" >> $GITHUB_ENV
-          echo "LD=$PWD/proton-clang/bin/ld.lld" >> $GITHUB_ENV
-          echo "AR=$PWD/proton-clang/bin/llvm-ar" >> $GITHUB_ENV
-          echo "NM=$PWD/proton-clang/bin/llvm-nm" >> $GITHUB_ENV
-          echo "STRIP=$PWD/proton-clang/bin/llvm-strip" >> $GITHUB_ENV
-          echo "OBJCOPY=$PWD/proton-clang/bin/llvm-objcopy" >> $GITHUB_ENV
-          echo "OBJDUMP=$PWD/proton-clang/bin/llvm-objdump" >> $GITHUB_ENV
-          echo "READELF=$PWD/proton-clang/bin/llvm-readelf" >> $GITHUB_ENV
-          echo "OBJSIZE=$PWD/proton-clang/bin/llvm-size" >> $GITHUB_ENV
-          echo "LDGOLD=$PWD/proton-clang/bin/aarch64-linux-gnu-ld.gold" >> $GITHUB_ENV
-          echo "LLVM_AR=$PWD/proton-clang/bin/llvm-ar" >> $GITHUB_ENV
-          echo "LLVM_DIS=$PWD/proton-clang/bin/llvm-dis" >> $GITHUB_ENV
-          echo "Clang toolchain setup complete."
+        git clone --branch begonia-r-oss --depth 1 https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git
 
-    - name: Configure kernel
+    - name: Build Kernel
       run: |
-          cd Xiaomi_Kernel_OpenSource
-          make LLVM=1 begonia_user_defconfig
+        # Set environment variables for the build
+        export KBUILD_BUILD_USER="GitHub"
+        export KBUILD_BUILD_HOST="Actions"
+        export ARCH=arm64
+        export PATH="$GITHUB_WORKSPACE/toolchains/clang-aosp/bin:$PATH"
+        
+        # Change to kernel source directory
+        cd Xiaomi_Kernel_OpenSource
 
-    - name: Compile kernel
-      run: |
-          cd Xiaomi_Kernel_OpenSource
-          make LLVM=1 -j$(nproc)
+        # Build command based on the reference config
+        # This includes setting the defconfig and then compiling
+        make -j$(nproc) O=out \
+             CC=clang \
+             CLANG_TRIPLE=aarch64-linux-gnu- \
+             CROSS_COMPILE="$GITHUB_WORKSPACE/toolchains/gcc-64/bin/aarch64-linux-android-" \
+             CROSS_COMPILE_ARM32="$GITHUB_WORKSPACE/toolchains/gcc-32/bin/arm-linux-androideabi-" \
+             LD=ld.lld \
+             begonia_user_defconfig
+
+        make -j$(nproc) O=out \
+             CC=clang \
+             CLANG_TRIPLE=aarch64-linux-gnu- \
+             CROSS_COMPILE="$GITHUB_WORKSPACE/toolchains/gcc-64/bin/aarch64-linux-android-" \
+             CROSS_COMPILE_ARM32="$GITHUB_WORKSPACE/toolchains/gcc-32/bin/arm-linux-androideabi-" \
+             LD=ld.lld
+
+    - name: Upload Kernel Image
+      uses: actions/upload-artifact@v4
+      with:
+        name: Kernel-Image-begonia
+        path: Xiaomi_Kernel_OpenSource/out/arch/arm64/boot/Image.gz
