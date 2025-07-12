@@ -12,10 +12,42 @@ jobs:
     - uses: actions/checkout@v4
     - name: pkg install
       run: |
-        sudo apt update
-        sudo apt upgrade
-        sudo apt install git -y
+          sudo apt-get update
+          sudo apt-get install -y build-essential bc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev libfl-dev
+          sudo apt-get install -y curl git ftp lftp wget libarchive-tools ccache python2 python2-dev
+          sudo apt-get install -y zip unzip tar gzip bzip2 rar unrar
     - name: git begonia kernel code
       run: git clone --branch begonia-r-oss --depth 1 https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git  
-    - name: debug show tree
-      run: ls
+    - name: git clang proton
+      run: git clone --depth 1 https://github.com/kdrag0n/proton-clang.git
+    - name: debug ls and pwd
+      run: |
+          ls -l
+          pwd
+    - name: configure clang
+      run: |
+          export CC = $PWD/proton-clang/bin/clang
+          export CXX = $PWD/proton-clang/bin/clang++
+          export ARCH = arm64
+          export CROSS_COMPILE = $PWD/proton-clang/bin/aarch64-linux-gnu-
+          export CROSS_COMPILE_ARM32 = $PWD/proton-clang/bin/arm-linux-gnueabi-
+          export LD = $PWD/proton-clang/bin/ld.lld
+          export AR = $PWD/proton-clang/bin/llvm-ar
+          export NM = $PWD/proton-clang/bin/llvm-nm
+          export STRIP = $PWD/proton-clang/bin/llvm-strip
+          export OBJCOPY = $PWD/proton-clang/bin/llvm-objcopy
+          export OBJDUMP = $PWD/proton-clang/bin/llvm-objdump
+          export READELF = $PWD/proton-clang/bin/llvm-readelf
+          export OBJSIZE = $PWD/proton-clang/bin/llvm-size
+          export LDGOLD = $PWD/proton-clang/bin/aarch64-linux-gnu-ld.gold
+          export LLVM_AR = $PWD/proton-clang/bin/llvm-ar
+          export LLVM_DIS = $PWD/proton-clang/bin/llvm-dis
+    -name: configure kernel
+      run: |
+          cd Xiaomi_Kernel_OpenSource
+          make begonia_defconfig CC=$CC ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32 LD=$LD AR=$AR NM=$NM STRIP=$STRIP OBJCOPY=$OBJCOPY OBJDUMP=$OBJDUMP READELF=$READELF OBJSIZE=$OBJSIZE LDGOLD=$LDGOLD LLVM_AR=$LLVM_AR LLVM_DIS=$LLVM_DIS
+
+    -name: compile kernel
+      run: |
+          cd Xiaomi_Kernel_OpenSource
+          make -j$(nproc) CC=$CC ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32 LD=$LD AR=$AR NM=$NM STRIP=$STRIP OBJCOPY=$OBJCOPY OBJDUMP=$OBJDUMP READELF=$READELF OBJSIZE=$OBJSIZE LDGOLD=$LDGOLD LLVM_AR=$LLVM_AR LLVM_DIS=$LLVM_DIS
