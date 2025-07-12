@@ -29,19 +29,9 @@ jobs:
           echo "CC=$PWD/proton-clang/bin/clang" >> $GITHUB_ENV
           echo "CXX=$PWD/proton-clang/bin/clang++" >> $GITHUB_ENV
           echo "ARCH=arm64" >> $GITHUB_ENV
-          echo "CROSS_COMPILE=$PWD/proton-clang/bin/aarch64-linux-gnu-" >> $GITHUB_ENV
-          echo "CROSS_COMPILE_ARM32=$PWD/proton-clang/bin/arm-linux-gnueabi-" >> $GITHUB_ENV
-          echo "LD=$PWD/proton-clang/bin/ld.lld" >> $GITHUB_ENV
-          echo "AR=$PWD/proton-clang/bin/llvm-ar" >> $GITHUB_ENV
-          echo "NM=$PWD/proton-clang/bin/llvm-nm" >> $GITHUB_ENV
-          echo "STRIP=$PWD/proton-clang/bin/llvm-strip" >> $GITHUB_ENV
-          echo "OBJCOPY=$PWD/proton-clang/bin/llvm-objcopy" >> $GITHUB_ENV
-          echo "OBJDUMP=$PWD/proton-clang/bin/llvm-objdump" >> $GITHUB_ENV
-          echo "READELF=$PWD/proton-clang/bin/llvm-readelf" >> $GITHUB_ENV
-          echo "OBJSIZE=$PWD/proton-clang/bin/llvm-size" >> $GITHUB_ENV
-          echo "LDGOLD=$PWD/proton-clang/bin/aarch64-linux-gnu-ld.gold" >> $GITHUB_ENV
-          echo "LLVM_AR=$PWD/proton-clang/bin/llvm-ar" >> $GITHUB_ENV
-          echo "LLVM_DIS=$PWD/proton-clang/bin/llvm-dis" >> $GITHUB_ENV
+          echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV # 简化 CROSS_COMPILE
+          echo "CROSS_COMPILE_ARM32=arm-linux-gnueabi-" >> $GITHUB_ENV # 简化 CROSS_COMPILE_ARM32
+          echo "PATH=$PWD/proton-clang/bin:$PATH" >> $GITHUB_ENV # 将 clang 工具链加入 PATH
           echo "Clang toolchain setup complete."
 
     - name: Configure kernel
