@@ -109,12 +109,12 @@ phys_addr_t translate_linear_address(struct mm_struct *mm, uintptr_t va)
 }
 #endif
 
-#ifndef ARCH_HAS_VALID_PHYS_ADDR_RANGE
+
 static inline int valid_phys_addr_range(phys_addr_t addr, size_t count)
 {
 	return addr + count <= __pa(high_memory);
 }
-#endif
+
 
 bool read_physical_address(phys_addr_t pa, void *buffer, size_t size)
 {
