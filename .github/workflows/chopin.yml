@@ -21,7 +21,7 @@ jobs:
           squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make optipng maven \
           libssl-dev pwgen libswitch-perl policycoreutils minicom libxml-sax-base-perl \
           libxml-simple-perl bc libc6-dev-i386 libx11-dev lib32z-dev \
-          libgl1-mesa-dev xsltproc unzip device-tree-compiler
+          libgl1-mesa-dev xsltproc unzip device-tree-compiler libelf-dev libncurses-dev
 
     - name: Download Toolchains
       run: |
@@ -49,7 +49,7 @@ jobs:
 
     - name: Clone kernel source
       run: |
-        git clone --branch S --depth 1 https://github.com/ChopinKernels/kernel_xiaomi_chopin_android_S.git
+        git clone --branch master --depth 1 https://github.com/LMFuture-Me/chopin-r-kernel.git
 
     - name: Build Kernel
       run: |
@@ -60,7 +60,7 @@ jobs:
         export PATH="$GITHUB_WORKSPACE/toolchains/clang-aosp/bin:$PATH"
         
         # Change to kernel source directory
-        cd kernel_xiaomi_chopin_android_S
+        cd chopin-r-kernel
 
         # 1. (可选但推荐) 清理输出目录，确保一个干净的开始
         make O=out mrproper
@@ -92,7 +92,7 @@ jobs:
         # -C: 指向内核源码的输出目录 (O=out)
         # M=: 指向你的模块源码目录 (包含 Makefile 的地方)
         # modules: 是构建模块的目标
-        make -j$(nproc) -C kernel_xiaomi_chopin_android_S/out \
+        make -j$(nproc) -C chopin-r-kernel/out \
              M=$GITHUB_WORKSPACE/kernel \
              CC=clang \
              CLANG_TRIPLE=aarch64-linux-gnu- \
@@ -105,7 +105,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: Kernel-Image-begonia
-        path: kernel_xiaomi_chopin_android_S/out/arch/arm64/boot/Image.gz
+        path: chopin-r-kernel/out/arch/arm64/boot/Image.gz
     - name: Upload Kernel Module
       uses: actions/upload-artifact@v4
       with:
