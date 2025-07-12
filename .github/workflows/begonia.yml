@@ -52,4 +52,4 @@ jobs:
     - name: Compile kernel
       run: |
           cd Xiaomi_Kernel_OpenSource
-          make -j$(nproc)
+          make LLVM=1 -j$(nproc)
