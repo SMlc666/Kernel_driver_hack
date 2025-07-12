@@ -48,6 +48,7 @@ jobs:
         export HOSTCC=gcc
         export HOSTCXX=g++
         export HOSTLD=/usr/bin/ld
+        export HOSTLDFLAGS="-fuse-ld=/usr/bin/ld"
         
         # Change to kernel source directory
         cd android_kernel_aresin
@@ -55,6 +56,8 @@ jobs:
         # Build command based on the reference config
         # This includes setting the defconfig and then compiling with Proton Clang (full LLVM, no GCC)
         make -j$(nproc) O=out \
+             HOSTLD=/usr/bin/ld \
+             HOSTLDFLAGS="-fuse-ld=/usr/bin/ld" \
              CC=clang \
              CLANG_TRIPLE=aarch64-linux-gnu- \
              CROSS_COMPILE=aarch64-linux-gnu- \
@@ -67,6 +70,8 @@ jobs:
              aresin_defconfig
 
         make -j$(nproc) O=out \
+             HOSTLD=/usr/bin/ld \
+             HOSTLDFLAGS="-fuse-ld=/usr/bin/ld" \
              CC=clang \
              CLANG_TRIPLE=aarch64-linux-gnu- \
              CROSS_COMPILE=aarch64-linux-gnu- \
@@ -88,12 +93,15 @@ jobs:
         export HOSTCC=gcc
         export HOSTCXX=g++
         export HOSTLD=/usr/bin/ld
+        export HOSTLDFLAGS="-fuse-ld=/usr/bin/ld"
 
         # Build the external module
         # -C: 指向内核源码的输出目录 (O=out)
         # M=: 指向你的模块源码目录 (包含 Makefile 的地方)
         # modules: 是构建模块的目标
         make -j$(nproc) -C android_kernel_aresin/out \
+             HOSTLD=/usr/bin/ld \
+             HOSTLDFLAGS="-fuse-ld=/usr/bin/ld" \
              M=$GITHUB_WORKSPACE/kernel \
              CC=clang \
              CLANG_TRIPLE=aarch64-linux-gnu- \
