@@ -6,7 +6,7 @@ on:
 jobs:
   build:
     name: Build Xiaomi ARES Kernel
-    runs-on: ubuntu-20.04  # Use Ubuntu 20.04 to avoid glibc compatibility issues with older toolchains like Proton Clang
+    runs-on: ubuntu-latest
 
     steps:
     - name: Checkout
@@ -45,6 +45,9 @@ jobs:
         export ARCH=arm64
         export SUBARCH=arm64
         export PATH="$GITHUB_WORKSPACE/toolchains/proton-clang/bin:$PATH"
+        export HOSTCC=gcc
+        export HOSTCXX=g++
+        export HOSTLD=/usr/bin/ld
         
         # Change to kernel source directory
         cd android_kernel_aresin
@@ -82,6 +85,9 @@ jobs:
         export ARCH=arm64
         export SUBARCH=arm64
         export PATH="$GITHUB_WORKSPACE/toolchains/proton-clang/bin:$PATH"
+        export HOSTCC=gcc
+        export HOSTCXX=g++
+        export HOSTLD=/usr/bin/ld
 
         # Build the external module
         # -C: 指向内核源码的输出目录 (O=out)
