@@ -23,7 +23,10 @@ jobs:
           # 安装 repo 工具
           curl https://storage.googleapis.com/git-repo-downloads/repo > /usr/local/bin/repo
           chmod a+x /usr/local/bin/repo
-
+      - name: Set swap to 10G
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 10
       # 步骤 3: 下载 Android 12 (5.10) 内核源码
       # 使用 repo 工具可以精确获取 AOSP 通用内核的源码和构建环境
       - name: Download Android 12 (5.10) Kernel Source
