@@ -70,7 +70,7 @@ jobs:
              CROSS_COMPILE="$GITHUB_WORKSPACE/toolchains/gcc-64/bin/aarch64-linux-android-" \
              CROSS_COMPILE_ARM32="$GITHUB_WORKSPACE/toolchains/gcc-32/bin/arm-linux-androideabi-" \
              LD=ld.lld \
-             begonia_user_defconfig
+             chopin_user_defconfig
 
         make -j$(nproc) O=out \
              CC=clang \
