@@ -6,7 +6,7 @@ on:
 jobs:
   build:
     name: Build Xiaomi ARES Kernel
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04  # Use Ubuntu 20.04 to avoid glibc compatibility issues with older toolchains like Proton Clang
 
     steps:
     - name: Checkout
