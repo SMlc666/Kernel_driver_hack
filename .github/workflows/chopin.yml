@@ -49,7 +49,7 @@ jobs:
 
     - name: Clone kernel source
       run: |
-        git clone --branch master --depth 1 https://github.com/LMFuture-Me/chopin-r-kernel.git
+        git clone --branch master --depth 1 https://github.com/SMlc666/chopin-r-kernel.git
 
     - name: Build Kernel
       run: |
