@@ -70,7 +70,7 @@ jobs:
 
         # 3. (可选但推荐) 基于你的 .config 文件，为任何新增的内核选项生成默认值
         #    这可以防止编译过程中出现交互式提示，导致 CI 卡住
-        make WERROR=0 -j$(nproc) O=out \
+        make V=1 WERROR=0 -j$(nproc) O=out \
              CC=clang \
              CLANG_TRIPLE=aarch64-linux-gnu- \
              CROSS_COMPILE="$GITHUB_WORKSPACE/toolchains/gcc-64/bin/aarch64-linux-android-" \
@@ -79,7 +79,7 @@ jobs:
              chopin_user_defconfig
 
         # 4. 现在，直接开始编译。make 会自动使用 out/.config 文件
-        make WERROR=0 -j1 O=out \
+        make V=1 -j1 O=out \
              CC=clang \
              CLANG_TRIPLE=aarch64-linux-gnu- \
              CROSS_COMPILE="$GITHUB_WORKSPACE/toolchains/gcc-64/bin/aarch64-linux-android-" \
