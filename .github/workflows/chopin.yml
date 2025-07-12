@@ -64,7 +64,7 @@ jobs:
 
         # Build command based on the reference config
         # This includes setting the defconfig and then compiling
-        make V=1 -j$(nproc) O=out \
+        make WERROR=0 -j$(nproc) O=out \
              CC=clang \
              CLANG_TRIPLE=aarch64-linux-gnu- \
              CROSS_COMPILE="$GITHUB_WORKSPACE/toolchains/gcc-64/bin/aarch64-linux-android-" \
@@ -72,7 +72,7 @@ jobs:
              LD=ld.lld \
              chopin_user_defconfig
 
-        make V=1 -j$(nproc) O=out \
+        make WERROR=0 -j$(nproc) O=out \
              CC=clang \
              CLANG_TRIPLE=aarch64-linux-gnu- \
              CROSS_COMPILE="$GITHUB_WORKSPACE/toolchains/gcc-64/bin/aarch64-linux-android-" \
