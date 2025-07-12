@@ -109,11 +109,16 @@ phys_addr_t translate_linear_address(struct mm_struct *mm, uintptr_t va)
 }
 #endif
 
-
-static inline int valid_phys_addr_range(phys_addr_t addr, size_t count)
-{
-	return addr + count <= __pa(high_memory);
+#ifdef ARCH_HAS_VALID_PHYS_ADDR_RANGE
+static size_t get_high_memory(void) {
+	struct sysinfo meminfo;
+	si_meminfo(&meminfo);
+	return (meminfo.totalram * (meminfo.mem_unit / 1024)) << PAGE_SHIFT;
 }
+#define valid_phys_addr_range(addr,count) (addr + count <= get_high_memory())
+#else
+#define valid_phys_addr_range(addr,count)  true
+#endif
 
 
 bool read_physical_address(phys_addr_t pa, void *buffer, size_t size)
