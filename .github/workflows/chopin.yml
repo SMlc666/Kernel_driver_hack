@@ -5,7 +5,7 @@ on:
   push:
 jobs:
   build:
-    name: Build Xiaomi Begonia Kernel
+    name: Build Xiaomi CHOPIN Kernel
     runs-on: ubuntu-latest
 
     steps:

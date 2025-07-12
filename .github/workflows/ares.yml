@@ -1,11 +1,11 @@
-name: Build Kernel CI BEGONIA
+name: Build Kernel CI ARES
 
 on:
   workflow_dispatch:
   push:
 jobs:
   build:
-    name: Build Xiaomi Begonia Kernel
+    name: Build Xiaomi ARES Kernel
     runs-on: ubuntu-latest
 
     steps:
