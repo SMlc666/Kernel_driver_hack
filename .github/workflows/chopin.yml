@@ -66,12 +66,17 @@ jobs:
         #make O=out mrproper
 
         # 2. 【核心步骤】将你的自定义配置文件复制到输出目录并重命名为 .config
-        #    $GITHUB_WORKSPACE 指向你仓库的根目录
-        cp $GITHUB_WORKSPACE/kernel-config/chopin-config out/.config
+        
 
         # 3. (可选但推荐) 基于你的 .config 文件，为任何新增的内核选项生成默认值
         #    这可以防止编译过程中出现交互式提示，导致 CI 卡住
-        make O=out chopin_user_defconfig
+        make WERROR=0 -j$(nproc) O=out \
+             CC=clang \
+             CLANG_TRIPLE=aarch64-linux-gnu- \
+             CROSS_COMPILE="$GITHUB_WORKSPACE/toolchains/gcc-64/bin/aarch64-linux-android-" \
+             CROSS_COMPILE_ARM32="$GITHUB_WORKSPACE/toolchains/gcc-32/bin/arm-linux-androideabi-" \
+             LD=ld.lld \
+             chopin_user_defconfig
 
         # 4. 现在，直接开始编译。make 会自动使用 out/.config 文件
         make WERROR=0 -j$(nproc) O=out \
