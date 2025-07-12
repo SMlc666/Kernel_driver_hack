@@ -1,0 +1,66 @@
+# Workflow 名称
+name: Build Kernel Module for Android 12 (5.10)
+
+# 手动触发
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build khack module for kernel 5.10
+    runs-on: ubuntu-latest
+    
+    steps:
+      # 步骤 1: 检出你的项目代码 (包含 kernel/ 目录)
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 步骤 2: 安装依赖 (主要是 git 和 curl 用于下载 repo)
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git curl build-essential
+          # 安装 repo 工具
+          curl https://storage.googleapis.com/git-repo-downloads/repo > /usr/local/bin/repo
+          chmod a+x /usr/local/bin/repo
+
+      # 步骤 3: 下载 Android 12 (5.10) 内核源码
+      # 使用 repo 工具可以精确获取 AOSP 通用内核的源码和构建环境
+      - name: Download Android 12 (5.10) Kernel Source
+        run: |
+          mkdir -p android-kernel && cd android-kernel
+          # 初始化 repo，指定内核清单和分支 (common-android12-5.10)
+          repo init -u https://android.googlesource.com/kernel/manifest -b common-android12-5.10 --depth=1
+          # 同步源码，-c 表示只拉取当前分支，-j 表示多线程加速
+          repo sync -c -j$(nproc) --force-sync --no-clone-bundle --no-tags
+
+      # 步骤 4: 将你的模块集成到内核源码中 (In-Tree Build)
+      - name: Integrate Custom Module into Kernel Source
+        run: |
+          # 1. 将你的模块源码 (kernel/ 目录) 复制到内核源码树的 drivers 目录下
+          #    我们将其重命名为 khack 以保持清晰
+          echo "Copying module source to android-kernel/common/drivers/khack"
+          cp -r $GITHUB_WORKSPACE/kernel android-kernel/common/drivers/khack
+
+          # 2. 修改内核的 Makefile，让构建系统包含你的模块目录
+          #    这样 build.sh 脚本在编译时就会进入 khack/ 目录并执行里面的 Makefile
+          echo "Adding khack module to the build system"
+          echo "obj-y += khack/" >> android-kernel/common/drivers/Makefile
+
+      # 步骤 5: 使用 AOSP 构建脚本编译内核和你的模块
+      - name: Build Kernel and Module
+        run: |
+          cd android-kernel
+          # 使用 AOSP 官方的 build.sh 脚本
+          # 它会自动下载并使用正确的 Clang 工具链，并设置所有环境变量
+          # BUILD_CONFIG=common/build.config.gki.aarch64 是用于构建 64位 GKI 内核的标准配置
+          # 你的模块会作为整个内核构建过程的一部分被自动编译
+          BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
+
+      # 步骤 6: 上传编译好的内核模块 (.ko 文件)
+      - name: Upload Kernel Module Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: khack-module-5.10
+          # 构建产物的路径是固定的，你的模块 khack.ko 会在这里生成
+          path: android-kernel/out/android12-5.10/common/drivers/khack/khack.ko
