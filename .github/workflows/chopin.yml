@@ -49,7 +49,7 @@ jobs:
 
     - name: Clone kernel source
       run: |
-        git clone --branch master --depth 1 https://github.com/LMFuture-Me/chopin-r-kernel.git
+        git clone --branch S --depth 1 https://github.com/ChopinKernels/kernel_xiaomi_chopin_android_S.git
 
     - name: Build Kernel
       run: |
@@ -60,18 +60,20 @@ jobs:
         export PATH="$GITHUB_WORKSPACE/toolchains/clang-aosp/bin:$PATH"
         
         # Change to kernel source directory
-        cd chopin-r-kernel
+        cd kernel_xiaomi_chopin_android_S
 
-        # Build command based on the reference config
-        # This includes setting the defconfig and then compiling
-        make WERROR=0 -j$(nproc) O=out \
-             CC=clang \
-             CLANG_TRIPLE=aarch64-linux-gnu- \
-             CROSS_COMPILE="$GITHUB_WORKSPACE/toolchains/gcc-64/bin/aarch64-linux-android-" \
-             CROSS_COMPILE_ARM32="$GITHUB_WORKSPACE/toolchains/gcc-32/bin/arm-linux-androideabi-" \
-             LD=ld.lld \
-             chopin_user_defconfig
+        # 1. (可选但推荐) 清理输出目录，确保一个干净的开始
+        make O=out mrproper
 
+        # 2. 【核心步骤】将你的自定义配置文件复制到输出目录并重命名为 .config
+        #    $GITHUB_WORKSPACE 指向你仓库的根目录
+        cp $GITHUB_WORKSPACE/kernel-config/chopin-config out/.config
+
+        # 3. (可选但推荐) 基于你的 .config 文件，为任何新增的内核选项生成默认值
+        #    这可以防止编译过程中出现交互式提示，导致 CI 卡住
+        make O=out olddefconfig
+
+        # 4. 现在，直接开始编译。make 会自动使用 out/.config 文件
         make WERROR=0 -j$(nproc) O=out \
              CC=clang \
              CLANG_TRIPLE=aarch64-linux-gnu- \
@@ -90,7 +92,7 @@ jobs:
         # -C: 指向内核源码的输出目录 (O=out)
         # M=: 指向你的模块源码目录 (包含 Makefile 的地方)
         # modules: 是构建模块的目标
-        make -j$(nproc) -C chopin-r-kernel/out \
+        make -j$(nproc) -C kernel_xiaomi_chopin_android_S/out \
              M=$GITHUB_WORKSPACE/kernel \
              CC=clang \
              CLANG_TRIPLE=aarch64-linux-gnu- \
@@ -103,7 +105,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: Kernel-Image-begonia
-        path: chopin-r-kernel/out/arch/arm64/boot/Image.gz
+        path: kernel_xiaomi_chopin_android_S/out/arch/arm64/boot/Image.gz
     - name: Upload Kernel Module
       uses: actions/upload-artifact@v4
       with:
