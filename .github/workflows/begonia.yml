@@ -10,44 +10,46 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    - name: pkg install
+
+    - name: Install dependencies
       run: |
           sudo apt-get update
           sudo apt-get install -y build-essential bc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev libfl-dev
           sudo apt-get install -y curl git ftp lftp wget libarchive-tools ccache 
           sudo apt-get install -y zip unzip tar gzip bzip2 rar unrar
-    - name: git begonia kernel code
-      run: git clone --branch begonia-r-oss --depth 1 https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git  
-    - name: git clang proton
-      run: git clone --depth 1 https://github.com/kdrag0n/proton-clang.git
-    - name: debug ls and pwd
-      run: |
-          ls -l
-          pwd
-    - name: configure clang
-      run: |
-          export CC = $PWD/proton-clang/bin/clang
-          export CXX = $PWD/proton-clang/bin/clang++
-          export ARCH = arm64
-          export CROSS_COMPILE = $PWD/proton-clang/bin/aarch64-linux-gnu-
-          export CROSS_COMPILE_ARM32 = $PWD/proton-clang/bin/arm-linux-gnueabi-
-          export LD = $PWD/proton-clang/bin/ld.lld
-          export AR = $PWD/proton-clang/bin/llvm-ar
-          export NM = $PWD/proton-clang/bin/llvm-nm
-          export STRIP = $PWD/proton-clang/bin/llvm-strip
-          export OBJCOPY = $PWD/proton-clang/bin/llvm-objcopy
-          export OBJDUMP = $PWD/proton-clang/bin/llvm-objdump
-          export READELF = $PWD/proton-clang/bin/llvm-readelf
-          export OBJSIZE = $PWD/proton-clang/bin/llvm-size
-          export LDGOLD = $PWD/proton-clang/bin/aarch64-linux-gnu-ld.gold
-          export LLVM_AR = $PWD/proton-clang/bin/llvm-ar
-          export LLVM_DIS = $PWD/proton-clang/bin/llvm-dis
-    - name: configure kernel
-      run: |
-          cd Xiaomi_Kernel_OpenSource
-          make begonia_defconfig CC=$CC ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32 LD=$LD AR=$AR NM=$NM STRIP=$STRIP OBJCOPY=$OBJCOPY OBJDUMP=$OBJDUMP READELF=$READELF OBJSIZE=$OBJSIZE LDGOLD=$LDGOLD LLVM_AR=$LLVM_AR LLVM_DIS=$LLVM_DIS
 
-    - name: compile kernel
+    - name: Clone kernel source
+      run: git clone --branch begonia-r-oss --depth 1 https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git
+
+    - name: Clone Proton Clang
+      run: git clone --depth 1 https://github.com/kdrag0n/proton-clang.git
+
+    - name: Set up environment variables
+      run: |
+          echo "CC=$PWD/proton-clang/bin/clang" >> $GITHUB_ENV
+          echo "CXX=$PWD/proton-clang/bin/clang++" >> $GITHUB_ENV
+          echo "ARCH=arm64" >> $GITHUB_ENV
+          echo "CROSS_COMPILE=$PWD/proton-clang/bin/aarch64-linux-gnu-" >> $GITHUB_ENV
+          echo "CROSS_COMPILE_ARM32=$PWD/proton-clang/bin/arm-linux-gnueabi-" >> $GITHUB_ENV
+          echo "LD=$PWD/proton-clang/bin/ld.lld" >> $GITHUB_ENV
+          echo "AR=$PWD/proton-clang/bin/llvm-ar" >> $GITHUB_ENV
+          echo "NM=$PWD/proton-clang/bin/llvm-nm" >> $GITHUB_ENV
+          echo "STRIP=$PWD/proton-clang/bin/llvm-strip" >> $GITHUB_ENV
+          echo "OBJCOPY=$PWD/proton-clang/bin/llvm-objcopy" >> $GITHUB_ENV
+          echo "OBJDUMP=$PWD/proton-clang/bin/llvm-objdump" >> $GITHUB_ENV
+          echo "READELF=$PWD/proton-clang/bin/llvm-readelf" >> $GITHUB_ENV
+          echo "OBJSIZE=$PWD/proton-clang/bin/llvm-size" >> $GITHUB_ENV
+          echo "LDGOLD=$PWD/proton-clang/bin/aarch64-linux-gnu-ld.gold" >> $GITHUB_ENV
+          echo "LLVM_AR=$PWD/proton-clang/bin/llvm-ar" >> $GITHUB_ENV
+          echo "LLVM_DIS=$PWD/proton-clang/bin/llvm-dis" >> $GITHUB_ENV
+          echo "Clang toolchain setup complete."
+
+    - name: Configure kernel
       run: |
           cd Xiaomi_Kernel_OpenSource
-          make -j$(nproc) CC=$CC ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32 LD=$LD AR=$AR NM=$NM STRIP=$STRIP OBJCOPY=$OBJCOPY OBJDUMP=$OBJDUMP READELF=$READELF OBJSIZE=$OBJSIZE LDGOLD=$LDGOLD LLVM_AR=$LLVM_AR LLVM_DIS=$LLVM_DIS
+          make begonia_defconfig
+
+    - name: Compile kernel
+      run: |
+          cd Xiaomi_Kernel_OpenSource
+          make -j$(nproc)
