@@ -49,7 +49,7 @@ jobs:
 
     - name: Clone kernel source
       run: |
-        git clone --branch S --depth 1 https://github.com/ChopinKernels/kernel_xiaomi_chopin_android_S.git
+        git clone --branch chopin-r-oss --depth 1 https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git
 
     - name: Build Kernel
       run: |
@@ -60,11 +60,11 @@ jobs:
         export PATH="$GITHUB_WORKSPACE/toolchains/clang-aosp/bin:$PATH"
         
         # Change to kernel source directory
-        cd kernel_xiaomi_chopin_android_S
+        cd Xiaomi_Kernel_OpenSource
 
         # Build command based on the reference config
         # This includes setting the defconfig and then compiling
-        make -j$(nproc) O=out \
+        make V=1 -j$(nproc) O=out \
              CC=clang \
              CLANG_TRIPLE=aarch64-linux-gnu- \
              CROSS_COMPILE="$GITHUB_WORKSPACE/toolchains/gcc-64/bin/aarch64-linux-android-" \
@@ -72,7 +72,7 @@ jobs:
              LD=ld.lld \
              chopin_user_defconfig
 
-        make -j$(nproc) O=out \
+        make V=1 -j$(nproc) O=out \
              CC=clang \
              CLANG_TRIPLE=aarch64-linux-gnu- \
              CROSS_COMPILE="$GITHUB_WORKSPACE/toolchains/gcc-64/bin/aarch64-linux-android-" \
@@ -90,7 +90,7 @@ jobs:
         # -C: 指向内核源码的输出目录 (O=out)
         # M=: 指向你的模块源码目录 (包含 Makefile 的地方)
         # modules: 是构建模块的目标
-        make -j$(nproc) -C kernel_xiaomi_chopin_android_S/out \
+        make -j$(nproc) -C Xiaomi_Kernel_OpenSource/out \
              M=$GITHUB_WORKSPACE/kernel \
              CC=clang \
              CLANG_TRIPLE=aarch64-linux-gnu- \
@@ -103,7 +103,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: Kernel-Image-begonia
-        path: kernel_xiaomi_chopin_android_S/out/arch/arm64/boot/Image.gz
+        path: Xiaomi_Kernel_OpenSource/out/arch/arm64/boot/Image.gz
     - name: Upload Kernel Module
       uses: actions/upload-artifact@v4
       with:
