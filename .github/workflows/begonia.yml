@@ -47,7 +47,7 @@ jobs:
     - name: Configure kernel
       run: |
           cd Xiaomi_Kernel_OpenSource
-          make begonia_defconfig
+          make begonia_user_defconfig
 
     - name: Compile kernel
       run: |
