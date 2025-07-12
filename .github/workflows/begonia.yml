@@ -43,11 +43,11 @@ jobs:
           export LLVM_AR = $PWD/proton-clang/bin/llvm-ar
           export LLVM_DIS = $PWD/proton-clang/bin/llvm-dis
     -name: configure kernel
-      run: |
+    run: |
           cd Xiaomi_Kernel_OpenSource
           make begonia_defconfig CC=$CC ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32 LD=$LD AR=$AR NM=$NM STRIP=$STRIP OBJCOPY=$OBJCOPY OBJDUMP=$OBJDUMP READELF=$READELF OBJSIZE=$OBJSIZE LDGOLD=$LDGOLD LLVM_AR=$LLVM_AR LLVM_DIS=$LLVM_DIS
 
     -name: compile kernel
-      run: |
+    run: |
           cd Xiaomi_Kernel_OpenSource
           make -j$(nproc) CC=$CC ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32 LD=$LD AR=$AR NM=$NM STRIP=$STRIP OBJCOPY=$OBJCOPY OBJDUMP=$OBJDUMP READELF=$READELF OBJSIZE=$OBJSIZE LDGOLD=$LDGOLD LLVM_AR=$LLVM_AR LLVM_DIS=$LLVM_DIS
