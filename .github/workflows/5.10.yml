@@ -4,7 +4,7 @@ name: Build Kernel Module for Android 12 (5.10)
 # 手动触发
 on:
   workflow_dispatch:
-
+  push:
 jobs:
   build:
     name: Build khack module for kernel 5.10

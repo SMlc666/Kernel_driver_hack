@@ -2,7 +2,7 @@ name: Build Kernel CI
 
 on:
   workflow_dispatch:
-
+  push:
 jobs:
   build:
     name: Build Xiaomi Begonia Kernel
