@@ -29,9 +29,9 @@ jobs:
         mkdir -p $GITHUB_WORKSPACE/toolchains
         cd $GITHUB_WORKSPACE/toolchains
 
-        # Clone Proton Clang (replaces AOSP Clang and GCC)
+        # Clone Proton Clang toolchain
         echo "Downloading Proton Clang..."
-        git clone https://github.com/kdrag0n/proton-clang.git --depth=1
+        git clone --depth=1 https://github.com/kdrag0n/proton-clang proton-clang
 
     - name: Clone kernel source
       run: |
@@ -46,39 +46,33 @@ jobs:
         export SUBARCH=arm64
         export PATH="$GITHUB_WORKSPACE/toolchains/proton-clang/bin:$PATH"
         
-        # Setup ccache (optional but recommended for faster builds)
-        ccache -M 10G
-        
         # Change to kernel source directory
         cd android_kernel_aresin
-        
-        # Clean up previous builds (reference script style)
-        make clean && rm -rf out
-        mkdir out
-        
-        # Define common build arguments based on reference script
-        export ARGS="-j$(nproc --all) \
-                    ARCH=arm64 \
-                    SUBARCH=arm64 \
-                    O=out \
-                    CC=clang \
-                    CROSS_COMPILE=aarch64-linux-gnu- \
-                    CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-                    CLANG_TRIPLE=aarch64-linux-gnu- \
-                    AR=llvm-ar \
-                    NM=llvm-nm \
-                    OBJCOPY=llvm-objcopy \
-                    OBJDUMP=llvm-objdump \
-                    STRIP=llvm-strip"
-        
-        # Run mrproper, defconfig, and prepare (adapted from reference)
-        make $ARGS mrproper
-        make $ARGS aresin_defconfig
-        # Note: menuconfig is interactive; skipping unless needed. If required, add it here.
-        make $ARGS prepare
-        
-        # Final build
-        make $ARGS
+
+        # Build command based on the reference config
+        # This includes setting the defconfig and then compiling with Proton Clang (full LLVM, no GCC)
+        make -j$(nproc) O=out \
+             CC=clang \
+             CLANG_TRIPLE=aarch64-linux-gnu- \
+             CROSS_COMPILE=aarch64-linux-gnu- \
+             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+             AR=llvm-ar \
+             NM=llvm-nm \
+             OBJCOPY=llvm-objcopy \
+             OBJDUMP=llvm-objdump \
+             STRIP=llvm-strip \
+             aresin_defconfig
+
+        make -j$(nproc) O=out \
+             CC=clang \
+             CLANG_TRIPLE=aarch64-linux-gnu- \
+             CROSS_COMPILE=aarch64-linux-gnu- \
+             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+             AR=llvm-ar \
+             NM=llvm-nm \
+             OBJCOPY=llvm-objcopy \
+             OBJDUMP=llvm-objdump \
+             STRIP=llvm-strip
 
     - name: Build Custom Kernel Module
       run: |
@@ -88,26 +82,22 @@ jobs:
         export ARCH=arm64
         export SUBARCH=arm64
         export PATH="$GITHUB_WORKSPACE/toolchains/proton-clang/bin:$PATH"
-        
-        # Define common build arguments based on reference script
-        export ARGS="-j$(nproc --all) \
-                    ARCH=arm64 \
-                    SUBARCH=arm64 \
-                    CC=clang \
-                    CROSS_COMPILE=aarch64-linux-gnu- \
-                    CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-                    CLANG_TRIPLE=aarch64-linux-gnu- \
-                    AR=llvm-ar \
-                    NM=llvm-nm \
-                    OBJCOPY=llvm-objcopy \
-                    OBJDUMP=llvm-objdump \
-                    STRIP=llvm-strip"
-        
+
         # Build the external module
-        # -C: Points to kernel source output directory (O=out)
-        # M=: Points to your module source directory
-        make $ARGS -C android_kernel_aresin/out \
+        # -C: 指向内核源码的输出目录 (O=out)
+        # M=: 指向你的模块源码目录 (包含 Makefile 的地方)
+        # modules: 是构建模块的目标
+        make -j$(nproc) -C android_kernel_aresin/out \
              M=$GITHUB_WORKSPACE/kernel \
+             CC=clang \
+             CLANG_TRIPLE=aarch64-linux-gnu- \
+             CROSS_COMPILE=aarch64-linux-gnu- \
+             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+             AR=llvm-ar \
+             NM=llvm-nm \
+             OBJCOPY=llvm-objcopy \
+             OBJDUMP=llvm-objdump \
+             STRIP=llvm-strip \
              modules
 
     - name: Upload Kernel Image
@@ -119,5 +109,5 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: Kernel-Module-khack
-        # Compiled .ko file will be in your module source directory
+        # 编译后的 .ko 文件会生成在你的模块源码目录中
         path: kernel/khack.ko
