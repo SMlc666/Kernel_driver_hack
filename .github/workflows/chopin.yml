@@ -49,7 +49,7 @@ jobs:
 
     - name: Clone kernel source
       run: |
-        git clone --branch chopin-r-oss --depth 1 https://github.com/SMlc666/chopin_kernel_source.git
+        git clone --branch T --depth 1 https://github.com/ChopinKernels/android_kernel_chopin_android_T.git
 
     - name: Build Kernel
       run: |
@@ -60,7 +60,7 @@ jobs:
         export PATH="$GITHUB_WORKSPACE/toolchains/clang-aosp/bin:$PATH"
         
         # Change to kernel source directory
-        cd chopin_kernel_source
+        cd android_kernel_chopin_android_T
 
         # 1. (可选但推荐) 清理输出目录，确保一个干净的开始
         #make O=out mrproper
@@ -97,7 +97,7 @@ jobs:
         # -C: 指向内核源码的输出目录 (O=out)
         # M=: 指向你的模块源码目录 (包含 Makefile 的地方)
         # modules: 是构建模块的目标
-        make -j$(nproc) -C chopin_kernel_source/out \
+        make -j$(nproc) -C android_kernel_chopin_android_T/out \
              M=$GITHUB_WORKSPACE/kernel \
              CC=clang \
              CLANG_TRIPLE=aarch64-linux-gnu- \
@@ -109,8 +109,8 @@ jobs:
     - name: Upload Kernel Image
       uses: actions/upload-artifact@v4
       with:
-        name: Kernel-Image-begonia
-        path: chopin_kernel_source/out/arch/arm64/boot/Image.gz
+        name: Kernel-Image-chopin
+        path: android_kernel_chopin_android_T/out/arch/arm64/boot/Image.gz
     - name: Upload Kernel Module
       uses: actions/upload-artifact@v4
       with:
