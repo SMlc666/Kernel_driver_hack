@@ -49,7 +49,7 @@ jobs:
 
     - name: Clone kernel source
       run: |
-        git clone --branch master --depth 1 https://github.com/SMlc666/chopin-r-kernel.git
+        git clone --branch chopin-r-oss --depth 1 https://github.com/SMlc666/chopin_kernel_source.git
 
     - name: Build Kernel
       run: |
@@ -60,7 +60,7 @@ jobs:
         export PATH="$GITHUB_WORKSPACE/toolchains/clang-aosp/bin:$PATH"
         
         # Change to kernel source directory
-        cd chopin-r-kernel
+        cd chopin_kernel_source
 
         # 1. (可选但推荐) 清理输出目录，确保一个干净的开始
         #make O=out mrproper
@@ -97,7 +97,7 @@ jobs:
         # -C: 指向内核源码的输出目录 (O=out)
         # M=: 指向你的模块源码目录 (包含 Makefile 的地方)
         # modules: 是构建模块的目标
-        make -j$(nproc) -C chopin-r-kernel/out \
+        make -j$(nproc) -C chopin_kernel_source/out \
              M=$GITHUB_WORKSPACE/kernel \
              CC=clang \
              CLANG_TRIPLE=aarch64-linux-gnu- \
@@ -110,7 +110,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: Kernel-Image-begonia
-        path: chopin-r-kernel/out/arch/arm64/boot/Image.gz
+        path: chopin_kernel_source/out/arch/arm64/boot/Image.gz
     - name: Upload Kernel Module
       uses: actions/upload-artifact@v4
       with:
