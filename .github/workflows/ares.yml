@@ -49,7 +49,7 @@ jobs:
 
     - name: Clone kernel source
       run: |
-        git clone --branch T --depth 1 https://github.com/SMlc666/android_kernel_aresin.git
+        git clone --branch alps-s --depth 1 https://github.com/anotherjin/android_kernel_xiaomi_ares.git
 
     - name: Build Kernel
       run: |
@@ -60,7 +60,7 @@ jobs:
         export PATH="$GITHUB_WORKSPACE/toolchains/clang-aosp/bin:$PATH"
         
         # Change to kernel source directory
-        cd android_kernel_aresin
+        cd android_kernel_xiaomi_ares
 
         # Build command based on the reference config
         # This includes setting the defconfig and then compiling
@@ -90,7 +90,7 @@ jobs:
         # -C: 指向内核源码的输出目录 (O=out)
         # M=: 指向你的模块源码目录 (包含 Makefile 的地方)
         # modules: 是构建模块的目标
-        make -j$(nproc) -C android_kernel_aresin/out \
+        make -j$(nproc) -C android_kernel_xiaomi_ares/out \
              M=$GITHUB_WORKSPACE/kernel \
              CC=clang \
              CLANG_TRIPLE=aarch64-linux-gnu- \
@@ -103,7 +103,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: Kernel-Image-ares
-        path: android_kernel_aresin/out/arch/arm64/boot/Image.gz
+        path: android_kernel_xiaomi_ares/out/arch/arm64/boot/Image.gz
     - name: Upload Kernel Module
       uses: actions/upload-artifact@v4
       with:
