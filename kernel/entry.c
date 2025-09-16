@@ -4,6 +4,7 @@
 #include "comm.h"
 #include "memory.h"
 #include "process.h"
+#include "hide_proc.h"
 
 #define DEVICE_NAME "JiangNight"
 
@@ -71,6 +72,29 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 		}
 		break;
 	}
+	case OP_HIDE_PROC:
+	{
+		static HIDE_PROC hp;
+		if (copy_from_user(&hp, (void __user *)arg, sizeof(hp)) != 0)
+		{
+			return -1;
+		}
+		switch (hp.action)
+		{
+		case ACTION_HIDE:
+			add_hidden_pid(hp.pid);
+			break;
+		case ACTION_UNHIDE:
+			remove_hidden_pid(hp.pid);
+			break;
+		case ACTION_CLEAR:
+			clear_hidden_pids();
+			break;
+		default:
+			return -1;
+		}
+		break;
+	}
 	default:
 		break;
 	}
@@ -95,12 +119,22 @@ int __init driver_entry(void)
 	int ret;
 	printk("[+] driver_entry");
 	ret = misc_register(&misc);
-	return ret;
+	if (ret)
+		return ret;
+
+	ret = hide_proc_init();
+	if (ret) {
+		misc_deregister(&misc);
+		return ret;
+	}
+
+	return 0;
 }
 
 void __exit driver_unload(void)
 {
 	printk("[+] driver_unload");
+	hide_proc_exit();
 	misc_deregister(&misc);
 }
 

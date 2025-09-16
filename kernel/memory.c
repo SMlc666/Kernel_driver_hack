@@ -5,7 +5,8 @@
 #include <linux/slab.h>
 #include <linux/uaccess.h>
 #include <linux/version.h>
-
+#include <linux/sched/mm.h>      // 包含 get_task_mm 的声明
+#include <linux/sched/signal.h>  // 包含 find_get_pid 和 get_pid_task 的声明
 #include <asm/cpu.h>
 #include <asm/io.h>
 #include <asm/page.h>
@@ -109,12 +110,12 @@ phys_addr_t translate_linear_address(struct mm_struct *mm, uintptr_t va)
 }
 #endif
 
-#ifndef ARCH_HAS_VALID_PHYS_ADDR_RANGE
-static inline int valid_phys_addr_range(phys_addr_t addr, size_t count)
+
+static inline int my_valid_phys_addr_range(phys_addr_t addr, size_t count)
 {
 	return addr + count <= __pa(high_memory);
 }
-#endif
+
 
 bool read_physical_address(phys_addr_t pa, void *buffer, size_t size)
 {
@@ -124,7 +125,7 @@ bool read_physical_address(phys_addr_t pa, void *buffer, size_t size)
 	{
 		return false;
 	}
-	if (!valid_phys_addr_range(pa, size))
+	if (!my_valid_phys_addr_range(pa, size))
 	{
 		return false;
 	}
@@ -150,7 +151,7 @@ bool write_physical_address(phys_addr_t pa, void *buffer, size_t size)
 	{
 		return false;
 	}
-	if (!valid_phys_addr_range(pa, size))
+	if (!my_valid_phys_addr_range(pa, size))
 	{
 		return false;
 	}

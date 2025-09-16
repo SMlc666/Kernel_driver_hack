@@ -4,7 +4,8 @@
 #include <linux/tty.h>
 #include <linux/mm.h>
 #include <linux/version.h>
-
+#include <linux/sched/mm.h>      // 包含 get_task_mm 的声明
+#include <linux/sched/signal.h>  // 包含 find_get_pid 和 get_pid_task 的声明
 #define ARC_PATH_MAX 256
 
 extern struct mm_struct *get_task_mm(struct task_struct *task);
