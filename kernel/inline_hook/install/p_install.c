@@ -1,6 +1,7 @@
 #include "../p_lkrg_main.h"
 #include <linux/sched.h>
 #include <linux/sched/signal.h>
+#include <linux/init_task.h>
 
 #if defined(CONFIG_ARM) || defined(CONFIG_ARM64)
 bool check_function_length_enough(void *target)
@@ -178,13 +179,18 @@ int inline_hook_init(void){
             p_print_log("p_einittext get failed (skipping it)\n");
         }
 
-        P_SYM(p_init_mm)=(struct mm_struct *)P_SYM(p_kallsyms_lookup_name)("init_mm");
+        if (P_SYM(p_kallsyms_lookup_name)) {
+            P_SYM(p_init_mm)=(struct mm_struct *)P_SYM(p_kallsyms_lookup_name)("init_mm");
+        }
+
         if(!P_SYM(p_init_mm)){
-            P_SYM(p_init_mm)=(struct mm_struct*)get_init_mm_address();
-            if(!P_SYM(p_init_mm)){
-                p_print_log("init_mm get failed\n");
-                return -1;
-            }
+            p_print_log("kallsyms couldn't find init_mm, trying via init_task...\n");
+            P_SYM(p_init_mm) = init_task.active_mm;
+        }
+
+        if(!P_SYM(p_init_mm)){
+            p_print_log("Failed to get init_mm via kallsyms and init_task. Cannot proceed.\n");
+            return -1;
         }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0)

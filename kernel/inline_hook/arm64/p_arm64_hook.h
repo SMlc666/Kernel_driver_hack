@@ -7,7 +7,7 @@ int inline_hook_install(void *arg);
 
 int inline_hook_uninstall(void *arg);
 
-unsigned long get_init_mm_address(void);
+
 
 #endif
 
