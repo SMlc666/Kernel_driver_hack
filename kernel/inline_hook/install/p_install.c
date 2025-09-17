@@ -42,85 +42,73 @@ unsigned long * get_sys_call_table(void){
 
 #if defined(CONFIG_ARM64)
 	unsigned long** syscall_table = NULL;
-    unsigned long* p_arm64_sys_close = NULL;
-    unsigned long* p_arm64_sys_read = NULL;
+    unsigned long* p_sys_close = NULL;
+    unsigned long* p_sys_read = NULL;
 	unsigned long i;
+	const char *read_names[] = {"__arm64_sys_read", "SyS_read", "sys_read", NULL};
+    const char *close_names[] = {"__arm64_sys_close", "SyS_close", "sys_close", NULL};
 #elif defined(CONFIG_ARM)
 	unsigned long** syscall_table = NULL;
-    unsigned long* p_arm_sys_close = NULL;
-    unsigned long* p_arm_sys_read = NULL;
+    unsigned long* p_sys_close = NULL;
+    unsigned long* p_sys_read = NULL;
 	unsigned long i;
+	const char *read_names[] = {"sys_read", "SyS_read", NULL};
+    const char *close_names[] = {"sys_close", "SyS_close", NULL};
 #elif defined(CONFIG_X86_64)
 	unsigned long** syscall_table = NULL;
-	unsigned long* p_x64_sys_close=NULL;
-	unsigned long* p_x64_sys_read=NULL;
+	unsigned long* p_sys_close=NULL;
+	unsigned long* p_sys_read=NULL;
 	unsigned long i;
+	const char *read_names[] = {"__x64_sys_read", "SyS_read", "sys_read", NULL};
+    const char *close_names[] = {"__x64_sys_close", "SyS_close", "sys_close", NULL};
 #elif defined(CONFIG_X86_32)
 	unsigned long** syscall_table = NULL;
-	unsigned long* p_x32_sys_close=NULL;
-	unsigned long* p_x32_sys_read=NULL;
+	unsigned long* p_sys_close=NULL;
+	unsigned long* p_sys_read=NULL;
 	unsigned long i;
+	const char *read_names[] = {"__ia32_sys_read", "SyS_read", "sys_read", NULL};
+    const char *close_names[] = {"__ia32_sys_close", "SyS_close", "sys_close", NULL};
 #endif
 
 	p_etext = (unsigned long*)P_SYM(p_kallsyms_lookup_name)("_etext");
     if(!p_etext) return NULL;
 	
-	p_init_begin = (unsigned long*)P_SYM(p_kallsyms_lookup_name)("__init_begin");
+p_init_begin = (unsigned long*)P_SYM(p_kallsyms_lookup_name)("__init_begin");
 	if(!p_init_begin) return NULL;
-	//search sys_call_table address
-#if defined(CONFIG_ARM64)
-	p_arm64_sys_close = (unsigned long*)P_SYM(p_kallsyms_lookup_name)("__arm64_sys_close");
-	if(!p_arm64_sys_close) return NULL;
 
-	p_arm64_sys_read = (unsigned long*)P_SYM(p_kallsyms_lookup_name)("__arm64_sys_read");
-	if(!p_arm64_sys_read) return NULL;
+#if defined(CONFIG_ARM64) || defined(CONFIG_ARM) || defined(CONFIG_X86_64) || defined(CONFIG_X86_32)
+	for (i = 0; close_names[i]; i++) {
+        p_sys_close = (unsigned long*)P_SYM(p_kallsyms_lookup_name)(close_names[i]);
+        if (p_sys_close) {
+			printk(KERN_INFO "[get_sys_call_table] Found close symbol: %s\n", close_names[i]);
+			break;
+		}
+    }
+    if (!p_sys_close) {
+		printk(KERN_ERR "[get_sys_call_table] Failed to find any close symbol.\n");
+		return NULL;
+	}
+
+    for (i = 0; read_names[i]; i++) {
+        p_sys_read = (unsigned long*)P_SYM(p_kallsyms_lookup_name)(read_names[i]);
+        if (p_sys_read) {
+			printk(KERN_INFO "[get_sys_call_table] Found read symbol: %s\n", read_names[i]);
+			break;
+		}
+    }
+    if (!p_sys_read) {
+		printk(KERN_ERR "[get_sys_call_table] Failed to find any read symbol.\n");
+		return NULL;
+	}
 
 	for(i = (unsigned long)p_etext;i < (unsigned long)p_init_begin;i += sizeof(void*)){
 		syscall_table = (unsigned long**)i;
-		if((syscall_table[__NR_close] == (unsigned long*)p_arm64_sys_close) && (syscall_table[__NR_read] == (unsigned long*)p_arm64_sys_read)){
-            return (unsigned long *)syscall_table;
-        }
-	}
-#elif defined(CONFIG_ARM)
-	p_arm_sys_close = (unsigned long*)P_SYM(p_kallsyms_lookup_name)("sys_close");
-	if(!p_arm_sys_close) return NULL;
-
-	p_arm_sys_read = (unsigned long*)P_SYM(p_kallsyms_lookup_name)("sys_read");
-	if(!p_arm_sys_read) return NULL;
-
-	for(i = (unsigned long)p_etext;i < (unsigned long)p_init_begin;i += sizeof(void*)){
-		syscall_table = (unsigned long**)i;
-		if((syscall_table[__NR_close] == (unsigned long*)p_arm_sys_close) && (syscall_table[__NR_read] == (unsigned long*)p_arm_sys_close)){
-            return (unsigned long *)syscall_table;
-        }
-	}
-#elif defined(CONFIG_X86_64)
-	p_x64_sys_close = (unsigned long*)P_SYM(p_kallsyms_lookup_name)("__x64_sys_close");
-	if(!p_x64_sys_close) return NULL;
-
-	p_x64_sys_read = (unsigned long*)P_SYM(p_kallsyms_lookup_name)("__x64_sys_read");
-	if(!p_x64_sys_read) return NULL;
-
-	for(i = (unsigned long)p_etext;i < (unsigned long)p_init_begin;i+=sizeof(void*)){
-		syscall_table = (unsigned long**)i;
-		if((syscall_table[__NR_close] == (unsigned long*)p_x64_sys_close) && (syscall_table[__NR_read] == (unsigned long*)p_x64_sys_read)){
-            return (unsigned long *)syscall_table;
-        }
-	}
-#elif defined(CONFIG_X86_32)
-	p_x32_sys_close = (unsigned long*)P_SYM(p_kallsyms_lookup_name)("__ia32_sys_close");
-	if(!p_x32_sys_close) return NULL;
-
-	p_x32_sys_read = (unsigned long*)P_SYM(p_kallsyms_lookup_name)("__ia32_sys_read");
-	if(!p_x32_sys_read) return NULL;
-
-	for(i = (unsigned long)p_etext;i < (unsigned long)p_init_begin;i+=sizeof(void*)){
-		syscall_table = (unsigned long**)i;
-		if((syscall_table[__NR_close] == (unsigned long*)p_x32_sys_close) && (syscall_table[__NR_read] == (unsigned long*)p_x32_sys_read)){
+		if((syscall_table[__NR_close] == (unsigned long*)p_sys_close) && (syscall_table[__NR_read] == (unsigned long*)p_sys_read)){
             return (unsigned long *)syscall_table;
         }
 	}
 #endif
+
 	return NULL;
 }
 
