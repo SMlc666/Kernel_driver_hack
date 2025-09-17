@@ -184,13 +184,14 @@ int inline_hook_init(void){
         }
 
         if(!P_SYM(p_init_mm)){
-            p_print_log("kallsyms couldn't find init_mm, trying via init_task...\n");
+            p_print_log("kallsyms couldn't find init_mm, trying via init_task...
+");
             P_SYM(p_init_mm) = init_task.active_mm;
-        }
-
-        if(!P_SYM(p_init_mm)){
-            p_print_log("Failed to get init_mm via kallsyms and init_task. Cannot proceed.\n");
-            return -1;
+            if(!P_SYM(p_init_mm)){
+                p_print_log("Failed to get init_mm via init_task as well. Cannot proceed.
+");
+                return -1;
+            }
         }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0)
