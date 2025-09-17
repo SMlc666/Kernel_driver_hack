@@ -130,14 +130,25 @@ int __init driver_entry(void)
 	// Test for sys_call_table
 	{
 		unsigned long *sys_call_table_addr = NULL;
+		
+		// Declare the function since it's not in a header
+		extern unsigned long * get_sys_call_table(void);
+
+		printk(KERN_INFO "[KALLSYMS_TEST] Trying kallsyms_lookup_name first...\n");
 		if (P_SYM(p_kallsyms_lookup_name)) {
 			sys_call_table_addr = (unsigned long *)P_SYM(p_kallsyms_lookup_name)("sys_call_table");
 		}
 
 		if (sys_call_table_addr) {
-			printk(KERN_INFO "[KALLSYMS_TEST] Found sys_call_table via kallsyms_lookup_name at: %px\n", sys_call_table_addr);
+			printk(KERN_INFO "[KALLSYMS_TEST] SUCCESS: Found sys_call_table via kallsyms_lookup_name at: %px\n", sys_call_table_addr);
 		} else {
-			printk(KERN_INFO "[KALLSYMS_TEST] Failed to find sys_call_table via kallsyms_lookup_name.\n");
+			printk(KERN_INFO "[KALLSYMS_TEST] INFO: kallsyms_lookup_name failed. Trying memory scan fallback...\n");
+			sys_call_table_addr = get_sys_call_table();
+			if (sys_call_table_addr) {
+				printk(KERN_INFO "[KALLSYMS_TEST] SUCCESS: Found sys_call_table via memory scan at: %px\n", sys_call_table_addr);
+			} else {
+				printk(KERN_INFO "[KALLSYMS_TEST] FAILED: Memory scan also failed to find sys_call_table.\n");
+			}
 		}
 	}
 
