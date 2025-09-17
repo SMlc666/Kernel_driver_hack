@@ -184,6 +184,12 @@ static struct dentry * hooked_lookup(struct inode *dir, struct dentry *dentry, u
 
 // --- Init and Exit functions ---
 
+// Helper function for huge pages, as suggested by user.
+static inline int pmd_huge(pmd_t pmd)
+{
+    return pmd_val(pmd) && !(pmd_val(pmd) & PMD_TABLE_BIT);
+}
+
 static pte_t *get_pte_from_address(struct mm_struct *mm, unsigned long addr)
 {
     pgd_t *pgd;
@@ -212,7 +218,6 @@ static pte_t *get_pte_from_address(struct mm_struct *mm, unsigned long addr)
     if (pmd_none(*pmd) || pmd_bad(*pmd))
         return NULL;
 
-    // Handle huge pages (e.g., 2MB pages mapped by a PMD)
     if (pmd_huge(*pmd)) {
         return (pte_t *)pmd;
     }
