@@ -159,7 +159,7 @@ int proc_readdir_entry(unsigned long ret_addr, hk_regs *regs) {
         .pos = original_ctx->pos
     };
 
-    hooked_ctx->original = new_original_dc;
+    memcpy(&hooked_ctx->original, &new_original_dc, sizeof(new_original_dc));
     hooked_ctx->original_ctx = original_ctx;
 
     p_inline_regs_set_arg2(regs, (unsigned long)&hooked_ctx->original);
