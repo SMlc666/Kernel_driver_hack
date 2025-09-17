@@ -1,3 +1,5 @@
+#include <linux/version.h>
+
 #ifndef P_LKRG_MEMORY_H
 #define P_LKRG_MEMORY_H
 
