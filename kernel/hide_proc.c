@@ -215,29 +215,24 @@ static pte_t *get_pte_from_address(unsigned long addr)
 static int write_ro_kernel_data(void *addr, void *new_val_ptr, size_t size)
 {
     pte_t *pte;
-    unsigned int level;
+    unsigned long address = (unsigned long)addr;
 
-    pte = lookup_address((unsigned long)addr, &level);
+    pte = get_pte_from_address(address);
     if (!pte) {
-        // Fallback for some architectures or kernel versions
-        pte = get_pte_from_address((unsigned long)addr);
-        if (!pte) {
-            printk(KERN_ERR "[hide_proc] Failed to get PTE for address %p\n", addr);
-            return -EFAULT;
-        }
+        printk(KERN_ERR "[hide_proc] Failed to get PTE for address %p\n", addr);
+        return -EFAULT;
     }
 
-    if (!(pte_val(*pte) & PTE_WRITE)) {
-        set_pte_atomic(pte, pte_mkwrite(*pte));
-    }
-    
-    // On ARM64, TLB must be flushed after changing permissions
-    flush_tlb_kernel_range((unsigned long)addr, (unsigned long)addr + size);
+    // Make page writable
+    set_pte(pte, pte_mkwrite(*pte));
+    flush_tlb_kernel_range(address, address + size);
 
+    // Write the data
     memcpy(addr, new_val_ptr, size);
 
-    set_pte_atomic(pte, pte_wrprotect(*pte));
-    flush_tlb_kernel_range((unsigned long)addr, (unsigned long)addr + size);
+    // Restore page protection
+    set_pte(pte, pte_wrprotect(*pte));
+    flush_tlb_kernel_range(address, address + size);
 
     return 0;
 }
