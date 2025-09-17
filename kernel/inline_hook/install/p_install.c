@@ -1,4 +1,6 @@
 #include "../p_lkrg_main.h"
+#include <linux/sched.h>
+#include <linux/sched/signal.h>
 
 #if defined(CONFIG_ARM) || defined(CONFIG_ARM64)
 bool check_function_length_enough(void *target)
