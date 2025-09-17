@@ -149,13 +149,13 @@ int proc_readdir_entry(unsigned long ret_addr, hk_regs *regs) {
     struct hooked_dir_context *hooked_ctx;
 
     if (!original_ctx || !original_ctx->actor) {
-        regs->regs[15] = (unsigned long)NULL;
+        regs->regs[19] = (unsigned long)NULL;
         return 0;
     }
 
     hooked_ctx = kmalloc(sizeof(*hooked_ctx), GFP_ATOMIC);
     if (!hooked_ctx) {
-        regs->regs[15] = (unsigned long)NULL;
+        regs->regs[19] = (unsigned long)NULL;
         return 0;
     }
 
@@ -166,13 +166,13 @@ int proc_readdir_entry(unsigned long ret_addr, hk_regs *regs) {
 
     p_inline_regs_set_arg2(regs, (unsigned long)&hooked_ctx->original);
 
-    regs->regs[15] = (unsigned long)hooked_ctx;
+    regs->regs[19] = (unsigned long)hooked_ctx;
 
     return 0;
 }
 
 int proc_readdir_ret(unsigned long ret_addr, hk_regs *regs) {
-    struct hooked_dir_context *hooked_ctx = (struct hooked_dir_context *)regs->regs[15];
+    struct hooked_dir_context *hooked_ctx = (struct hooked_dir_context *)regs->regs[19];
 
     if (hooked_ctx) {
         hooked_ctx->original_ctx->pos = hooked_ctx->original.pos;
