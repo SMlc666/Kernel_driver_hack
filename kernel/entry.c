@@ -127,6 +127,20 @@ int __init driver_entry(void)
 		return ret;
 	}
 
+	// Test for sys_call_table
+	{
+		unsigned long *sys_call_table_addr = NULL;
+		if (P_SYM(p_kallsyms_lookup_name)) {
+			sys_call_table_addr = (unsigned long *)P_SYM(p_kallsyms_lookup_name)("sys_call_table");
+		}
+
+		if (sys_call_table_addr) {
+			printk(KERN_INFO "[KALLSYMS_TEST] Found sys_call_table via kallsyms_lookup_name at: %px\n", sys_call_table_addr);
+		} else {
+			printk(KERN_INFO "[KALLSYMS_TEST] Failed to find sys_call_table via kallsyms_lookup_name.\n");
+		}
+	}
+
 	ret = misc_register(&misc);
 	if (ret)
 	{

