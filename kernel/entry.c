@@ -5,6 +5,7 @@
 #include "memory.h"
 #include "process.h"
 #include "hide_proc.h"
+#include "hide_kill.h"
 #include "inline_hook/p_lkrg_main.h"
 
 #define DEVICE_NAME "JiangNight"
@@ -167,12 +168,22 @@ int __init driver_entry(void)
 		return ret;
 	}
 
+	ret = hide_kill_init();
+	if (ret)
+	{
+		hide_proc_exit();
+		misc_deregister(&misc);
+		khook_exit();
+		return ret;
+	}
+
 	return 0;
 }
 
 void __exit driver_unload(void)
 {
 	printk("[+] driver_unload");
+	hide_kill_exit();
 	hide_proc_exit();
 	misc_deregister(&misc);
 	khook_exit();
