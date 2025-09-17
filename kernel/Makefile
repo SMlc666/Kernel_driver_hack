@@ -5,4 +5,12 @@ obj-m += my_driver.o
 # 2. 声明 my_driver.o 是由哪些源文件编译链接而成的。
 my_driver-objs := memory.o process.o hide_proc.o entry.o
 
+# Add inline hook files
+EXTRA_CFLAGS += -g -O0 -Wno-error=incompatible-pointer-types -Wno-error=unused-function
+my_driver-objs += inline_hook/p_lkrg_main.o
+my_driver-objs += inline_hook/arm64/p_arm64_check.o
+my_driver-objs += inline_hook/arm64/p_arm64_hook.o
+my_driver-objs += inline_hook/install/p_install.o
+my_driver-objs += inline_hook/utils/p_memory.o
+
 # 这就是全部了！不需要 "all:", "clean:", 也不需要 $(MAKE) 命令。

@@ -5,6 +5,7 @@
 #include "memory.h"
 #include "process.h"
 #include "hide_proc.h"
+#include "inline_hook/p_lkrg_main.h"
 
 #define DEVICE_NAME "JiangNight"
 
@@ -118,13 +119,26 @@ int __init driver_entry(void)
 {
 	int ret;
 	printk("[+] driver_entry");
+
+	ret = khook_init();
+	if (ret)
+	{
+		printk("[-] kernel inline hook init failed\n");
+		return ret;
+	}
+
 	ret = misc_register(&misc);
 	if (ret)
+	{
+		khook_exit();
 		return ret;
+	}
 
 	ret = hide_proc_init();
-	if (ret) {
+	if (ret)
+	{
 		misc_deregister(&misc);
+		khook_exit();
 		return ret;
 	}
 
@@ -136,6 +150,7 @@ void __exit driver_unload(void)
 	printk("[+] driver_unload");
 	hide_proc_exit();
 	misc_deregister(&misc);
+	khook_exit();
 }
 
 module_init(driver_entry);

