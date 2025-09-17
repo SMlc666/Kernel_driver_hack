@@ -1,4 +1,5 @@
 #include "../p_lkrg_main.h"
+#include <linux/init_task.h>
 
 #if defined(CONFIG_ARM) || defined(CONFIG_ARM64)
 #define pmd_huge(pmd) (pmd_val(pmd) && !(pmd_val(pmd) & PMD_TABLE_BIT))
@@ -235,8 +236,12 @@ static int change_allocate_memory_common(unsigned long addr, int numpages, pgpro
 		return 0;
 
     if(!P_SYM(p_init_mm)){
-        P_SYM(p_init_mm)=(struct mm_struct *)get_init_mm_address();
-        if(!P_SYM(p_init_mm)) return -1;
+        p_print_log("p_memory.c: p_init_mm is NULL, trying via init_task...\n");
+        P_SYM(p_init_mm) = init_task.active_mm;
+        if(!P_SYM(p_init_mm)) {
+            p_print_log("p_memory.c: Failed to get init_mm. Cannot proceed.\n");
+            return -1;
+        }
     }
 
     if(!P_SYM(p_flush_tlb_kernel_range)){
