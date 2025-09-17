@@ -114,8 +114,13 @@ static struct p_hook_struct proc_readdir_hook = {
     .ret_fn = proc_readdir_ret,
 };
 
+// Dummy entry function to prevent crash
+int proc_lookup_entry(unsigned long ret_addr, hk_regs *regs) {
+    return 0;
+}
+
 static struct p_hook_struct proc_lookup_hook = {
-    .entry_fn = NULL,
+    .entry_fn = proc_lookup_entry,
     .ret_fn = proc_lookup_ret,
 };
 
