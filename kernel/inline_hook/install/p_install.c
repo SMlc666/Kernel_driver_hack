@@ -184,12 +184,10 @@ int inline_hook_init(void){
         }
 
         if(!P_SYM(p_init_mm)){
-            p_print_log("kallsyms couldn't find init_mm, trying via init_task...
-");
+            p_print_log("kallsyms couldn't find init_mm, trying via init_task...\n");
             P_SYM(p_init_mm) = init_task.active_mm;
             if(!P_SYM(p_init_mm)){
-                p_print_log("Failed to get init_mm via init_task as well. Cannot proceed.
-");
+                p_print_log("Failed to get init_mm via init_task as well. Cannot proceed.\n");
                 return -1;
             }
         }
