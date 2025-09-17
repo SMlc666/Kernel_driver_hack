@@ -2,8 +2,6 @@
 
 p_lkrg_global_symbols p_global_symbols;
 
-//cat /proc/kallsyms | grep "kallsyms_lookup_name"
-//insmod arm64_hook.ko kallsyms_lookup_name_address=0xffffffc0100d4dc8
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5,7,0))
     static unsigned long kallsyms_lookup_name_address=0;
     module_param(kallsyms_lookup_name_address,ulong,S_IRUSR);
@@ -58,13 +56,12 @@ int get_kallsyms_address(void){
 }
 
 
-static int __init p_lkrg_register(void){
+int khook_init(void){
 
     int p_ret=-1;
     const struct p_functions_hooks *p_fh_it;
     int kallsyms_available = 0;
 
-    /* Try to get kallsyms_lookup_name, but don't fail if unavailable */
     if(get_kallsyms_address() == 0){
         kallsyms_available = 1;
         p_print_log("kallsyms_lookup_name available, both name lookup and direct pointer modes supported\n");
@@ -79,7 +76,6 @@ static int __init p_lkrg_register(void){
 
     for (p_fh_it = p_functions_hooks_array; p_fh_it->name != NULL; p_fh_it++) {
         if (p_fh_it->install(p_fh_it->is_sys)) {
-            /* Only fail if using name lookup mode without kallsyms */
             if(!kallsyms_available){
                 p_print_log("Hook installation failed. Consider using direct function pointer mode.\n");
             }
@@ -93,7 +89,7 @@ static int __init p_lkrg_register(void){
 }
 
 
-static void __exit p_lkrg_unregister(void){
+void khook_exit(void){
     const struct p_functions_hooks *p_fh_it;
     
     for (p_fh_it = p_functions_hooks_array; p_fh_it->name != NULL; p_fh_it++) {
@@ -102,10 +98,4 @@ static void __exit p_lkrg_unregister(void){
     p_print_log("unload success\n");
 }
 
-
-
 MODULE_LICENSE("GPL");
-rg_unregister);
-
-MODULE_LICENSE("GPL");
-;
