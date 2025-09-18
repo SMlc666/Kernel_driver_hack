@@ -11,5 +11,6 @@ my_driver-objs += inline_hook/p_lkrg_main.o
 my_driver-objs += inline_hook/p_hmem.o
 my_driver-objs += inline_hook/p_hook.o
 my_driver-objs += inline_hook/utils/p_memory.o
+my_driver-objs += inline_hook/p_transit_stubs.o
 
 # 这就是全部了！不需要 "all:", "clean:", 也不需要 $(MAKE) 命令。
