@@ -44,7 +44,7 @@ private:
 		OP_WRITE_MEM = 0x802,
 		OP_MODULE_BASE = 0x803,
 		OP_HIDE_PROC = 0x804,
-		OP_UNLOAD_MODULE = 0x805,
+		
 	};
 
 public:
@@ -169,14 +169,7 @@ public:
 		return true;
 	}
 
-	bool unload_module()
-	{
-		if (ioctl(fd, OP_UNLOAD_MODULE, 0) != 0)
-		{
-			return false;
-		}
-		return true;
-	}
+	
 };
 
 static c_driver *driver = new c_driver();

@@ -97,11 +97,7 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 		}
 		break;
 	}
-	case OP_UNLOAD_MODULE:
-	{
-		driver_unload();
-		break;
-	}
+	
 	default:
 		break;
 	}
