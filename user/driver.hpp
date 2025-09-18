@@ -74,8 +74,17 @@ public:
 			printf("[-] Authentication failed\n");
 			return false;
 		}
-        // The driver now knows our PID. We can set the target PID for operations.
-        this->pid = getpid();
+        // The driver now knows our PID.
+		return true;
+	}
+
+	bool initialize(pid_t target_pid)
+	{
+		if (!authenticate())
+		{
+			return false;
+		}
+		set_target_pid(target_pid);
 		return true;
 	}
 

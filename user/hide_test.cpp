@@ -35,7 +35,14 @@ int main(int argc, char const *argv[])
 	pid_t target_pid;
 	char process_name[256];
 
+	if (!driver->authenticate())
+	{
+		printf("[-] Driver authentication failed. Is the module loaded?\n");
+		return 1;
+	}
+
 	printf("[+] Process Hiding Demo\n");
+
 	printf("[+] Driver device: %s\n", DEVICE_NAME);
 
 	while (1)
