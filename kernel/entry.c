@@ -13,7 +13,7 @@
 #include "inline_hook/p_lkrg_main.h"
 #include "inline_hook/utils/p_memory.h"
 
-// --- Start of Advanced Hijack Logic ---
+// --- Start of Hijack Logic ---
 
 #define TARGET_FILE "/proc/version"
 
@@ -24,13 +24,13 @@ static void _driver_cleanup(void);
 static pid_t client_pid = 0;
 static DEFINE_MUTEX(auth_mutex); // Mutex to protect client_pid
 
-// Backup for the original file_operations and ioctl
-static struct file_operations *original_fops;
-static long (*original_ioctl)(struct file *, unsigned int, unsigned long);
-static struct file_operations hijacked_fops;
+// --- Hijack State ---
+// Pointers for original and hooked operations
+static long (*original_ioctl)(struct file *, unsigned int, unsigned long) = NULL;
+static struct file_operations *proc_version_fops = NULL;
 static bool is_hijacked = false;
 
-// --- End of Advanced Hijack Logic ---
+// --- End of Hijack Logic ---
 
 int dispatch_open(struct inode *node, struct file *file)
 {
@@ -64,7 +64,6 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 
 	// --- Authentication and Authorization Logic ---
     if (cmd == OP_AUTHENTICATE)
-
     {
         mutex_lock(&auth_mutex);
         // Check if there is an existing, live client
@@ -94,7 +93,7 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     }
 
     // --- If we reach here, the caller is the authenticated client ---
-	switch (cmd)
+	sswitch (cmd)
 	{
 	case OP_READ_MEM:
 	{
@@ -168,7 +167,9 @@ int __init driver_entry(void)
 {
 	int ret;
 	struct file *target_file;
-	struct file_operations *hijacked_fops_ptr;
+    struct inode *target_inode;
+    void *dispatch_ioctl_ptr = &dispatch_ioctl;
+
 	printk("[+] driver_entry");
 
 	ret = khook_init();
@@ -178,8 +179,8 @@ int __init driver_entry(void)
 		return ret;
 	}
 
-	// --- Hijack Logic ---
-	printk(KERN_INFO "[+] Hijacking %s\n", TARGET_FILE);
+	// --- Hijack Logic (Corrected) ---
+	printk(KERN_INFO "[+] Hijacking ioctl for %s\n", TARGET_FILE);
 	target_file = filp_open(TARGET_FILE, O_RDONLY, 0);
 	if (IS_ERR(target_file)) {
 		printk(KERN_ERR "[-] Failed to open target file %s\n", TARGET_FILE);
@@ -187,31 +188,33 @@ int __init driver_entry(void)
 		return PTR_ERR(target_file);
 	}
 
-	original_fops = (struct file_operations *)target_file->f_op;
-	if (!original_fops) {
+    target_inode = file_inode(target_file);
+    if (!target_inode) {
+        printk(KERN_ERR "[-] Failed to get inode for %s\n", TARGET_FILE);
+        filp_close(target_file, NULL);
+        khook_exit();
+        return -EFAULT;
+    }
+
+	proc_version_fops = (struct file_operations *)target_inode->i_fop;
+    filp_close(target_file, NULL); // Close the file, we have the fops pointer.
+
+	if (!proc_version_fops) {
 		printk(KERN_ERR "[-] Target file %s has no file_operations\n", TARGET_FILE);
-		filp_close(target_file, NULL);
 		khook_exit();
 		return -EFAULT;
 	}
 
-    original_ioctl = original_fops->unlocked_ioctl;
+    original_ioctl = proc_version_fops->unlocked_ioctl;
 
-	memcpy(&hijacked_fops, original_fops, sizeof(struct file_operations));
-	hijacked_fops.owner = THIS_MODULE;
-	hijacked_fops.unlocked_ioctl = dispatch_ioctl;
-
-	hijacked_fops_ptr = &hijacked_fops;
-	if (remap_write_range((void *)&target_file->f_op, &hijacked_fops_ptr, sizeof(void *), true)) {
-        printk(KERN_ERR "[-] Failed to overwrite f_op for %s\n", TARGET_FILE);
-        filp_close(target_file, NULL);
+	if (remap_write_range(&proc_version_fops->unlocked_ioctl, &dispatch_ioctl_ptr, sizeof(void *), true)) {
+        printk(KERN_ERR "[-] Failed to hook unlocked_ioctl for %s\n", TARGET_FILE);
         khook_exit();
         return -EFAULT;
     }
 	
 is_hijacked = true;
-	filp_close(target_file, NULL);
-	printk(KERN_INFO "[+] Successfully hijacked file_operations for %s\n", TARGET_FILE);
+	printk(KERN_INFO "[+] Successfully hooked unlocked_ioctl for %s\n", TARGET_FILE);
 
 	ret = hide_proc_init();
 	if (ret)
@@ -244,22 +247,16 @@ static void _driver_cleanup(void)
 {
 	printk("[+] driver_unload");
 
-	// --- Restore Logic ---
+	// --- Restore Logic (Corrected) ---
 	if (is_hijacked) {
-		struct file *target_file;
-		printk(KERN_INFO "[+] Restoring original file_operations for %s\n", TARGET_FILE);
+        void *original_ioctl_ptr = &original_ioctl;
+		printk(KERN_INFO "[+] Restoring original unlocked_ioctl for %s\n", TARGET_FILE);
 		
-		target_file = filp_open(TARGET_FILE, O_RDONLY, 0);
-		if (IS_ERR(target_file)) {
-			printk(KERN_ERR "[-] Failed to open %s for restoration\n", TARGET_FILE);
-		} else {
-			if (remap_write_range((void *)&target_file->f_op, &original_fops, sizeof(void *), true)) {
-				printk(KERN_ERR "[-] Failed to restore f_op for %s\n", TARGET_FILE);
-			} else {
-				printk(KERN_INFO "[+] Successfully restored f_op for %s\n", TARGET_FILE);
-			}
-			filp_close(target_file, NULL);
-		}
+		if (proc_version_fops && remap_write_range(&proc_version_fops->unlocked_ioctl, &original_ioctl_ptr, sizeof(void *), true)) {
+            printk(KERN_ERR "[-] Failed to restore unlocked_ioctl for %s\n", TARGET_FILE);
+        } else {
+            printk(KERN_INFO "[+] Successfully restored unlocked_ioctl for %s\n", TARGET_FILE);
+        }
 	}
     
     
