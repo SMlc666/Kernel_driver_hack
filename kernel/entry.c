@@ -18,7 +18,7 @@
 #define TARGET_FILE "/proc/version"
 
 // Forward declaration
-static void __exit driver_unload(void);
+static void _driver_cleanup(void);
 
 // State management
 static pid_t client_pid = 0;
@@ -92,7 +92,7 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     }
 
     // --- If we reach here, the caller is the authenticated client ---
-	switch (cmd) // <-- FIX: was sswitch
+	sswitch (cmd) // <-- FIX: was sswitch
 	{
 	case OP_READ_MEM:
 	{
@@ -212,14 +212,14 @@ is_hijacked = true;
 	ret = hide_proc_init();
 	if (ret)
 	{
-		driver_unload();
+		_driver_cleanup();
 		return ret;
 	}
 
 	ret = hide_kill_init();
 	if (ret)
 	{
-		driver_unload();
+		_driver_cleanup();
 		return ret;
 	}
 
@@ -236,7 +236,7 @@ is_hijacked = true;
 	return 0;
 }
 
-void __exit driver_unload(void)
+static void _driver_cleanup(void)
 {
 	printk("[+] driver_unload");
 
@@ -268,6 +268,11 @@ void __exit driver_unload(void)
     mutex_lock(&auth_mutex);
     client_pid = 0;
     mutex_unlock(&auth_mutex);
+}
+
+void __exit driver_unload(void)
+{
+	_driver_cleanup();
 }
 
 module_init(driver_entry);

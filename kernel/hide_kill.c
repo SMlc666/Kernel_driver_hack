@@ -62,7 +62,7 @@ int hide_kill_init(void)
     return 0;
 }
 
-void __exit hide_kill_exit(void)
+void hide_kill_exit(void)
 {
     printk(KERN_INFO "[hide_kill] Exiting kill hook.\n");
 
