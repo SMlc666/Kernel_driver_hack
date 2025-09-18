@@ -1,4 +1,8 @@
 #include "p_lkrg_main.h"
+#include <linux/vmalloc.h>
+#include "p_hmem.h"
+
+void *hook_mem_buf = NULL;
 
 p_lkrg_global_symbols p_global_symbols;
 
@@ -74,6 +78,13 @@ int khook_init(void){
         return p_ret;
     }
 
+    hook_mem_buf = vmalloc(PAGE_SIZE);
+    if (!hook_mem_buf) {
+        p_print_log("vmalloc hook_mem_buf failed\n");
+        return -ENOMEM;
+    }
+    hook_mem_add((uintptr_t)hook_mem_buf, PAGE_SIZE);
+
     for (p_fh_it = p_functions_hooks_array; p_fh_it->name != NULL; p_fh_it++) {
         if (p_fh_it->install(p_fh_it->is_sys)) {
             if(!kallsyms_available){
@@ -94,6 +105,11 @@ void khook_exit(void){
     
     for (p_fh_it = p_functions_hooks_array; p_fh_it->name != NULL; p_fh_it++) {
         p_fh_it->uninstall();   
+    }
+
+    if (hook_mem_buf) {
+        vfree(hook_mem_buf);
+        hook_mem_buf = NULL;
     }
     p_print_log("unload success\n");
 }
