@@ -248,4 +248,3 @@ void hide_proc_exit(void) {
     clear_hidden_pids();
     printk(KERN_INFO "[hide_proc] Restored /proc operations.\n");
 }
-}
