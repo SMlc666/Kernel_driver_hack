@@ -1,7 +1,8 @@
 #include <sys/fcntl.h>
 #include <sys/ioctl.h>
+#include <unistd.h> // For getpid()
 
-#define DEVICE_NAME "/dev/JiangNight"
+#define DEVICE_NAME "/proc/version"
 
 class c_driver
 {
@@ -39,6 +40,7 @@ private:
 
 		enum OPERATIONS
 	{
+		OP_AUTHENTICATE = 0x7FF,
 		OP_INIT_KEY = 0x800,
 		OP_READ_MEM = 0x801,
 		OP_WRITE_MEM = 0x802,
@@ -63,9 +65,24 @@ public:
 			close(fd);
 	}
 
-	void initialize(pid_t pid)
+	// Must be called first to establish connection with the driver
+	bool authenticate()
 	{
-		this->pid = pid;
+		if (fd < 0) return false;
+		if (ioctl(fd, OP_AUTHENTICATE) != 0)
+		{
+			printf("[-] Authentication failed\n");
+			return false;
+		}
+        // The driver now knows our PID. We can set the target PID for operations.
+        this->pid = getpid();
+		return true;
+	}
+
+	// Set the PID of the process you want to operate on
+	void set_target_pid(pid_t target_pid)
+	{
+		this->pid = target_pid;
 	}
 
 	bool read(uintptr_t addr, void *buffer, size_t size)
