@@ -350,8 +350,8 @@ u64 __attribute__((section(".transit0.text"))) __attribute__((__noinline__)) _tr
     hook_fargs0_t fargs;
     fargs.skip_origin = 0;
     fargs.chain = hook_chain;
-    s32 i; // Moved declaration to the beginning of the block
-    hook_chain0_callback func_cb; // Moved declaration to the beginning of the block
+    s32 i;
+    hook_chain0_callback func_cb;
     for (i = 0; i < hook_chain->chain_items_max; i++) {
         if (hook_chain->states[i] != CHAIN_ITEM_STATE_READY) continue;
         func_cb = hook_chain->befores[i];
@@ -364,7 +364,7 @@ u64 __attribute__((section(".transit0.text"))) __attribute__((__noinline__)) _tr
     for (i = hook_chain->chain_items_max - 1; i >= 0; i--) {
         if (hook_chain->states[i] != CHAIN_ITEM_STATE_READY) continue;
         func_cb = hook_chain->afters[i];
-        if (func) func(&fargs, hook_chain->udata[i]);
+        if (func_cb) func_cb(&fargs, hook_chain->udata[i]);
     }
     return fargs.ret;
 }
@@ -390,8 +390,8 @@ _transit4(u64 arg0, u64 arg1, u64 arg2, u64 arg3)
     fargs.arg2 = arg2;
     fargs.arg3 = arg3;
     fargs.chain = hook_chain;
-    s32 i; // Moved declaration to the beginning of the block
-    hook_chain4_callback func_cb; // Moved declaration to the beginning of the block
+    s32 i;
+    hook_chain4_callback func_cb;
     for (i = 0; i < hook_chain->chain_items_max; i++) {
         if (hook_chain->states[i] != CHAIN_ITEM_STATE_READY) continue;
         func_cb = hook_chain->befores[i];
@@ -404,7 +404,7 @@ _transit4(u64 arg0, u64 arg1, u64 arg2, u64 arg3)
     for (i = hook_chain->chain_items_max - 1; i >= 0; i--) {
         if (hook_chain->states[i] != CHAIN_ITEM_STATE_READY) continue;
         func_cb = hook_chain->afters[i];
-        if (func) func(&fargs, hook_chain->udata[i]);
+        if (func_cb) func_cb(&fargs, hook_chain->udata[i]);
     }
     return fargs.ret;
 }
@@ -436,8 +436,8 @@ _transit8(u64 arg0, u64 arg1, u64 arg2, u64 arg3, u64 arg4, u64 arg5, u64 arg6,
     fargs.arg6 = arg6;
     fargs.arg7 = arg7;
     fargs.chain = hook_chain;
-    s32 i; // Moved declaration to the beginning of the block
-    hook_chain8_callback func_cb; // Moved declaration to the beginning of the block
+    s32 i;
+    hook_chain8_callback func_cb;
     for (i = 0; i < hook_chain->chain_items_max; i++) {
         if (hook_chain->states[i] != CHAIN_ITEM_STATE_READY) continue;
         func_cb = hook_chain->befores[i];
@@ -451,7 +451,7 @@ _transit8(u64 arg0, u64 arg1, u64 arg2, u64 arg3, u64 arg4, u64 arg5, u64 arg6,
     for (i = hook_chain->chain_items_max - 1; i >= 0; i--) {
         if (hook_chain->states[i] != CHAIN_ITEM_STATE_READY) continue;
         func_cb = hook_chain->afters[i];
-        if (func) func(&fargs, hook_chain->udata[i]);
+        if (func_cb) func_cb(&fargs, hook_chain->udata[i]);
     }
     return fargs.ret;
 }
@@ -488,8 +488,8 @@ _transit12(u64 arg0, u64 arg1, u64 arg2, u64 arg3, u64 arg4, u64 arg5, u64 arg6,
     fargs.arg10 = arg10;
     fargs.arg11 = arg11;
     fargs.chain = hook_chain;
-    s32 i; // Moved declaration to the beginning of the block
-    hook_chain12_callback func_cb; // Moved declaration to the beginning of the block
+    s32 i;
+    hook_chain12_callback func_cb;
     for (i = 0; i < hook_chain->chain_items_max; i++) {
         if (hook_chain->states[i] != CHAIN_ITEM_STATE_READY) continue;
         func_cb = hook_chain->befores[i];
@@ -503,7 +503,7 @@ _transit12(u64 arg0, u64 arg1, u64 arg2, u64 arg3, u64 arg4, u64 arg5, u64 arg6,
     for (i = hook_chain->chain_items_max - 1; i >= 0; i--) {
         if (hook_chain->states[i] != CHAIN_ITEM_STATE_READY) continue;
         func_cb = hook_chain->afters[i];
-        if (func) func(&fargs, hook_chain->udata[i]);
+        if (func_cb) func_cb(&fargs, hook_chain->udata[i]);
     }
     return fargs.ret;
 }
