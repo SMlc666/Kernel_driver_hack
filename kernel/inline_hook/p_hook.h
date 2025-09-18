@@ -6,7 +6,7 @@
 #ifndef _KP_HOOK_H_
 #define _KP_HOOK_H_
 
-#include <stdint.h>
+#include <linux/types.h>
 
 #define HOOK_INTO_BRANCH_FUNC
 
@@ -29,7 +29,7 @@ enum hook_type
     FUNCTION_POINTER_CHAIN,
 };
 
-typedef int8_t chain_item_state;
+typedef s8 chain_item_state;
 
 #define CHAIN_ITEM_STATE_EMPTY 0
 #define CHAIN_ITEM_STATE_READY 1
@@ -55,16 +55,16 @@ typedef int8_t chain_item_state;
 typedef struct
 {
     // in
-    uint64_t func_addr;
-    uint64_t origin_addr;
-    uint64_t replace_addr;
-    uint64_t relo_addr;
+    u64 func_addr;
+    u64 origin_addr;
+    u64 replace_addr;
+    u64 relo_addr;
     // out
-    int32_t tramp_insts_num;
-    int32_t relo_insts_num;
-    uint32_t origin_insts[TRAMPOLINE_NUM] __attribute__((aligned(8)));
-    uint32_t tramp_insts[TRAMPOLINE_NUM] __attribute__((aligned(8)));
-    uint32_t relo_insts[RELOCATE_INST_NUM] __attribute__((aligned(8)));
+    s32 tramp_insts_num;
+    s32 relo_insts_num;
+    u32 origin_insts[TRAMPOLINE_NUM] __attribute__((aligned(8)));
+    u32 tramp_insts[TRAMPOLINE_NUM] __attribute__((aligned(8)));
+    u32 relo_insts[RELOCATE_INST_NUM] __attribute__((aligned(8)));
 } hook_t __attribute__((aligned(8)));
 
 struct _hook_chain;
@@ -77,16 +77,16 @@ typedef struct
     {
         struct
         {
-            uint64_t data0;
-            uint64_t data1;
-            uint64_t data2;
-            uint64_t data3;
-            uint64_t data4;
-            uint64_t data5;
-            uint64_t data6;
-            uint64_t data7;
+            u64 data0;
+            u64 data1;
+            u64 data2;
+            u64 data3;
+            u64 data4;
+            u64 data5;
+            u64 data6;
+            u64 data7;
         };
-        uint64_t data[HOOK_LOCAL_DATA_NUM];
+        u64 data[HOOK_LOCAL_DATA_NUM];
     };
 } hook_local_t;
 
@@ -95,13 +95,13 @@ typedef struct
     void *chain;
     int skip_origin;
     hook_local_t local;
-    uint64_t ret;
+    u64 ret;
     union
     {
         struct
         {
         };
-        uint64_t args[0];
+        u64 args[0];
     };
 } hook_fargs0_t __attribute__((aligned(8)));
 
@@ -110,17 +110,17 @@ typedef struct
     void *chain;
     int skip_origin;
     hook_local_t local;
-    uint64_t ret;
+    u64 ret;
     union
     {
         struct
         {
-            uint64_t arg0;
-            uint64_t arg1;
-            uint64_t arg2;
-            uint64_t arg3;
+            u64 arg0;
+            u64 arg1;
+            u64 arg2;
+            u64 arg3;
         };
-        uint64_t args[4];
+        u64 args[4];
     };
 } hook_fargs4_t __attribute__((aligned(8)));
 
@@ -133,21 +133,21 @@ typedef struct
     void *chain;
     int skip_origin;
     hook_local_t local;
-    uint64_t ret;
+    u64 ret;
     union
     {
         struct
         {
-            uint64_t arg0;
-            uint64_t arg1;
-            uint64_t arg2;
-            uint64_t arg3;
-            uint64_t arg4;
-            uint64_t arg5;
-            uint64_t arg6;
-            uint64_t arg7;
+            u64 arg0;
+            u64 arg1;
+            u64 arg2;
+            u64 arg3;
+            u64 arg4;
+            u64 arg5;
+            u64 arg6;
+            u64 arg7;
         };
-        uint64_t args[8];
+        u64 args[8];
     };
 } hook_fargs8_t __attribute__((aligned(8)));
 
@@ -160,25 +160,25 @@ typedef struct
     void *chain;
     int skip_origin;
     hook_local_t local;
-    uint64_t ret;
+    u64 ret;
     union
     {
         struct
         {
-            uint64_t arg0;
-            uint64_t arg1;
-            uint64_t arg2;
-            uint64_t arg3;
-            uint64_t arg4;
-            uint64_t arg5;
-            uint64_t arg6;
-            uint64_t arg7;
-            uint64_t arg8;
-            uint64_t arg9;
-            uint64_t arg10;
-            uint64_t arg11;
+            u64 arg0;
+            u64 arg1;
+            u64 arg2;
+            u64 arg3;
+            u64 arg4;
+            u64 arg5;
+            u64 arg6;
+            u64 arg7;
+            u64 arg8;
+            u64 arg9;
+            u64 arg10;
+            u64 arg11;
         };
-        uint64_t args[12];
+        u64 args[12];
     };
 } hook_fargs12_t __attribute__((aligned(8)));
 
@@ -204,41 +204,41 @@ typedef struct _hook_chain
 {
     // must be the first element
     hook_t hook;
-    int32_t chain_items_max;
+    s32 chain_items_max;
     chain_item_state states[HOOK_CHAIN_NUM];
     void *udata[HOOK_CHAIN_NUM];
     void *befores[HOOK_CHAIN_NUM];
     void *afters[HOOK_CHAIN_NUM];
-    uint32_t transit[TRANSIT_INST_NUM];
+    u32 transit[TRANSIT_INST_NUM];
 } hook_chain_t __attribute__((aligned(8)));
 
 typedef struct
 {
     uintptr_t fp_addr;
-    uint64_t replace_addr;
-    uint64_t origin_fp;
+    u64 replace_addr;
+    u64 origin_fp;
 } fp_hook_t __attribute__((aligned(8)));
 
 typedef struct _fphook_chain
 {
     fp_hook_t hook;
-    int32_t chain_items_max;
+    s32 chain_items_max;
     chain_item_state states[FP_HOOK_CHAIN_NUM];
     void *udata[FP_HOOK_CHAIN_NUM];
     void *befores[FP_HOOK_CHAIN_NUM];
     void *afters[FP_HOOK_CHAIN_NUM];
-    uint32_t transit[TRANSIT_INST_NUM];
+    u32 transit[TRANSIT_INST_NUM];
 } fp_hook_chain_t __attribute__((aligned(8)));
 
 static inline int is_bad_address(void *addr)
 {
-    return ((uint64_t)addr & 0x8000000000000000) != 0x8000000000000000;
+    return ((u64)addr & 0x8000000000000000) != 0x8000000000000000;
 }
 
-int32_t branch_from_to(uint32_t *tramp_buf, uint64_t src_addr, uint64_t dst_addr);
-int32_t branch_relative(uint32_t *buf, uint64_t src_addr, uint64_t dst_addr);
-int32_t branch_absolute(uint32_t *buf, uint64_t addr);
-int32_t ret_absolute(uint32_t *buf, uint64_t addr);
+s32 branch_from_to(u32 *tramp_buf, u64 src_addr, u64 dst_addr);
+s32 branch_relative(u32 *buf, u64 src_addr, u64 dst_addr);
+s32 branch_absolute(u32 *buf, u64 addr);
+s32 ret_absolute(u32 *buf, u64 addr);
 
 hook_err_t hook_prepare(hook_t *hook);
 void hook_install(hook_t *hook);
@@ -301,7 +301,7 @@ void hook_chain_remove(hook_chain_t *chain, void *before, void *after);
  * @param udata 
  * @return hook_err_t 
  */
-hook_err_t hook_wrap(void *func, int32_t argno, void *before, void *after, void *udata);
+hook_err_t hook_wrap(void *func, s32 argno, void *before, void *after, void *udata);
 
 /**
  * @brief 
@@ -355,7 +355,7 @@ void fp_unhook(uintptr_t fp_addr, void *backup);
  * @param udata 
  * @return hook_err_t 
  */
-hook_err_t fp_hook_wrap(uintptr_t fp_addr, int32_t argno, void *before, void *after, void *udata);
+hook_err_t fp_hook_wrap(uintptr_t fp_addr, s32 argno, void *before, void *after, void *udata);
 
 /**
  * @brief 
