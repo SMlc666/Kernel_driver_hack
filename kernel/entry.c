@@ -43,7 +43,7 @@ int dispatch_close(struct inode *node, struct file *file)
 }
 
 // Helper to check if a PID is alive
-static bool is_pid_alive(pid_t pid)
+bool is_pid_alive(pid_t pid)
 {
     struct task_struct *task;
     if (pid <= 0) return false;
