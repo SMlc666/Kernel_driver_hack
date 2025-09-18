@@ -91,9 +91,10 @@ static u64 relo_in_tramp(hook_t *hook, u64 addr)
     u64 tramp_start = hook->origin_addr;
     u64 tramp_end = tramp_start + hook->tramp_insts_num * 4;
     if (!(addr >= tramp_start && addr < tramp_end)) return addr;
+    int i; // Moved declaration to the beginning of the block
+    int j; // Moved declaration to the beginning of the block
     u32 addr_inst_index = (addr - tramp_start) / 4;
     u64 fix_addr = hook->relo_addr;
-    int i, j; // Moved declarations to the beginning of the block
     for (i = 0; i < addr_inst_index; i++) {
         inst_type_t inst = hook->origin_insts[i];
         for (j = 0; j < sizeof(relo_len) / sizeof(relo_len[0]); j++) {
@@ -350,19 +351,19 @@ u64 __attribute__((section(".transit0.text"))) __attribute__((__noinline__)) _tr
     fargs.skip_origin = 0;
     fargs.chain = hook_chain;
     s32 i; // Moved declaration to the beginning of the block
-    hook_chain0_callback func; // Moved declaration to the beginning of the block
+    hook_chain0_callback func_cb; // Moved declaration to the beginning of the block
     for (i = 0; i < hook_chain->chain_items_max; i++) {
         if (hook_chain->states[i] != CHAIN_ITEM_STATE_READY) continue;
-        hook_chain0_callback func = hook_chain->befores[i];
-        if (func) func(&fargs, hook_chain->udata[i]);
+        func_cb = hook_chain->befores[i];
+        if (func_cb) func_cb(&fargs, hook_chain->udata[i]);
     }
     if (!fargs.skip_origin) {
         transit0_func_t origin_func = (transit0_func_t)hook_chain->hook.relo_addr;
         fargs.ret = origin_func();
     }
-    for (s32 i = hook_chain->chain_items_max - 1; i >= 0; i--) {
+    for (i = hook_chain->chain_items_max - 1; i >= 0; i--) {
         if (hook_chain->states[i] != CHAIN_ITEM_STATE_READY) continue;
-        hook_chain0_callback func = hook_chain->afters[i];
+        func_cb = hook_chain->afters[i];
         if (func) func(&fargs, hook_chain->udata[i]);
     }
     return fargs.ret;
@@ -390,19 +391,19 @@ _transit4(u64 arg0, u64 arg1, u64 arg2, u64 arg3)
     fargs.arg3 = arg3;
     fargs.chain = hook_chain;
     s32 i; // Moved declaration to the beginning of the block
-    hook_chain4_callback func; // Moved declaration to the beginning of the block
+    hook_chain4_callback func_cb; // Moved declaration to the beginning of the block
     for (i = 0; i < hook_chain->chain_items_max; i++) {
         if (hook_chain->states[i] != CHAIN_ITEM_STATE_READY) continue;
-        hook_chain4_callback func = hook_chain->befores[i];
-        if (func) func(&fargs, hook_chain->udata[i]);
+        func_cb = hook_chain->befores[i];
+        if (func_cb) func_cb(&fargs, hook_chain->udata[i]);
     }
     if (!fargs.skip_origin) {
         transit4_func_t origin_func = (transit4_func_t)hook_chain->hook.relo_addr;
         fargs.ret = origin_func(fargs.arg0, fargs.arg1, fargs.arg2, fargs.arg3);
     }
-    for (s32 i = hook_chain->chain_items_max - 1; i >= 0; i--) {
+    for (i = hook_chain->chain_items_max - 1; i >= 0; i--) {
         if (hook_chain->states[i] != CHAIN_ITEM_STATE_READY) continue;
-        hook_chain4_callback func = hook_chain->afters[i];
+        func_cb = hook_chain->afters[i];
         if (func) func(&fargs, hook_chain->udata[i]);
     }
     return fargs.ret;
@@ -436,20 +437,20 @@ _transit8(u64 arg0, u64 arg1, u64 arg2, u64 arg3, u64 arg4, u64 arg5, u64 arg6,
     fargs.arg7 = arg7;
     fargs.chain = hook_chain;
     s32 i; // Moved declaration to the beginning of the block
-    hook_chain8_callback func; // Moved declaration to the beginning of the block
+    hook_chain8_callback func_cb; // Moved declaration to the beginning of the block
     for (i = 0; i < hook_chain->chain_items_max; i++) {
         if (hook_chain->states[i] != CHAIN_ITEM_STATE_READY) continue;
-        hook_chain8_callback func = hook_chain->befores[i];
-        if (func) func(&fargs, hook_chain->udata[i]);
+        func_cb = hook_chain->befores[i];
+        if (func_cb) func_cb(&fargs, hook_chain->udata[i]);
     }
     if (!fargs.skip_origin) {
         transit8_func_t origin_func = (transit8_func_t)hook_chain->hook.relo_addr;
         fargs.ret =
             origin_func(fargs.arg0, fargs.arg1, fargs.arg2, fargs.arg3, fargs.arg4, fargs.arg5, fargs.arg6, fargs.arg7);
     }
-    for (s32 i = hook_chain->chain_items_max - 1; i >= 0; i--) {
+    for (i = hook_chain->chain_items_max - 1; i >= 0; i--) {
         if (hook_chain->states[i] != CHAIN_ITEM_STATE_READY) continue;
-        hook_chain8_callback func = hook_chain->afters[i];
+        func_cb = hook_chain->afters[i];
         if (func) func(&fargs, hook_chain->udata[i]);
     }
     return fargs.ret;
@@ -488,20 +489,20 @@ _transit12(u64 arg0, u64 arg1, u64 arg2, u64 arg3, u64 arg4, u64 arg5, u64 arg6,
     fargs.arg11 = arg11;
     fargs.chain = hook_chain;
     s32 i; // Moved declaration to the beginning of the block
-    hook_chain12_callback func; // Moved declaration to the beginning of the block
+    hook_chain12_callback func_cb; // Moved declaration to the beginning of the block
     for (i = 0; i < hook_chain->chain_items_max; i++) {
         if (hook_chain->states[i] != CHAIN_ITEM_STATE_READY) continue;
-        hook_chain12_callback func = hook_chain->befores[i];
-        if (func) func(&fargs, hook_chain->udata[i]);
+        func_cb = hook_chain->befores[i];
+        if (func_cb) func_cb(&fargs, hook_chain->udata[i]);
     }
     if (!fargs.skip_origin) {
         transit12_func_t origin_func = (transit12_func_t)hook_chain->hook.relo_addr;
         fargs.ret = origin_func(fargs.arg0, fargs.arg1, fargs.arg2, fargs.arg3, fargs.arg4, fargs.arg5, fargs.arg6,
                                 fargs.arg7, fargs.arg8, fargs.arg9, fargs.arg10, fargs.arg11);
     }
-    for (s32 i = hook_chain->chain_items_max - 1; i >= 0; i--) {
+    for (i = hook_chain->chain_items_max - 1; i >= 0; i--) {
         if (hook_chain->states[i] != CHAIN_ITEM_STATE_READY) continue;
-        hook_chain12_callback func = hook_chain->afters[i];
+        func_cb = hook_chain->afters[i];
         if (func) func(&fargs, hook_chain->udata[i]);
     }
     return fargs.ret;
@@ -578,7 +579,7 @@ hook_err_t hook_prepare(hook_t *hook)
     hook->tramp_insts_num = branch_from_to(hook->tramp_insts, hook->origin_addr, hook->replace_addr);
 
     // relocate
-    for (int i = 0; i < sizeof(hook->relo_insts) / sizeof(hook->relo_insts[0]); i++) {
+    for (i = 0; i < sizeof(hook->relo_insts) / sizeof(hook->relo_insts[0]); i++) {
         hook->relo_insts[i] = ARM64_NOP;
     }
 
@@ -587,7 +588,7 @@ hook_err_t hook_prepare(hook_t *hook)
     bti[1] = ARM64_NOP;
     hook->relo_insts_num += 2;
 
-    for (int i = 0; i < hook->tramp_insts_num; i++) {
+    for (i = 0; i < hook->tramp_insts_num; i++) {
         u64 inst_addr = hook->origin_addr + i * 4;
         u32 inst = hook->origin_insts[i];
         hook_err_t relo_res = relocate_inst(hook, inst_addr, inst);
@@ -690,7 +691,7 @@ static hook_err_t hook_chain_prepare(u32 *transit, s32 argno)
 
     transit[0] = ARM64_BTI_JC;
     transit[1] = ARM64_NOP;
-    int i; // Moved declaration to the beginning of the block
+    int i;
     for (i = 0; i < transit_num; i++) {
         transit[i + 2] = ((u32 *)transit_start)[i];
     }
