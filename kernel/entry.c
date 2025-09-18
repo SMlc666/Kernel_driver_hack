@@ -18,6 +18,12 @@
 
 #define TARGET_FILE "/proc/version"
 
+// Forward declaration to fix implicit declaration error
+static void __exit driver_unload(void);
+
+// Extern declaration for the tracepoint symbol
+extern struct tracepoint __tracepoint_sched_process_exit;
+
 // State management
 static pid_t client_pid = 0;
 static DEFINE_MUTEX(auth_mutex); // Mutex to protect client_pid
@@ -55,6 +61,10 @@ int dispatch_close(struct inode *node, struct file *file)
 
 long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned long const arg)
 {
+    // Move declarations to the top of the function block
+	static COPY_MEMORY cm;
+	static MODULE_BASE mb;
+
 	// --- Authentication and Authorization Logic ---
     if (cmd == OP_AUTHENTICATE)
     {
@@ -80,10 +90,7 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     }
 
     // --- If we reach here, the caller is the authenticated client ---
-	static COPY_MEMORY cm;
-	static MODULE_BASE mb;
-
-	switch (cmd)
+	sswitch (cmd)
 	{
 	case OP_READ_MEM:
 	{
@@ -168,7 +175,7 @@ int __init driver_entry(void)
 	}
 
     // --- Register Tracepoint ---
-    ret = tracepoint_probe_register("sched_process_exit", (void *)process_exit_probe, NULL);
+    ret = tracepoint_probe_register(&__tracepoint_sched_process_exit, (void *)process_exit_probe, NULL);
     if (ret) {
         printk(KERN_ERR "[-] Failed to register tracepoint\n");
         khook_exit();
@@ -181,7 +188,7 @@ int __init driver_entry(void)
 	target_file = filp_open(TARGET_FILE, O_RDONLY, 0);
 	if (IS_ERR(target_file)) {
 		printk(KERN_ERR "[-] Failed to open target file %s\n", TARGET_FILE);
-        tracepoint_probe_unregister("sched_process_exit", (void *)process_exit_probe, NULL);
+        tracepoint_probe_unregister(&__tracepoint_sched_process_exit, (void *)process_exit_probe, NULL);
 		khook_exit();
 		return PTR_ERR(target_file);
 	}
@@ -190,7 +197,7 @@ int __init driver_entry(void)
 	if (!original_fops) {
 		printk(KERN_ERR "[-] Target file %s has no file_operations\n", TARGET_FILE);
 		filp_close(target_file, NULL);
-        tracepoint_probe_unregister("sched_process_exit", (void *)process_exit_probe, NULL);
+        tracepoint_probe_unregister(&__tracepoint_sched_process_exit, (void *)process_exit_probe, NULL);
 		khook_exit();
 		return -EFAULT;
 	}
@@ -205,12 +212,12 @@ int __init driver_entry(void)
 	if (remap_write_range((void *)&target_file->f_op, &hijacked_fops, sizeof(void *), true)) {
         printk(KERN_ERR "[-] Failed to overwrite f_op for %s\n", TARGET_FILE);
         filp_close(target_file, NULL);
-        tracepoint_probe_unregister("sched_process_exit", (void *)process_exit_probe, NULL);
+        tracepoint_probe_unregister(&__tracepoint_sched_process_exit, (void *)process_exit_probe, NULL);
         khook_exit();
         return -EFAULT;
     }
 	
-is_hijacked = true;
+	is_hijacked = true;
 	filp_close(target_file, NULL);
 	printk(KERN_INFO "[+] Successfully hijacked file_operations for %s\n", TARGET_FILE);
 
@@ -264,7 +271,7 @@ void __exit driver_unload(void)
 	}
     
     // --- Unregister Tracepoint ---
-    tracepoint_probe_unregister("sched_process_exit", (void *)process_exit_probe, NULL);
+    tracepoint_probe_unregister(&__tracepoint_sched_process_exit, (void *)process_exit_probe, NULL);
     printk(KERN_INFO "[+] sched_process_exit tracepoint unregistered.\n");
 
 	hide_kill_exit();
