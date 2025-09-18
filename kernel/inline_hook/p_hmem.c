@@ -24,7 +24,8 @@ typedef struct
 
 int hook_mem_add(u64 start, s32 size)
 {
-    for (u64 i = start; i < start + size; i += 8) {
+    u64 i; // Moved declaration to the beginning of the block
+    for (i = start; i < start + size; i += 8) {
         *(u64 *)i = 0;
     }
     mem_region_start = start;
@@ -35,7 +36,9 @@ int hook_mem_add(u64 start, s32 size)
 void *hook_mem_zalloc(uintptr_t origin_addr, enum hook_type type)
 {
     u64 start = mem_region_start;
-    for (u64 addr = start; addr < mem_region_end; addr += sizeof(hook_mem_warp_t)) {
+    u64 addr; // Moved declaration to the beginning of the block
+    uintptr_t i; // Moved declaration to the beginning of the block
+    for (addr = start; addr < mem_region_end; addr += sizeof(hook_mem_warp_t)) {
         hook_mem_warp_t *wrap = (hook_mem_warp_t *)addr;
         if (wrap->using) continue;
 
@@ -43,7 +46,7 @@ void *hook_mem_zalloc(uintptr_t origin_addr, enum hook_type type)
         wrap->addr = origin_addr;
         wrap->type = type;
 
-        for (uintptr_t i = (uintptr_t)&wrap->chain; i < (uintptr_t)&wrap->chain + sizeof(wrap->chain); i += 8) {
+        for (i = (uintptr_t)&wrap->chain; i < (uintptr_t)&wrap->chain + sizeof(wrap->chain); i += 8) {
             *(u64 *)i = 0;
         }
 
@@ -65,8 +68,9 @@ void hook_mem_free(void *hook_mem)
 void *hook_get_mem_from_origin(u64 origin_addr)
 {
     u64 start = mem_region_start;
+    u64 addr; // Moved declaration to the beginning of the block
 
-    for (u64 addr = start; addr < mem_region_end; addr += sizeof(hook_mem_warp_t)) {
+    for (addr = start; addr < mem_region_end; addr += sizeof(hook_mem_warp_t)) {
         hook_mem_warp_t *wrap = (hook_mem_warp_t *)addr;
         if (wrap->using && wrap->addr == origin_addr) {
             return &wrap->chain;
