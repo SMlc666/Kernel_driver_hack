@@ -10,7 +10,6 @@ EXTRA_CFLAGS += -g -O0 -Wno-error=incompatible-pointer-types -Wno-error=unused-f
 my_driver-objs += inline_hook/p_lkrg_main.o
 my_driver-objs += inline_hook/p_hmem.o
 my_driver-objs += inline_hook/p_hook.o
-my_driver-objs += inline_hook/install/p_install.o
 my_driver-objs += inline_hook/utils/p_memory.o
 
 # 这就是全部了！不需要 "all:", "clean:", 也不需要 $(MAKE) 命令。

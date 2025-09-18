@@ -1,6 +1,9 @@
 #include "p_lkrg_main.h"
 #include <linux/vmalloc.h>
 #include "p_hmem.h"
+#include <linux/sched.h>
+#include <linux/sched/signal.h>
+#include <linux/init_task.h>
 
 void *hook_mem_buf = NULL;
 
@@ -11,12 +14,88 @@ p_lkrg_global_symbols p_global_symbols;
     module_param(kallsyms_lookup_name_address,ulong,S_IRUSR);
 #endif
 
+unsigned long * get_sys_call_table(void){
+	unsigned long* p_etext = NULL;
+    unsigned long* p_init_begin = NULL;
+
+#if defined(CONFIG_ARM64)
+	unsigned long** syscall_table = NULL;
+    unsigned long* p_sys_close = NULL;
+    unsigned long* p_sys_read = NULL;
+	unsigned long i;
+	const char *read_names[] = {"__arm64_sys_read", "SyS_read", "sys_read", NULL};
+    const char *close_names[] = {"__arm64_sys_close", "SyS_close", "sys_close", NULL};
+#elif defined(CONFIG_ARM)
+	unsigned long** syscall_table = NULL;
+    unsigned long* p_sys_close = NULL;
+    unsigned long* p_sys_read = NULL;
+	unsigned long i;
+	const char *read_names[] = {"sys_read", "SyS_read", NULL};
+    const char *close_names[] = {"sys_close", "SyS_close", NULL};
+#elif defined(CONFIG_X86_64)
+	unsigned long** syscall_table = NULL;
+	unsigned long* p_sys_close=NULL;
+	unsigned long* p_sys_read=NULL;
+	unsigned long i;
+	const char *read_names[] = {"__x64_sys_read", "SyS_read", "sys_read", NULL};
+    const char *close_names[] = {"__x64_sys_close", "SyS_close", "sys_close", NULL};
+#elif defined(CONFIG_X86_32)
+	unsigned long** syscall_table = NULL;
+	unsigned long* p_sys_close=NULL;
+	unsigned long* p_sys_read=NULL;
+	unsigned long i;
+	const char *read_names[] = {"__ia32_sys_read", "SyS_read", "sys_read", NULL};
+    const char *close_names[] = {"__ia32_sys_close", "SyS_close", "sys_close", NULL};
+#endif
+
+p_etext = (unsigned long*)P_SYM(p_kallsyms_lookup_name)("_etext");
+    if(!p_etext) return NULL;
+
+p_init_begin = (unsigned long*)P_SYM(p_kallsyms_lookup_name)("__init_begin");
+	if(!p_init_begin) return NULL;
+
+#if defined(CONFIG_ARM64) || defined(CONFIG_ARM) || defined(CONFIG_X86_64) || defined(CONFIG_X86_32)
+	for (i = 0; close_names[i]; i++) {
+        p_sys_close = (unsigned long*)P_SYM(p_kallsyms_lookup_name)(close_names[i]);
+        if (p_sys_close) {
+			printk(KERN_INFO "[get_sys_call_table] Found close symbol: %s\n", close_names[i]);
+			break;
+		}
+    }
+    if (!p_sys_close) {
+		printk(KERN_ERR "[get_sys_call_table] Failed to find any close symbol.\n");
+		return NULL;
+	}
+
+    for (i = 0; read_names[i]; i++) {
+        p_sys_read = (unsigned long*)P_SYM(p_kallsyms_lookup_name)(read_names[i]);
+        if (p_sys_read) {
+			printk(KERN_INFO "[get_sys_call_table] Found read symbol: %s\n", read_names[i]);
+			break;
+		}
+    }
+    if (!p_sys_read) {
+		printk(KERN_ERR "[get_sys_call_table] Failed to find any read symbol.\n");
+		return NULL;
+	}
+
+	for(i = (unsigned long)p_etext;i < (unsigned long)p_init_begin;i += sizeof(void*)){
+		syscall_table = (unsigned long**)i;
+		if((syscall_table[__NR_close] == (unsigned long*)p_sys_close) && (syscall_table[__NR_read] == (unsigned long*)p_sys_read)){
+            return (unsigned long *)syscall_table;
+        }
+	}
+#endif
+
+	return NULL;
+}
+
 static const struct p_functions_hooks{
     const char *name;
     int (*install)(int p_isra);
     void (*uninstall)(void);
     int is_sys;
-}p_functions_hooks_array[]={    
+}p_functions_hooks_array[]={
     {NULL,NULL,NULL,0}
 };
 
@@ -71,11 +150,6 @@ int khook_init(void){
         p_print_log("kallsyms_lookup_name available, both name lookup and direct pointer modes supported\n");
     }else{
         p_print_log("kallsyms_lookup_name not available, only direct pointer mode supported\n");
-    }
-
-    if(inline_hook_init()!=0){
-        p_print_log("init failed\n");
-        return p_ret;
     }
 
     hook_mem_buf = vmalloc(PAGE_SIZE);

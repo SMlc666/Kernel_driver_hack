@@ -223,17 +223,6 @@ typedef struct _p_lkrg_global_symbols_structure
 
 }p_lkrg_global_symbols;
 
-#if defined(CONFIG_X86)
-#include "x86/p_x86_hook.h"
-#elif defined(CONFIG_ARM64)
-#include "arm64/p_arm64_hook.h"
-#include "arm64/p_arm64_check.h"
-#elif defined(CONFIG_ARM)
-#include "arm32/p_arm32_hook.h"
-#include "arm32/p_arm32_check.h"
-#endif
-
-#include "install/p_install.h"
 #include "utils/p_memory.h"
 #include "utils/p_parameter.h"
 
@@ -243,5 +232,6 @@ extern p_lkrg_global_symbols p_global_symbols;
 
 int khook_init(void);
 void khook_exit(void);
+unsigned long * get_sys_call_table(void);
 
 #endif

