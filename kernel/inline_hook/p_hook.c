@@ -726,7 +726,8 @@ hook_err_t hook_chain_add(hook_chain_t *chain, void *before, void *after, void *
 
 void hook_chain_remove(hook_chain_t *chain, void *before, void *after)
 {
-    for (int i = 0; i < HOOK_CHAIN_NUM; i++) {
+    int i; // Moved declaration to the beginning of the block
+    for (i = 0; i < HOOK_CHAIN_NUM; i++) {
         if (chain->states[i] == CHAIN_ITEM_STATE_READY)
             if ((before && chain->befores[i] == before) || (after && chain->afters[i] == after)) {
                 chain->states[i] = CHAIN_ITEM_STATE_BUSY;
@@ -789,7 +790,8 @@ void hook_unwrap_remove(void *func, void *before, void *after, int remove)
     hook_chain_remove(chain, before, after);
     if (!remove) return;
     // todo:
-    for (int i = 0; i < HOOK_CHAIN_NUM; i++) {
+    int i; // Moved declaration to the beginning of the block
+    for (i = 0; i < HOOK_CHAIN_NUM; i++) {
         if (chain->states[i] != CHAIN_ITEM_STATE_EMPTY) return;
     }
     hook_chain_uninstall(chain);
