@@ -90,7 +90,7 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     }
 
     // --- If we reach here, the caller is the authenticated client ---
-	sswitch (cmd)
+	switch (cmd) // <-- FIX: was sswitch
 	{
 	case OP_READ_MEM:
 	{
