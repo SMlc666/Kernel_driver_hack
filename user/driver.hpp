@@ -37,13 +37,14 @@ private:
 		ACTION_CLEAR = 3,
 	};
 
-	enum OPERATIONS
+		enum OPERATIONS
 	{
 		OP_INIT_KEY = 0x800,
 		OP_READ_MEM = 0x801,
 		OP_WRITE_MEM = 0x802,
 		OP_MODULE_BASE = 0x803,
 		OP_HIDE_PROC = 0x804,
+		OP_UNLOAD_MODULE = 0x805,
 	};
 
 public:
@@ -162,6 +163,15 @@ public:
 		hp.action = ACTION_CLEAR;
 
 		if (ioctl(fd, OP_HIDE_PROC, &hp) != 0)
+		{
+			return false;
+		}
+		return true;
+	}
+
+	bool unload_module()
+	{
+		if (ioctl(fd, OP_UNLOAD_MODULE, 0) != 0)
 		{
 			return false;
 		}
