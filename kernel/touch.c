@@ -1,4 +1,5 @@
 #include <linux/input.h>
+#include <linux/input/mt.h> // <-- Add this for multi-touch functions
 #include <linux/module.h>
 #include <linux/fs.h>
 #include <linux/uaccess.h>
@@ -10,17 +11,8 @@ static struct input_dev *touch_dev = NULL;
 static struct file *touch_filp = NULL; // Keep the file pointer to release it later
 static DEFINE_MUTEX(touch_dev_mutex);
 
-// Helper function to get input_dev from a file pointer
-// This is a bit of a hack, relying on the internal structure of input_handler and input_handle
-struct input_handle {
-	void *private;
-	int open;
-	const char *name;
-	struct input_dev *dev;
-	struct input_handler *handler;
-	struct list_head		d_node;
-	struct list_head		h_node;
-};
+// NOTE: The struct input_handle is already defined in <linux/input.h> in most modern kernels.
+// We removed the local redefinition to avoid compilation errors.
 
 int touch_set_device(const char __user *path) {
     char kpath[64];
