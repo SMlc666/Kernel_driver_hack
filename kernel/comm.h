@@ -60,9 +60,7 @@ typedef struct _TOUCH_DATA
     bool is_down; // overall touch state
     TOUCH_POINT points[MAX_TOUCH_POINTS];
 } TOUCH_DATA, *PTOUCH_DATA;
-
-
-typedef struct _TOUCH_INIT_DATA
+#endif // COMM_Hstruct _TOUCH_INIT_DATA
 {
     int max_x;
     int max_y;

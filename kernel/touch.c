@@ -2,146 +2,90 @@
 #include <linux/module.h>
 #include <linux/fs.h>
 #include <linux/uaccess.h>
-#include <linux/input/mt.h>
 #include "touch.h"
 #include "comm.h"
 
-// We need to define the uinput structure ourselves as we are in kernel space.
-// This is a stable ABI, so it's safe to do.
-#define UINPUT_MAX_NAME_SIZE    80
-struct uinput_user_dev {
-    char name[UINPUT_MAX_NAME_SIZE];
-    struct input_id id;
-    __u32 ff_effects_max;
-    __s32 absmax[ABS_MAX + 1];
-    __s32 absmin[ABS_MAX + 1];
-    __s32 absfuzz[ABS_MAX + 1];
-    __s32 absflat[ABS_MAX + 1];
-};
-
-// ioctl commands for uinput
-#define UINPUT_IOCTL_BASE 'U'
-#define UI_DEV_CREATE  _IO(UINPUT_IOCTL_BASE, 1)
-#define UI_DEV_DESTROY _IO(UINPUT_IOCTL_BASE, 2)
-#define UI_SET_EVBIT   _IOW(UINPUT_IOCTL_BASE, 100, int)
-#define UI_SET_KEYBIT  _IOW(UINPUT_IOCTL_BASE, 101, int)
-#define UI_SET_ABSBIT  _IOW(UINPUT_IOCTL_BASE, 103, int)
-
-
-// --- Our global variables ---
+// --- Global variables ---
 static struct input_dev *touch_dev = NULL;
+static struct file *touch_filp = NULL; // Keep the file pointer to release it later
 static DEFINE_MUTEX(touch_dev_mutex);
 
-// Forward declaration
-long uinput_ioctl(struct file *file, unsigned int cmd, unsigned long arg);
+// Helper function to get input_dev from a file pointer
+// This is a bit of a hack, relying on the internal structure of input_handler and input_handle
+struct input_handle {
+	void *private;
+	int open;
+	const char *name;
+	struct input_dev *dev;
+	struct input_handler *handler;
+	struct list_head		d_node;
+	struct list_head		h_node;
+};
 
-
-int touch_init(PTOUCH_INIT_DATA data) {
-    struct file *filp;
-    struct uinput_user_dev uidev;
-    long ret;
-    void *private_data_ptr;
+int touch_set_device(const char __user *path) {
+    char kpath[64];
+    struct input_handle *handle;
 
     mutex_lock(&touch_dev_mutex);
 
     if (touch_dev) {
-        printk(KERN_INFO "[TOUCH] Already initialized.\n");
+        printk(KERN_INFO "[TOUCH] Device already set. Deinitializing first.\n");
+        // Release previous device if any
+        if (touch_filp) {
+            filp_close(touch_filp, NULL);
+            touch_filp = NULL;
+        }
+        if (touch_dev) {
+            input_put_device(touch_dev);
+            touch_dev = NULL;
+        }
+    }
+
+    if (strncpy_from_user(kpath, path, sizeof(kpath) - 1) < 0) {
         mutex_unlock(&touch_dev_mutex);
-        return 0;
+        return -EFAULT;
     }
+    kpath[sizeof(kpath) - 1] = '\0';
 
-    printk(KERN_INFO "[TOUCH] Creating temporary uinput device to get handle...\n");
-
-    filp = filp_open("/dev/uinput", O_WRONLY | O_NONBLOCK, 0);
-    if (IS_ERR(filp)) {
-        printk(KERN_ERR "[TOUCH] Failed to open /dev/uinput. Error %ld\n", PTR_ERR(filp));
+    printk(KERN_INFO "[TOUCH] Opening real touch device: %s\n", kpath);
+    touch_filp = filp_open(kpath, O_RDWR, 0);
+    if (IS_ERR(touch_filp)) {
+        printk(KERN_ERR "[TOUCH] Failed to open %s. Error %ld\n", kpath, PTR_ERR(touch_filp));
+        touch_filp = NULL;
         mutex_unlock(&touch_dev_mutex);
-        return PTR_ERR(filp);
+        return PTR_ERR(touch_filp);
     }
 
-    memset(&uidev, 0, sizeof(uidev));
-    snprintf(uidev.name, UINPUT_MAX_NAME_SIZE, "internal-touch-handle");
-    uidev.id.bustype = BUS_VIRTUAL;
-    uidev.id.vendor  = 0x1234;
-    uidev.id.product = 0x5678;
-    uidev.id.version = 1;
-
-    // Setup capabilities
-    uinput_ioctl(filp, UI_SET_EVBIT, EV_KEY);
-    uinput_ioctl(filp, UI_SET_KEYBIT, BTN_TOUCH);
-    uinput_ioctl(filp, UI_SET_KEYBIT, BTN_TOOL_FINGER);
-    
-    uinput_ioctl(filp, UI_SET_EVBIT, EV_ABS);
-    uinput_ioctl(filp, UI_SET_ABSBIT, ABS_MT_POSITION_X);
-    uinput_ioctl(filp, UI_SET_ABSBIT, ABS_MT_POSITION_Y);
-    uinput_ioctl(filp, UI_SET_ABSBIT, ABS_MT_TRACKING_ID);
-    uinput_ioctl(filp, UI_SET_ABSBIT, ABS_MT_TOUCH_MAJOR);
-    uinput_ioctl(filp, UI_SET_ABSBIT, ABS_MT_WIDTH_MAJOR);
-    uinput_ioctl(filp, UI_SET_ABSBIT, ABS_MT_TOUCH_MINOR);
-
-    uidev.absmin[ABS_MT_POSITION_X] = 0;
-    uidev.absmax[ABS_MT_POSITION_X] = data->max_x > 0 ? data->max_x : 1080;
-    uidev.absmin[ABS_MT_POSITION_Y] = 0;
-    uidev.absmax[ABS_MT_POSITION_Y] = data->max_y > 0 ? data->max_y : 1920;
-    uidev.absmin[ABS_MT_TRACKING_ID] = 0;
-    uidev.absmax[ABS_MT_TRACKING_ID] = 65535;
-    uidev.absmin[ABS_MT_TOUCH_MAJOR] = 0;
-    uidev.absmax[ABS_MT_TOUCH_MAJOR] = 255;
-    uidev.absmin[ABS_MT_WIDTH_MAJOR] = 0;
-    uidev.absmax[ABS_MT_WIDTH_MAJOR] = 255;
-    uidev.absmin[ABS_MT_TOUCH_MINOR] = 0;
-    uidev.absmax[ABS_MT_TOUCH_MINOR] = 255;
-
-    ret = kernel_write(filp, (char *)&uidev, sizeof(uidev), &filp->f_pos);
-    if (ret != sizeof(uidev)) {
-        printk(KERN_ERR "[TOUCH] Failed to write to uinput device. Error %ld\n", ret);
-        goto fail;
+    // The input_dev is usually stored in private_data of the file struct,
+    // but it's wrapped in an input_handle.
+    handle = (struct input_handle *)touch_filp->private_data;
+    if (!handle || !handle->dev) {
+        printk(KERN_ERR "[TOUCH] Could not get input_handle or input_dev from file.\n");
+        filp_close(touch_filp, NULL);
+        touch_filp = NULL;
+        mutex_unlock(&touch_dev_mutex);
+        return -EFAULT;
     }
 
-    ret = uinput_ioctl(filp, UI_DEV_CREATE, 0);
-    if (ret < 0) {
-        printk(KERN_ERR "[TOUCH] Failed to create uinput device. Error %ld\n", ret);
-        goto fail;
-    }
+    touch_dev = handle->dev;
+    input_get_device(touch_dev); // Increment ref count to hold onto it
 
-    // --- The most important part ---
-    // The uinput driver stores the created input_dev in private_data.
-    // We need to know the internal structure of uinput_cdev_struct to get it.
-    // struct uinput_cdev_struct { struct input_dev *dev; ... };
-    // So, private_data is a pointer to this struct. We can dereference it once.
-    private_data_ptr = filp->private_data;
-    if (!private_data_ptr) {
-         printk(KERN_ERR "[TOUCH] uinput private_data is NULL.\n");
-         goto fail;
-    }
-    touch_dev = *(struct input_dev **)private_data_ptr;
-    if (!touch_dev) {
-        printk(KERN_ERR "[TOUCH] Failed to get input_dev from uinput private_data.\n");
-        goto fail;
-    }
-    
-    // We got the handle, now increment its ref count so it stays even after we destroy the uinput device
-    input_get_device(touch_dev);
-    printk(KERN_INFO "[TOUCH] Successfully acquired handle to virtual device: %s\n", touch_dev->name);
-
-    // Destroy the temporary uinput device immediately
-    uinput_ioctl(filp, UI_DEV_DESTROY, 0);
-    filp_close(filp, NULL);
+    printk(KERN_INFO "[TOUCH] Successfully hijacked device: %s\n", touch_dev->name);
 
     mutex_unlock(&touch_dev_mutex);
     return 0;
-
-fail:
-    filp_close(filp, NULL);
-    mutex_unlock(&touch_dev_mutex);
-    return -EFAULT;
 }
 
 void touch_deinit(void) {
     mutex_lock(&touch_dev_mutex);
+    if (touch_filp) {
+        printk(KERN_INFO "[TOUCH] Closing hijacked device file.\n");
+        filp_close(touch_filp, NULL);
+        touch_filp = NULL;
+    }
     if (touch_dev) {
-        printk(KERN_INFO "[TOUCH] Deinitializing and releasing touch device handle.\n");
-        input_put_device(touch_dev); // This will now properly release the device
+        printk(KERN_INFO "[TOUCH] Releasing hijacked device handle.\n");
+        input_put_device(touch_dev);
         touch_dev = NULL;
     }
     mutex_unlock(&touch_dev_mutex);
@@ -183,14 +127,4 @@ void touch_send_event(PTOUCH_DATA data) {
 
     input_sync(touch_dev);
     mutex_unlock(&touch_dev_mutex);
-}
-
-// Helper to call the ioctl method of the uinput file operations
-long uinput_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
-{
-    long ret = -ENOTTY;
-    if (file->f_op && file->f_op->unlocked_ioctl) {
-        ret = file->f_op->unlocked_ioctl(file, cmd, arg);
-    }
-    return ret;
 }

@@ -159,14 +159,10 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 		}
 		break;
 	}
-	case OP_TOUCH_INIT:
+	case OP_TOUCH_SET_DEVICE:
 	{
-		static TOUCH_INIT_DATA tid;
-		if (copy_from_user(&tid, (void __user *)arg, sizeof(tid)) != 0)
-		{
-			return -1;
-		}
-		if (touch_init(&tid) != 0)
+		// The argument 'arg' is a user-space pointer to the path string
+		if (touch_set_device((const char __user *)arg) != 0)
 		{
 			return -1;
 		}

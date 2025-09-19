@@ -228,17 +228,15 @@ public:
 		return true;
 	}
 
-	bool touch_init(int max_x, int max_y)
+	bool touch_set_device(const char *path)
 	{
 		if (fd < 0) return false;
-		TOUCH_INIT_DATA tid;
-		tid.max_x = max_x;
-		tid.max_y = max_y;
-		if (ioctl(fd, OP_TOUCH_INIT, &tid) != 0)
+		if (ioctl(fd, OP_TOUCH_SET_DEVICE, path) != 0)
 		{
-			printf("[-] touch_init failed\n");
+			printf("[-] touch_set_device failed for path: %s\n", path);
 			return false;
 		}
+		printf("[+] Touch device successfully set to %s\n", path);
 		return true;
 	}
 

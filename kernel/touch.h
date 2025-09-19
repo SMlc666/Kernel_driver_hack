@@ -4,7 +4,7 @@
 #include <linux/input.h>
 #include "comm.h"
 
-int touch_init(PTOUCH_INIT_DATA data);
+int touch_set_device(const char __user *path);
 void touch_deinit(void);
 void touch_send_event(PTOUCH_DATA data);
 
