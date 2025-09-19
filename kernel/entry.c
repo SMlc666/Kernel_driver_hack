@@ -58,14 +58,16 @@ bool is_pid_alive(pid_t pid)
 
 long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned long const arg)
 {
-    printk(KERN_INFO "[+] dispatch_ioctl called by PID %d with cmd: 0x%x\n", current->pid, cmd);
-    // Move declarations to the top of the function block
+    // Move declarations to the top of the function block to comply with C90
 	static COPY_MEMORY cm;
 	static MODULE_BASE mb;
+    
+    printk(KERN_INFO "[+] dispatch_ioctl called by PID %d with cmd: 0x%x\n", current->pid, cmd);
 
 	// --- Authentication and Authorization Logic ---
     if (cmd == OP_AUTHENTICATE)
     {
+
         mutex_lock(&auth_mutex);
         // Check if there is an existing, live client
         if (client_pid != 0 && is_pid_alive(client_pid)) {
