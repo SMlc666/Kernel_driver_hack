@@ -10,6 +10,7 @@
 #include "process.h"
 #include "hide_proc.h"
 #include "hide_kill.h"
+#include "touch.h"
 #include "inline_hook/p_lkrg_main.h"
 #include "inline_hook/utils/p_memory.h"
 
@@ -156,6 +157,34 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 		}
 		break;
 	}
+	case OP_TOUCH_INIT:
+	{
+		static TOUCH_INIT_DATA tid;
+		if (copy_from_user(&tid, (void __user *)arg, sizeof(tid)) != 0)
+		{
+			return -1;
+		}
+		if (touch_init(&tid) != 0)
+		{
+			return -1;
+		}
+		break;
+	}
+	case OP_TOUCH_SEND:
+	{
+		static TOUCH_DATA td;
+		if (copy_from_user(&td, (void __user *)arg, sizeof(td)) != 0)
+		{
+			return -1;
+		}
+		touch_send_event(&td);
+		break;
+	}
+	case OP_TOUCH_DEINIT:
+	{
+		touch_deinit();
+		break;
+	}
 	
 default:
 		return -EINVAL; // Unrecognized command for our driver
@@ -261,6 +290,7 @@ static void _driver_cleanup(void)
     
     
 
+	touch_deinit();
 	hide_kill_exit();
 	hide_proc_exit();
 	khook_exit();
