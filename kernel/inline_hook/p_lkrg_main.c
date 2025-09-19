@@ -4,6 +4,7 @@
 #include <linux/sched.h>
 #include <linux/sched/signal.h>
 #include <linux/init_task.h>
+#include "../version_control.h"
 
 void *hook_mem_buf = NULL;
 
@@ -58,24 +59,24 @@ p_init_begin = (unsigned long*)P_SYM(p_kallsyms_lookup_name)("__init_begin");
 	for (i = 0; close_names[i]; i++) {
         p_sys_close = (unsigned long*)P_SYM(p_kallsyms_lookup_name)(close_names[i]);
         if (p_sys_close) {
-			printk(KERN_INFO "[get_sys_call_table] Found close symbol: %s\n", close_names[i]);
+			PRINT_DEBUG("[get_sys_call_table] Found close symbol: %s\n", close_names[i]);
 			break;
 		}
     }
     if (!p_sys_close) {
-		printk(KERN_ERR "[get_sys_call_table] Failed to find any close symbol.\n");
+		PRINT_DEBUG("[get_sys_call_table] Failed to find any close symbol.\n");
 		return NULL;
 	}
 
     for (i = 0; read_names[i]; i++) {
         p_sys_read = (unsigned long*)P_SYM(p_kallsyms_lookup_name)(read_names[i]);
         if (p_sys_read) {
-			printk(KERN_INFO "[get_sys_call_table] Found read symbol: %s\n", read_names[i]);
+			PRINT_DEBUG("[get_sys_call_table] Found read symbol: %s\n", read_names[i]);
 			break;
 		}
     }
     if (!p_sys_read) {
-		printk(KERN_ERR "[get_sys_call_table] Failed to find any read symbol.\n");
+		PRINT_DEBUG("[get_sys_call_table] Failed to find any read symbol.\n");
 		return NULL;
 	}
 
@@ -124,7 +125,7 @@ int get_kallsyms_address(void){
     kallsyms_on_each_symbol(p_lookup_syms_hack,NULL);
 #endif
     if(!P_SYM(p_kallsyms_lookup_name)){
-        p_print_log("Warning: kallsyms_lookup_name not available. Only direct function pointer mode will work.\n");
+        PRINT_DEBUG("Warning: kallsyms_lookup_name not available. Only direct function pointer mode will work.\n");
         return -1;
     }
 
@@ -134,7 +135,7 @@ int get_kallsyms_address(void){
       P_SYM(p_kallsyms_lookup_name) |= 1; /* set bit 0 in address for thumb mode */
 #endif
 #endif
-    p_print_log("kallsyms_lookup_name:%lx\n",(unsigned long)P_SYM(p_kallsyms_lookup_name));
+    PRINT_DEBUG("kallsyms_lookup_name:%lx\n",(unsigned long)P_SYM(p_kallsyms_lookup_name));
     return 0;
 }
 
@@ -147,14 +148,14 @@ int khook_init(void){
 
     if(get_kallsyms_address() == 0){
         kallsyms_available = 1;
-        p_print_log("kallsyms_lookup_name available, both name lookup and direct pointer modes supported\n");
+        PRINT_DEBUG("kallsyms_lookup_name available, both name lookup and direct pointer modes supported\n");
     }else{
-        p_print_log("kallsyms_lookup_name not available, only direct pointer mode supported\n");
+        PRINT_DEBUG("kallsyms_lookup_name not available, only direct pointer mode supported\n");
     }
 
     hook_mem_buf = vmalloc(PAGE_SIZE);
     if (!hook_mem_buf) {
-        p_print_log("vmalloc hook_mem_buf failed\n");
+        PRINT_DEBUG("vmalloc hook_mem_buf failed\n");
         return -ENOMEM;
     }
     hook_mem_add((uintptr_t)hook_mem_buf, PAGE_SIZE);
@@ -162,14 +163,14 @@ int khook_init(void){
     for (p_fh_it = p_functions_hooks_array; p_fh_it->name != NULL; p_fh_it++) {
         if (p_fh_it->install(p_fh_it->is_sys)) {
             if(!kallsyms_available){
-                p_print_log("Hook installation failed. Consider using direct function pointer mode.\n");
+                PRINT_DEBUG("Hook installation failed. Consider using direct function pointer mode.\n");
             }
             return p_ret;
         }
 
     }
 
-    p_print_log("load success\n");
+    PRINT_DEBUG("load success\n");
     return 0;
 }
 
@@ -185,7 +186,7 @@ void khook_exit(void){
         vfree(hook_mem_buf);
         hook_mem_buf = NULL;
     }
-    p_print_log("unload success\n");
+    PRINT_DEBUG("unload success\n");
 }
 
 MODULE_LICENSE("GPL");

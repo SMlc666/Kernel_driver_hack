@@ -22,6 +22,12 @@ typedef struct _HIDE_PROC
 	int action;
 } HIDE_PROC, *PHIDE_PROC;
 
+typedef struct _GET_PID
+{
+	char *name;
+	pid_t pid;
+} GET_PID, *PGET_PID;
+
 enum HIDE_ACTION
 {
 	ACTION_HIDE = 1,
@@ -40,6 +46,8 @@ enum OPERATIONS
 	OP_TOUCH_SET_DEVICE = 0x805,
 	OP_TOUCH_SEND = 0x806,
 	OP_TOUCH_DEINIT = 0x807,
+	OP_GET_PID = 0x808,
+	OP_READ_MEM_SAFE = 0x809,
 };
 
 #define MAX_TOUCH_POINTS 10

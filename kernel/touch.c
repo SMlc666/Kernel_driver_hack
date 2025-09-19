@@ -6,6 +6,7 @@
 #include <linux/cdev.h>
 #include "touch.h"
 #include "comm.h"
+#include "version_control.h"
 
 // --- Struct definitions based on evdev.c ---
 // These are needed to correctly interpret file->private_data for event devices.
@@ -51,7 +52,7 @@ int touch_set_device(const char __user *path) {
     mutex_lock(&touch_dev_mutex);
 
     if (touch_dev) {
-        printk(KERN_INFO "[TOUCH] Device already set. Deinitializing first.\n");
+        PRINT_DEBUG("[TOUCH] Device already set. Deinitializing first.\n");
         // Release previous device if any
         if (touch_filp) {
             filp_close(touch_filp, NULL);
@@ -69,10 +70,10 @@ int touch_set_device(const char __user *path) {
     }
     kpath[sizeof(kpath) - 1] = '\0';
 
-    printk(KERN_INFO "[TOUCH] Opening real touch device: %s\n", kpath);
+    PRINT_DEBUG("[TOUCH] Opening real touch device: %s\n", kpath);
     touch_filp = filp_open(kpath, O_RDWR, 0);
     if (IS_ERR(touch_filp)) {
-        printk(KERN_ERR "[TOUCH] Failed to open %s. Error %ld\n", kpath, PTR_ERR(touch_filp));
+        PRINT_DEBUG("[TOUCH] Failed to open %s. Error %ld\n", kpath, PTR_ERR(touch_filp));
         touch_filp = NULL;
         mutex_unlock(&touch_dev_mutex);
         return PTR_ERR(touch_filp);
@@ -83,7 +84,7 @@ int touch_set_device(const char __user *path) {
     // file->private_data points to an evdev_client, not an input_handle.
     client = (struct evdev_client *)touch_filp->private_data;
     if (!client || !client->evdev || !client->evdev->handle.dev) {
-        printk(KERN_ERR "[TOUCH] Could not get evdev_client or input_dev from file.\n");
+        PRINT_DEBUG("[TOUCH] Could not get evdev_client or input_dev from file.\n");
         filp_close(touch_filp, NULL);
         touch_filp = NULL;
         mutex_unlock(&touch_dev_mutex);
@@ -93,7 +94,7 @@ int touch_set_device(const char __user *path) {
     touch_dev = client->evdev->handle.dev;
     input_get_device(touch_dev); // Increment ref count to hold onto it
 
-    printk(KERN_INFO "[TOUCH] Successfully hijacked device: %s\n", touch_dev->name);
+    PRINT_DEBUG("[TOUCH] Successfully hijacked device: %s\n", touch_dev->name);
 
     mutex_unlock(&touch_dev_mutex);
     return 0;
@@ -102,12 +103,12 @@ int touch_set_device(const char __user *path) {
 void touch_deinit(void) {
     mutex_lock(&touch_dev_mutex);
     if (touch_filp) {
-        printk(KERN_INFO "[TOUCH] Closing hijacked device file.\n");
+        PRINT_DEBUG("[TOUCH] Closing hijacked device file.\n");
         filp_close(touch_filp, NULL);
         touch_filp = NULL;
     }
     if (touch_dev) {
-        printk(KERN_INFO "[TOUCH] Releasing hijacked device handle.\n");
+        PRINT_DEBUG("[TOUCH] Releasing hijacked device handle.\n");
         input_put_device(touch_dev);
         touch_dev = NULL;
     }

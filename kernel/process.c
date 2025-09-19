@@ -66,3 +66,21 @@ uintptr_t get_module_base(pid_t pid, char *name)
 	mmput(mm);
 	return base_addr;
 }
+
+pid_t get_pid_by_name(const char *pname)
+{
+	struct task_struct *p;
+	pid_t pid = 0;
+
+	rcu_read_lock();
+	for_each_process(p)
+	{
+		if (strcmp(p->comm, pname) == 0)
+		{
+			pid = p->pid;
+			break;
+		}
+	}
+	rcu_read_unlock();
+	return pid;
+}

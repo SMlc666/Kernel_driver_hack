@@ -135,6 +135,22 @@ int main(int argc, char const *argv[])
 		}
 
 		case 5:
+		{
+			printf("Enter process name to get PID: ");
+			scanf("%s", process_name);
+			target_pid = driver->get_pid(process_name);
+			if (target_pid > 0)
+			{
+				printf("[+] PID of '%s' is %d\n", process_name, target_pid);
+			}
+			else
+			{
+				printf("[-] Process '%s' not found\n", process_name);
+			}
+			break;
+		}
+
+		case 6:
 			printf("[+] Exiting...\n");
 			driver->clear_hidden_processes();
 			return 0;

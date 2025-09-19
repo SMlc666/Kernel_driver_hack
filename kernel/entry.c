@@ -4,6 +4,7 @@
 #include <linux/uaccess.h>
 #include <linux/mutex.h>
 #include <linux/sched/signal.h> // For get_pid_task, find_get_pid
+#include <linux/cred.h> // For current_euid()
 
 #include "comm.h"
 #include "memory.h"
@@ -13,6 +14,7 @@
 #include "touch.h"
 #include "inline_hook/p_lkrg_main.h"
 #include "inline_hook/utils/p_memory.h"
+#include "version_control.h"
 
 // --- Start of Hijack Logic ---
 
@@ -61,8 +63,15 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     // Move declarations to the top of the function block to comply with C90
 	static COPY_MEMORY cm;
 	static MODULE_BASE mb;
+	static GET_PID gp;
     
-    printk(KERN_INFO "[+] dispatch_ioctl called by PID %d with cmd: 0x%x\n", current->pid, cmd);
+    PRINT_DEBUG("[+] dispatch_ioctl called by PID %d with cmd: 0x%x\n", current->pid, cmd);
+
+	// Audit: Only allow root user
+    if (current_euid().val != 0) {
+        PRINT_DEBUG("[-] Non-root user (UID: %d) attempted to use the driver.\n", current_euid().val);
+        return -ENOTTY;
+    }
 
 	// --- Authentication and Authorization Logic ---
     if (cmd == OP_AUTHENTICATE)
@@ -77,7 +86,7 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
         // Set new client
         client_pid = current->pid;
         mutex_unlock(&auth_mutex);
-        printk(KERN_INFO "[+] Client authenticated with PID: %d\n", client_pid);
+        PRINT_DEBUG("[+] Client authenticated with PID: %d\n", client_pid);
         return 0;
     }
 
@@ -96,7 +105,7 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     }
 
     // --- If we reach here, the caller is the authenticated client ---
-	switch (cmd)
+	sswitch (cmd)
 	{
 	case OP_READ_MEM:
 	{
@@ -159,6 +168,25 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 		}
 		break;
 	}
+	case OP_GET_PID:
+	{
+		char name[TASK_COMM_LEN];
+		if (copy_from_user(&gp, (void __user *)arg, sizeof(gp)) != 0)
+		{
+			return -1;
+		}
+		if (copy_from_user(name, (void __user *)gp.name, sizeof(name) - 1) != 0)
+		{
+			return -1;
+		}
+		name[sizeof(name) - 1] = '\0';
+		gp.pid = get_pid_by_name(name);
+		if (copy_to_user((void __user *)arg, &gp, sizeof(gp)) != 0)
+		{
+			return -1;
+		}
+		break;
+	}
 	case OP_TOUCH_SET_DEVICE:
 	{
 		// The argument 'arg' is a user-space pointer to the path string
@@ -184,7 +212,19 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 		break;
 	}
 	
-default:
+	case OP_READ_MEM_SAFE:
+	{
+		if (copy_from_user(&cm, (void __user *)arg, sizeof(cm)) != 0)
+		{
+			return -1;
+		}
+		if (read_process_memory_safe(cm.pid, cm.addr, cm.buffer, cm.size) == false)
+		{
+			return -1;
+		}
+		break;
+	}
+	default:
 		return -EINVAL; // Unrecognized command for our driver
 	}
 	return 0;
@@ -197,27 +237,27 @@ int __init driver_entry(void)
     struct inode *target_inode;
     void *dispatch_ioctl_ptr = &dispatch_ioctl;
 
-	printk("[+] driver_entry");
+	PRINT_DEBUG("[+] driver_entry");
 
 	ret = khook_init();
 	if (ret)
 	{
-		printk("[-] kernel inline hook init failed\n");
+		PRINT_DEBUG("[-] kernel inline hook init failed\n");
 		return ret;
 	}
 
 	// --- Hijack Logic (Corrected) ---
-	printk(KERN_INFO "[+] Hijacking ioctl for %s\n", TARGET_FILE);
+	PRINT_DEBUG("[+] Hijacking ioctl for %s\n", TARGET_FILE);
 	target_file = filp_open(TARGET_FILE, O_RDONLY, 0);
 	if (IS_ERR(target_file)) {
-		printk(KERN_ERR "[-] Failed to open target file %s\n", TARGET_FILE);
+		PRINT_DEBUG("[-] Failed to open target file %s\n", TARGET_FILE);
 		khook_exit();
 		return PTR_ERR(target_file);
 	}
 
     target_inode = file_inode(target_file);
     if (!target_inode) {
-        printk(KERN_ERR "[-] Failed to get inode for %s\n", TARGET_FILE);
+        PRINT_DEBUG("[-] Failed to get inode for %s\n", TARGET_FILE);
         filp_close(target_file, NULL);
         khook_exit();
         return -EFAULT;
@@ -227,7 +267,7 @@ int __init driver_entry(void)
     filp_close(target_file, NULL); // Close the file, we have the fops pointer.
 
 	if (!proc_version_fops) {
-		printk(KERN_ERR "[-] Target file %s has no file_operations\n", TARGET_FILE);
+		PRINT_DEBUG("[-] Target file %s has no file_operations\n", TARGET_FILE);
 		khook_exit();
 		return -EFAULT;
 	}
@@ -235,13 +275,13 @@ int __init driver_entry(void)
     original_ioctl = proc_version_fops->unlocked_ioctl;
 
 	if (remap_write_range(&proc_version_fops->unlocked_ioctl, &dispatch_ioctl_ptr, sizeof(void *), true)) {
-        printk(KERN_ERR "[-] Failed to hook unlocked_ioctl for %s\n", TARGET_FILE);
+        PRINT_DEBUG("[-] Failed to hook unlocked_ioctl for %s\n", TARGET_FILE);
         khook_exit();
         return -EFAULT;
     }
 	
 is_hijacked = true;
-	printk(KERN_INFO "[+] Successfully hooked unlocked_ioctl for %s\n", TARGET_FILE);
+	PRINT_DEBUG("[+] Successfully hooked unlocked_ioctl for %s\n", TARGET_FILE);
 
 	ret = hide_proc_init();
 	if (ret)
@@ -260,11 +300,11 @@ is_hijacked = true;
 	mutex_lock(&module_mutex);
 	list_del_init(&THIS_MODULE->list);
 	mutex_unlock(&module_mutex);
-	printk(KERN_INFO "[+] Module hidden from lsmod\n");
+	PRINT_DEBUG("[+] Module hidden from lsmod\n");
 
     if (THIS_MODULE->mkobj.kobj.state_in_sysfs) {
         kobject_del(&THIS_MODULE->mkobj.kobj);
-        printk(KERN_INFO "[+] Module sysfs entry hidden\n");
+        PRINT_DEBUG("[+] Module sysfs entry hidden\n");
     }
 
 	return 0;
@@ -272,17 +312,17 @@ is_hijacked = true;
 
 static void _driver_cleanup(void)
 {
-	printk("[+] driver_unload");
+	PRINT_DEBUG("[+] driver_unload");
 
 	// --- Restore Logic (Corrected) ---
 	if (is_hijacked) {
         void *original_ioctl_ptr = &original_ioctl;
-		printk(KERN_INFO "[+] Restoring original unlocked_ioctl for %s\n", TARGET_FILE);
+		PRINT_DEBUG("[+] Restoring original unlocked_ioctl for %s\n", TARGET_FILE);
 		
 		if (proc_version_fops && remap_write_range(&proc_version_fops->unlocked_ioctl, &original_ioctl_ptr, sizeof(void *), true)) {
-            printk(KERN_ERR "[-] Failed to restore unlocked_ioctl for %s\n", TARGET_FILE);
+            PRINT_DEBUG("[-] Failed to restore unlocked_ioctl for %s\n", TARGET_FILE);
         } else {
-            printk(KERN_INFO "[+] Successfully restored unlocked_ioctl for %s\n", TARGET_FILE);
+            PRINT_DEBUG("[+] Successfully restored unlocked_ioctl for %s\n", TARGET_FILE);
         }
 	}
     

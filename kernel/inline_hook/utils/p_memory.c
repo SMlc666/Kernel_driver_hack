@@ -1,5 +1,6 @@
 #include "../p_lkrg_main.h"
 #include <linux/init_task.h>
+#include "../../version_control.h"
 
 #if defined(CONFIG_ARM) || defined(CONFIG_ARM64)
 #define pmd_huge(pmd) (pmd_val(pmd) && !(pmd_val(pmd) & PMD_TABLE_BIT))
@@ -35,7 +36,7 @@ int remap_write_range(void *target, void *source, int size, bool operate_on_kern
     void *new_target = NULL;
 
     if ((((unsigned long)target + size) ^ (unsigned long)target) & PAGE_MASK) {
-        p_print_log("Try to write word across page boundary %p\n", target);
+        PRINT_DEBUG("Try to write word across page boundary %p\n", target);
         return -EFAULT;
     }
 
@@ -48,14 +49,14 @@ int remap_write_range(void *target, void *source, int size, bool operate_on_kern
     }
     
     if (!page) {
-        p_print_log("Cannot get page of address %p\n", target);
+        PRINT_DEBUG("Cannot get page of address %p\n", target);
         return -EFAULT;
     }
 
     new_target = vm_map_ram(&page, 1, -1,PAGE_KERNEL_EXEC);
     
     if (!new_target) {
-        p_print_log("Remap address %p failed\n", target);
+        PRINT_DEBUG("Remap address %p failed\n", target);
         return -EFAULT;
     } else {
         memcpy(new_target + ((unsigned long)target & (~ PAGE_MASK)), source, size);
@@ -83,14 +84,14 @@ static pte_t * get_pte(unsigned long addr)
 
     pgdp = pgd_offset_k(addr);
     if (pgd_none(*pgdp)) {
-		p_print_log("failed get pgdp for %p\n", (void *)addr);
+		PRINT_DEBUG("failed get pgdp for %p\n", (void *)addr);
 		return NULL;
 	}
 
 #if defined(CONFIG_ARM64)
     p4dp = p4d_offset(pgdp,addr);
     if (p4d_none(*p4dp)) {
-		p_print_log("failed get pd4 for %p\n", (void *)addr);
+		PRINT_DEBUG("failed get pd4 for %p\n", (void *)addr);
 		return NULL;
 	}
     pudp = pud_offset((p4d_t *)p4dp,addr);
@@ -98,13 +99,13 @@ static pte_t * get_pte(unsigned long addr)
     pudp = pud_offset((pgd_t *)pgdp,addr);
 #endif
 	if (pud_none(*pudp)) {
-        p_print_log("failed get pudp for %p\n", (void *)addr);
+        PRINT_DEBUG("failed get pudp for %p\n", (void *)addr);
 		return NULL;
 	}
 
     pmdp = pmd_offset(pudp, addr);
 	if (pmd_none(*pmdp)) {
-		p_print_log("failed get pmdp for %p\n", (void *)addr);
+		PRINT_DEBUG("failed get pmdp for %p\n", (void *)addr);
 		return NULL;
 	}
 
@@ -112,7 +113,7 @@ static pte_t * get_pte(unsigned long addr)
     //2MB
     if(pmd_huge(*pmdp)){
         if(!pte_valid(*(pte_t*)pmdp)){
-            p_print_log("failed get pte for %p\n", (void *)addr);
+            PRINT_DEBUG("failed get pte for %p\n", (void *)addr);
             return NULL;
         }
         return (pte_t*)pmdp;
@@ -120,7 +121,7 @@ static pte_t * get_pte(unsigned long addr)
 
     ptep = pte_offset_kernel(pmdp, addr);
 	if (!pte_valid(*ptep)) {
-		p_print_log("failed get pte for %p\n", (void *)addr);
+		PRINT_DEBUG("failed get pte for %p\n", (void *)addr);
 		return NULL;
 	}
 #else
@@ -233,10 +234,10 @@ static int change_allocate_memory_common(unsigned long addr, int numpages, pgpro
 		return 0;
 
     if(!P_SYM(p_init_mm)){
-        p_print_log("p_memory.c: p_init_mm is NULL, trying via init_task...\n");
+        PRINT_DEBUG("p_memory.c: p_init_mm is NULL, trying via init_task...\n");
         P_SYM(p_init_mm) = init_task.active_mm;
         if(!P_SYM(p_init_mm)) {
-            p_print_log("p_memory.c: Failed to get init_mm. Cannot proceed.\n");
+            PRINT_DEBUG("p_memory.c: Failed to get init_mm. Cannot proceed.\n");
             return -1;
         }
     }

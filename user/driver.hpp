@@ -53,11 +53,17 @@ private:
 		uintptr_t base;
 	} MODULE_BASE, *PMODULE_BASE;
 
-	typedef struct _HIDE_PROC
+		typedef struct _HIDE_PROC
 	{
 		pid_t pid;
 		int action;
 	} HIDE_PROC, *PHIDE_PROC;
+
+	typedef struct _GET_PID
+	{
+		char *name;
+		pid_t pid;
+	} GET_PID, *PGET_PID;
 
 	enum HIDE_ACTION
 	{
@@ -143,6 +149,22 @@ public:
 		return true;
 	}
 
+	bool read_safe(uintptr_t addr, void *buffer, size_t size)
+	{
+		COPY_MEMORY cm;
+
+		cm.pid = this->pid;
+		cm.addr = addr;
+		cm.buffer = buffer;
+		cm.size = size;
+
+		if (ioctl(fd, OP_READ_MEM_SAFE, &cm) != 0)
+		{
+			return false;
+		}
+		return true;
+	}
+
 	bool write(uintptr_t addr, void *buffer, size_t size)
 	{
 		COPY_MEMORY cm;
@@ -187,6 +209,21 @@ public:
 			return 0;
 		}
 		return mb.base;
+	}
+
+	pid_t get_pid(const char *name)
+	{
+		GET_PID gp;
+		char buf[0x100];
+		strcpy(buf, name);
+		gp.name = buf;
+		gp.pid = 0;
+
+		if (ioctl(fd, OP_GET_PID, &gp) != 0)
+		{
+			return 0;
+		}
+		return gp.pid;
 	}
 
 	bool hide_process(pid_t target_pid)

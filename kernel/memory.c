@@ -256,3 +256,78 @@ bool write_process_memory(
 	mmput(mm);
 	return result;
 }
+
+bool read_physical_address_safe(phys_addr_t pa, void *buffer, size_t size)
+{
+	void *mapped;
+
+	if (!pfn_valid(__phys_to_pfn(pa)))
+	{
+		return false;
+	}
+	if (!my_valid_phys_addr_range(pa, size))
+	{
+		return false;
+	}
+	mapped = ioremap_nocache(pa, size);
+	if (!mapped)
+	{
+		return false;
+	}
+	if (copy_to_user(buffer, mapped, size))
+	{
+		iounmap(mapped);
+		return false;
+	}
+	iounmap(mapped);
+	return true;
+}
+
+bool read_process_memory_safe(
+	pid_t pid,
+	uintptr_t addr,
+	void *buffer,
+	size_t size)
+{
+
+	struct task_struct *task;
+	struct mm_struct *mm;
+	struct pid *pid_struct;
+	phys_addr_t pa;
+	bool result = false;
+
+	pid_struct = find_get_pid(pid);
+	if (!pid_struct)
+	{
+		return false;
+	}
+	task = get_pid_task(pid_struct, PIDTYPE_PID);
+	if (!task)
+	{
+		return false;
+	}
+	mm = get_task_mm(task);
+	if (!mm)
+	{
+		return false;
+	}
+
+	pa = translate_linear_address(mm, addr);
+	if (pa)
+	{
+		result = read_physical_address_safe(pa, buffer, size);
+	}
+	else
+	{
+		if (find_vma(mm, addr))
+		{
+			if (clear_user(buffer, size) == 0)
+			{
+				result = true;
+			}
+		}
+	}
+
+	mmput(mm);
+	return result;
+}

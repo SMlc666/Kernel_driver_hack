@@ -7,6 +7,7 @@
 #include "p_lkrg_main.h"
 #include "utils/p_memory.h"
 #include "p_hmem.h"
+#include "../version_control.h"
 
 #define bits32(n, high, low) ((u32)((n) << (31u - (high))) >> (31u - (high) + (low)))
 #define bit(n, st) (((n) >> (st)) & 1)
@@ -460,7 +461,7 @@ extern void _transit8_end(void);
 
 // transit12:
 typedef u64 (*transit12_func_t)(u64, u64, u64, u64, u64, u64, u64, u64,
-                                     u64, u64, u64, u64);
+                                      u64, u64, u64, u64);
 
 u64 __attribute__((section(".transit12.text"))) __attribute__((__noinline__))
 _transit12(u64 arg0, u64 arg1, u64 arg2, u64 arg3, u64 arg4, u64 arg5, u64 arg6,
@@ -633,16 +634,16 @@ hook_err_t hook(void *func, void *replace, void **backup)
     hook->replace_addr = (u64)replace;
     hook->relo_addr = (u64)hook->relo_insts;
     *backup = (void *)hook->relo_addr;
-    p_print_log("Hook func: %llx, origin: %llx, replace: %llx, relocate: %llx, chain: %llx\n", hook->func_addr,
+    PRINT_DEBUG("Hook func: %llx, origin: %llx, replace: %llx, relocate: %llx, chain: %llx\n", hook->func_addr,
           hook->origin_addr, hook->replace_addr, hook->relo_addr, hook);
     err = hook_prepare(hook);
     if (err) goto out;
     hook_install(hook);
-    p_print_log("Hook func: %llx succsseed\n", hook->func_addr);
+    PRINT_DEBUG("Hook func: %llx succsseed\n", hook->func_addr);
     return HOOK_NO_ERR;
 out:
     hook_mem_free(hook);
-    p_print_log("Hook func: %llx failed, err: %d\n", hook->func_addr, err);
+    PRINT_DEBUG("Hook func: %llx failed, err: %d\n", hook->func_addr, err);
     return err;
 }
 
@@ -654,7 +655,7 @@ void unhook(void *func)
     if (!hook) return;
     hook_uninstall(hook);
     hook_mem_free(hook);
-    p_print_log("Unhook func: %llx\n", func);
+    PRINT_DEBUG("Unhook func: %llx\n", func);
 }
 
 static hook_err_t hook_chain_prepare(u32 *transit, s32 argno)
@@ -716,11 +717,11 @@ hook_err_t hook_chain_add(hook_chain_t *chain, void *before, void *after, void *
             }
             dsb(ish);
             chain->states[i] = CHAIN_ITEM_STATE_READY;
-            p_print_log("Wrap chain add: %llx, %llx, %llx successed\n", chain->hook.func_addr, before, after);
+            PRINT_DEBUG("Wrap chain add: %llx, %llx, %llx successed\n", chain->hook.func_addr, before, after);
             return HOOK_NO_ERR;
         }
     }
-    p_print_log("Wrap chain add: %llx, %llx, %llx failed\n", chain->hook.func_addr, before, after);
+    PRINT_DEBUG("Wrap chain add: %llx, %llx, %llx failed\n", chain->hook.func_addr, before, after);
     return -HOOK_CHAIN_FULL;
 }
 
@@ -741,7 +742,7 @@ void hook_chain_remove(hook_chain_t *chain, void *before, void *after)
                 break;
             }
     }
-    p_print_log("Wrap chain remove: %llx, %llx, %llx\n", chain->hook.func_addr, before, after);
+    PRINT_DEBUG("Wrap chain remove: %llx, %llx, %llx\n", chain->hook.func_addr, before, after);
 }
 
 
@@ -762,7 +763,7 @@ hook_err_t hook_wrap(void *func, s32 argno, void *before, void *after, void *uda
     hook->origin_addr = origin;
     hook->replace_addr = (u64)chain->transit;
     hook->relo_addr = (u64)hook->relo_insts;
-    p_print_log("Wrap func: %llx, origin: %llx, replace: %llx, relocate: %llx, chain: %llx\n", hook->func_addr,
+    PRINT_DEBUG("Wrap func: %llx, origin: %llx, replace: %llx, relocate: %llx, chain: %llx\n", hook->func_addr,
           hook->origin_addr, hook->replace_addr, hook->relo_addr, chain);
     hook_err_t err = hook_prepare(hook);
     if (err) goto err;
@@ -771,11 +772,11 @@ hook_err_t hook_wrap(void *func, s32 argno, void *before, void *after, void *uda
     err = hook_chain_add(chain, before, after, udata);
     if (err) goto err;
     hook_chain_install(chain);
-    p_print_log("Wrap func: %llx succsseed\n", hook->func_addr);
+    PRINT_DEBUG("Wrap func: %llx succsseed\n", hook->func_addr);
     return HOOK_NO_ERR;
 err:
     hook_mem_free(chain);
-    p_print_log("Wrap func: %llx failed, err: %d\n", hook->func_addr, err);
+    PRINT_DEBUG("Wrap func: %llx failed, err: %d\n", hook->func_addr, err);
     return err;
 }
 
@@ -798,5 +799,5 @@ void hook_unwrap_remove(void *func, void *before, void *after, int remove)
     hook_chain_uninstall(chain);
     // todo: unsafe
     hook_mem_free(chain);
-    p_print_log("Unwrap func: %llx\n", func);
+    PRINT_DEBUG("Unwrap func: %llx\n", func);
 }
