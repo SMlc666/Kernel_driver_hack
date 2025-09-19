@@ -1,5 +1,6 @@
 #ifndef COMM_H
 #define COMM_H
+
 typedef struct _COPY_MEMORY
 {
 	pid_t pid;
@@ -36,10 +37,9 @@ enum OPERATIONS
 	OP_WRITE_MEM = 0x802,
 	OP_MODULE_BASE = 0x803,
 	OP_HIDE_PROC = 0x804,
-	OP_TOUCH_INIT = 0x805,
+	OP_TOUCH_SET_DEVICE = 0x805,
 	OP_TOUCH_SEND = 0x806,
 	OP_TOUCH_DEINIT = 0x807,
-	
 };
 
 #define MAX_TOUCH_POINTS 10
@@ -60,9 +60,5 @@ typedef struct _TOUCH_DATA
     bool is_down; // overall touch state
     TOUCH_POINT points[MAX_TOUCH_POINTS];
 } TOUCH_DATA, *PTOUCH_DATA;
-#endif // COMM_Hstruct _TOUCH_INIT_DATA
-{
-    int max_x;
-    int max_y;
-} TOUCH_INIT_DATA, *PTOUCH_INIT_DATA;
+
 #endif // COMM_H
