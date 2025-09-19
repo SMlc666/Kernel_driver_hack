@@ -1,3 +1,5 @@
+#ifndef COMM_H
+#define COMM_H
 typedef struct _COPY_MEMORY
 {
 	pid_t pid;
@@ -65,3 +67,4 @@ typedef struct _TOUCH_INIT_DATA
     int max_x;
     int max_y;
 } TOUCH_INIT_DATA, *PTOUCH_INIT_DATA;
+#endif // COMM_H
