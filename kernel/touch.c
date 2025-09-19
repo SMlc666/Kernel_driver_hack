@@ -3,20 +3,50 @@
 #include <linux/module.h>
 #include <linux/fs.h>
 #include <linux/uaccess.h>
+#include <linux/cdev.h>
 #include "touch.h"
 #include "comm.h"
+
+// --- Struct definitions based on evdev.c ---
+// These are needed to correctly interpret file->private_data for event devices.
+struct evdev_client;
+
+struct evdev {
+	int open;
+	struct input_handle handle;
+	wait_queue_head_t wait;
+	struct evdev_client __rcu *grab;
+	struct list_head client_list;
+	spinlock_t client_lock; /* protects client_list */
+	struct mutex mutex;
+	struct device dev;
+	struct cdev cdev;
+	bool exist;
+};
+
+struct evdev_client {
+	unsigned int head;
+	unsigned int tail;
+	unsigned int packet_head;
+	spinlock_t buffer_lock;
+	struct fasync_struct *fasync;
+	struct evdev *evdev;
+	struct list_head node;
+	unsigned int clk_type;
+	bool revoked;
+	unsigned long *evmasks[EV_CNT];
+	unsigned int bufsize;
+	struct input_event buffer[];
+};
 
 // --- Global variables ---
 static struct input_dev *touch_dev = NULL;
 static struct file *touch_filp = NULL; // Keep the file pointer to release it later
 static DEFINE_MUTEX(touch_dev_mutex);
 
-// NOTE: The struct input_handle is already defined in <linux/input.h> in most modern kernels.
-// We removed the local redefinition to avoid compilation errors.
-
 int touch_set_device(const char __user *path) {
     char kpath[64];
-    struct input_handle *handle;
+    struct evdev_client *client;
 
     mutex_lock(&touch_dev_mutex);
 
@@ -48,18 +78,19 @@ int touch_set_device(const char __user *path) {
         return PTR_ERR(touch_filp);
     }
 
-    // The input_dev is usually stored in private_data of the file struct,
-    // but it's wrapped in an input_handle.
-    handle = (struct input_handle *)touch_filp->private_data;
-    if (!handle || !handle->dev) {
-        printk(KERN_ERR "[TOUCH] Could not get input_handle or input_dev from file.\n");
+    // --- FIX ---
+    // Correctly access the input_dev through the evdev_client struct.
+    // file->private_data points to an evdev_client, not an input_handle.
+    client = (struct evdev_client *)touch_filp->private_data;
+    if (!client || !client->evdev || !client->evdev->handle.dev) {
+        printk(KERN_ERR "[TOUCH] Could not get evdev_client or input_dev from file.\n");
         filp_close(touch_filp, NULL);
         touch_filp = NULL;
         mutex_unlock(&touch_dev_mutex);
         return -EFAULT;
     }
 
-    touch_dev = handle->dev;
+    touch_dev = client->evdev->handle.dev;
     input_get_device(touch_dev); // Increment ref count to hold onto it
 
     printk(KERN_INFO "[TOUCH] Successfully hijacked device: %s\n", touch_dev->name);
