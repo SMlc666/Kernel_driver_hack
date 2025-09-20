@@ -32,6 +32,11 @@ static DEFINE_MUTEX(hijack_mutex);
 // Pointer to the original input_event function, retrieved from the hook engine
 static void (*original_input_event)(struct input_dev *dev, unsigned int type, unsigned int code, int value) = NULL;
 
+// New state to prevent injection feedback loop
+static bool injection_in_progress = false;
+static spinlock_t injection_lock;
+
+
 // --- Core Hijacking Logic ---
 
 /**
@@ -42,6 +47,17 @@ static void hooked_input_event_callback(hook_fargs4_t *fargs, void *udata)
 {
     struct input_dev *dev = (struct input_dev *)fargs->arg0;
     unsigned long flags;
+	bool is_injecting;
+
+    // Check if we are currently injecting an event to prevent feedback
+    spin_lock_irqsave(&injection_lock, flags);
+    is_injecting = injection_in_progress;
+    spin_unlock_irqrestore(&injection_lock, flags);
+
+    if (is_injecting) {
+        // This is our own event being injected. Let it pass through to the original function.
+        return;
+    }
 
     // Check if the event is from the device we are interested in
     if (hook_is_active && dev == hooked_dev) {
@@ -83,6 +99,7 @@ void event_hijack_init(void)
 {
     spin_lock_init(&buffer_lock);
     init_waitqueue_head(&read_wait_queue);
+	spin_lock_init(&injection_lock); // Initialize the new lock
     PRINT_DEBUG("[HIJACK] Event hijacking subsystem initialized.\n");
 }
 
@@ -255,6 +272,7 @@ int do_read_input_events(PEVENT_PACKAGE user_pkg)
 int do_inject_input_event(struct input_event *event)
 {
     struct input_event k_event;
+	unsigned long flags;
 
     if (!hook_is_active || !original_input_event) {
         return -EINVAL;
@@ -264,19 +282,20 @@ int do_inject_input_event(struct input_event *event)
         return -EFAULT;
     }
 
-    // Fix: Temporarily disable hook to prevent feedback loop
-    mutex_lock(&hijack_mutex);
-    hook_is_active = false;
-    mutex_unlock(&hijack_mutex);
+    // Set flag to prevent feedback loop
+    spin_lock_irqsave(&injection_lock, flags);
+    injection_in_progress = true;
+    spin_unlock_irqrestore(&injection_lock, flags);
+
 
     // CRITICAL: Call the original handler to inject the event.
     // We pass hooked_dev because that's the device context we are simulating.
     original_input_event(hooked_dev, k_event.type, k_event.code, k_event.value);
 
-    // Re-enable hook
-    mutex_lock(&hijack_mutex);
-    hook_is_active = true;
-    mutex_unlock(&hijack_mutex);
+    // Clear flag
+    spin_lock_irqsave(&injection_lock, flags);
+    injection_in_progress = false;
+    spin_unlock_irqrestore(&injection_lock, flags);
 
     return 0;
 }
@@ -285,6 +304,7 @@ int do_inject_input_package(PEVENT_PACKAGE user_pkg)
 {
     EVENT_PACKAGE k_pkg;
     unsigned int i;
+	unsigned long flags;
 
     if (!hook_is_active || !original_input_event) {
         return -EINVAL;
@@ -298,20 +318,20 @@ int do_inject_input_package(PEVENT_PACKAGE user_pkg)
         return -EINVAL; // Avoid buffer overflow
     }
 
-    // Fix: Temporarily disable hook to prevent feedback loop
-    mutex_lock(&hijack_mutex);
-    hook_is_active = false;
-    mutex_unlock(&hijack_mutex);
+    // Set flag to prevent feedback loop
+    spin_lock_irqsave(&injection_lock, flags);
+    injection_in_progress = true;
+    spin_unlock_irqrestore(&injection_lock, flags);
 
     for (i = 0; i < k_pkg.count; i++) {
         struct input_event *ev = &k_pkg.events[i];
         original_input_event(hooked_dev, ev->type, ev->code, ev->value);
     }
 
-    // Re-enable hook
-    mutex_lock(&hijack_mutex);
-    hook_is_active = true;
-    mutex_unlock(&hijack_mutex);
+    // Clear flag
+    spin_lock_irqsave(&injection_lock, flags);
+    injection_in_progress = false;
+    spin_unlock_irqrestore(&injection_lock, flags);
 
     return 0;
 }
