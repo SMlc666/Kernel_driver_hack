@@ -110,15 +110,15 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
             mutex_unlock(&auth_mutex);
             return -ENOTTY; // Another client is active, pretend we don't support ioctl
         }
-        // Set new client
-        client_pid = current->pid;
+        // Set new client's thread group ID
+        client_pid = current->tgid;
         mutex_unlock(&auth_mutex);
         PRINT_DEBUG("[+] Client authenticated with PID: %d\n", client_pid);
         return 0;
     }
 
-    // If not authenticating, check if the caller is the authenticated client
-    if (current->pid != client_pid || client_pid == 0)
+    // If not authenticating, check if the caller is the authenticated client's thread group
+    if (current->tgid != client_pid || client_pid == 0)
     {
         // Not the client, or no client is connected. Behave like the original file.
         if (original_ioctl)

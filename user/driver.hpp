@@ -2,10 +2,19 @@
 #include <sys/ioctl.h>
 #include <unistd.h> // For getpid()
 #include <string.h>
+#include <linux/input.h> // For struct input_event
 
 #define DEVICE_NAME "/proc/version"
 
 #define MAX_TOUCH_POINTS 10
+
+// This struct is defined in the kernel's comm.h
+// We redefine it here for user-space use.
+#define MAX_EVENTS_PER_READ 64
+typedef struct _EVENT_PACKAGE {
+    struct input_event events[MAX_EVENTS_PER_READ];
+    unsigned int count;
+} EVENT_PACKAGE, *PEVENT_PACKAGE;
 
 typedef struct _TOUCH_POINT
 {
@@ -90,7 +99,13 @@ private:
 		OP_TOUCH_DEINIT = 0x807,
 		OP_GET_PID = 0x808,
 		OP_READ_MEM_SAFE = 0x809,
-		OP_HOOK_INPUT_DEVICE_BY_NAME = 0x80A,
+		OP_HOOK_INPUT_DEVICE_BY_NAME = 0x80A, // Legacy
+		// New commands for pure kernel-space event hijacking
+		OP_HOOK_INPUT_DEVICE = 0x810,
+		OP_UNHOOK_INPUT_DEVICE = 0x811,
+		OP_READ_INPUT_EVENTS = 0x812,
+		OP_INJECT_INPUT_EVENT = 0x813,
+		OP_HEARTBEAT = 0x814,
 	};
 
 public:
@@ -107,6 +122,7 @@ public:
 	{
 		if (fd > 0)
 		{
+			unhook_input_device(); // Ensure unhook on destruction
 			touch_deinit();
 			close(fd);
 		}
@@ -281,6 +297,65 @@ public:
 		}
 		return true;
 	}
+
+	// --- New Hijacking API ---
+
+	bool hook_input_device(const char *name)
+	{
+		if (fd < 0) return false;
+		HOOK_INPUT_DEVICE_DATA hidd;
+		strncpy(hidd.name, name, sizeof(hidd.name) - 1);
+		hidd.name[sizeof(hidd.name) - 1] = '\0';
+
+		if (ioctl(fd, OP_HOOK_INPUT_DEVICE, &hidd) != 0)
+		{
+			printf("[-] hook_input_device failed for name: %s\n", name);
+			return false;
+		}
+		printf("[+] Kernel driver is now hijacking device: %s\n", name);
+		return true;
+	}
+
+	bool unhook_input_device()
+	{
+		if (fd < 0) return false;
+		if (ioctl(fd, OP_UNHOOK_INPUT_DEVICE) != 0)
+		{
+			return false;
+		}
+		printf("[+] Unhooked device.\n");
+		return true;
+	}
+
+	bool read_input_events(PEVENT_PACKAGE pkg)
+	{
+		if (fd < 0) return false;
+		if (ioctl(fd, OP_READ_INPUT_EVENTS, pkg) != 0)
+		{
+			// This can fail if the hook is terminated, which is not an error
+			return false;
+		}
+		return true;
+	}
+
+	bool inject_input_event(struct input_event *event)
+	{
+		if (fd < 0) return false;
+		if (ioctl(fd, OP_INJECT_INPUT_EVENT, event) != 0)
+		{
+			return false;
+		}
+		return true;
+	}
+
+	bool send_heartbeat()
+	{
+		if (fd < 0) return false;
+		return ioctl(fd, OP_HEARTBEAT) == 0;
+	}
+
+
+	// --- Legacy Touch API ---
 
 	bool touch_set_device(const char *path)
 	{

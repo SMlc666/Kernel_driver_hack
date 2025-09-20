@@ -3,8 +3,10 @@
 #include <fcntl.h>
 #include <dirent.h>
 #include <linux/input.h>
-#include <string.h>
 #include <string>
+#include <thread>
+#include <chrono>
+#include <csignal>
 #include "driver.hpp"
 
 #ifndef EVIOCGNAME
@@ -14,6 +16,14 @@
 #ifndef EVIOCGPROP
 #define EVIOCGPROP(len) _IOC(_IOC_READ, 'E', 0x09, len)
 #endif
+
+// Global flag to control the main loop
+static bool running = true;
+
+void signal_handler(int signum) {
+    printf("\nCaught signal %d. Shutting down...\n", signum);
+    running = false;
+}
 
 // Function to find the name of the first input device that is a direct touch device (touchscreen)
 std::string find_touchscreen_device_name() {
@@ -31,11 +41,8 @@ std::string find_touchscreen_device_name() {
         if (strncmp(entry->d_name, "event", 5) == 0) {
             std::string dev_path = std::string(input_dir) + entry->d_name;
             int fd = open(dev_path.c_str(), O_RDONLY);
-            if (fd < 0) {
-                continue;
-            }
+            if (fd < 0) continue;
 
-            // Check if it's a touchscreen
             unsigned char prop_bits[INPUT_PROP_MAX / 8 + 1] = {0};
             if (ioctl(fd, EVIOCGPROP(sizeof(prop_bits)), prop_bits) < 0) {
                 close(fd);
@@ -44,61 +51,33 @@ std::string find_touchscreen_device_name() {
 
             bool is_touchscreen = (prop_bits[INPUT_PROP_DIRECT / 8] & (1 << (INPUT_PROP_DIRECT % 8)));
             if (is_touchscreen) {
-                // It's a touchscreen, now get its name
-                char name[256];
-                if (ioctl(fd, EVIOCGNAME(sizeof(name)), name) < 0) {
-                    close(fd);
-                    continue;
-                }
+                char name[256] = {0};
+                ioctl(fd, EVIOCGNAME(sizeof(name)), name);
                 printf("[+] Found touchscreen device: %s (Name: %s)\n", dev_path.c_str(), name);
                 close(fd);
                 closedir(dir);
                 return std::string(name);
             }
-
             close(fd);
         }
     }
-
     closedir(dir);
     printf("[-] No touchscreen device found.\n");
     return "";
 }
 
-
-// A simple function to simulate a tap at a given coordinate
-void tap(int x, int y) {
-    TOUCH_DATA down_data;
-    down_data.point_count = 1;
-    down_data.is_down = true;
-    down_data.points[0].id = 0; // Use touch ID 0
-    down_data.points[0].x = x;
-    down_data.points[0].y = y;
-    down_data.points[0].size1 = 10; // Simulate a small touch area
-    down_data.points[0].size2 = 10;
-    down_data.points[0].size3 = 10;
-
-    printf("[+] Tapping down at (%d, %d)\n", x, y);
-    if (!driver->touch_send(&down_data)) {
-        printf("[-] Failed to send touch down event\n");
-        return;
+// Background thread to send heartbeats to the kernel driver
+void heartbeat_thread() {
+    while (running) {
+        driver->send_heartbeat();
+        std::this_thread::sleep_for(std::chrono::seconds(1));
     }
-
-    // Keep the touch pressed for 50 milliseconds
-    usleep(50000);
-
-    TOUCH_DATA up_data;
-    up_data.point_count = 0;
-    up_data.is_down = false;
-    
-    printf("[+] Tapping up\n");
-    if (!driver->touch_send(&up_data)) {
-        printf("[-] Failed to send touch up event\n");
-    }
+    printf("[+] Heartbeat thread stopped.\n");
 }
 
 int main() {
-    printf("[+] Starting kernel touch API test (RCU Find by Name method)...\n");
+    printf("[+] Starting full event hijacking test...\n");
+    signal(SIGINT, signal_handler); // Handle Ctrl+C for clean exit
 
     if (!driver->authenticate()) {
         printf("[-] Driver authentication failed. Is the module loaded?\n");
@@ -111,27 +90,50 @@ int main() {
         return 1;
     }
 
-    // Use the new method to set the device by its name
-    if (!driver->hook_input_device_by_name(device_name.c_str())) {
-        printf("[-] Failed to set touch device in driver using its name.\n");
+    if (!driver->hook_input_device(device_name.c_str())) {
+        printf("[-] Failed to hook touch device in driver.\n");
         return 1;
     }
+
+    // Start the heartbeat thread
+    std::thread t(heartbeat_thread);
+    printf("[+] Heartbeat thread started. Press Ctrl+C to stop.\n");
+
+    EVENT_PACKAGE pkg;
+    while (running) {
+        // This call will block until events are available or the hook is terminated
+        if (!driver->read_input_events(&pkg)) {
+            if (running) {
+                // If the loop is supposed to be running, this indicates an error or shutdown from the kernel side
+                printf("[-] Failed to read events. The hook might have been terminated.\n");
+            }
+            break;
+        }
+
+        printf("-> Read a package with %u events:\n", pkg.count);
+        for (unsigned int i = 0; i < pkg.count; ++i) {
+            struct input_event *ev = &pkg.events[i];
+            // Optional: Print the event details
+            // printf("   Event: type %d, code %d, value %d\n", ev->type, ev->code, ev->value);
+
+            // Here you could modify the event, e.g., ev->value = new_value;
+
+            // Inject the (possibly modified) event back into the system
+            if (!driver->inject_input_event(ev)) {
+                printf("[-] Failed to inject event.\n");
+            }
+        }
+    }
+
+    printf("[+] Main loop finished. Cleaning up...\n");
     
-    // For this test, we'll assume a common screen resolution.
-    int screen_max_x = 1080;
-    int screen_max_y = 1920;
+    // Stop the heartbeat thread
+    running = false;
+    t.join();
 
-    // Wait a couple of seconds to give you time to switch apps to see the tap
-    printf("[+] Tapping center of the screen in 3 seconds...\n");
-    sleep(3);
-    tap(screen_max_x / 2, screen_max_y / 2);
+    // Unhook the device
+    driver->unhook_input_device();
 
-    printf("[+] Tapping top-left corner in 3 seconds...\n");
-    sleep(3);
-    tap(100, 200);
-
-    printf("[+] Test finished. De-initializing touch.\n");
-    driver->touch_deinit();
-
+    printf("[+] Test finished.\n");
     return 0;
 }
