@@ -214,14 +214,20 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 	case OP_HOOK_INPUT_DEVICE_BY_NAME:
 	{
 		HOOK_INPUT_DEVICE_DATA hidd;
+		PRINT_DEBUG("[+] In case OP_HOOK_INPUT_DEVICE_BY_NAME. Attempting copy_from_user.\n");
 		if (copy_from_user(&hidd, (void __user *)arg, sizeof(hidd)) != 0)
 		{
-			return -1;
+			PRINT_DEBUG("[-] copy_from_user failed!\n");
+			return -EFAULT;
 		}
+		
+		PRINT_DEBUG("[+] copy_from_user successful. Calling touch_set_device_by_name.\n");
 		if (touch_set_device_by_name(hidd.name) != 0)
 		{
+			PRINT_DEBUG("[-] touch_set_device_by_name failed!\n");
 			return -1;
 		}
+		PRINT_DEBUG("[+] touch_set_device_by_name successful.\n");
 		break;
 	}
 	
