@@ -11,6 +11,7 @@
 #include "event_hijack.h"
 #include "version_control.h"
 #include "inline_hook/p_hook.h" // For hook_wrap
+#include "inline_hook/p_hmem.h" // For hook_get_mem_from_origin
 
 // --- Global State for Hijacking ---
 
