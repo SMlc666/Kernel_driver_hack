@@ -158,6 +158,9 @@ int khook_init(void){
         PRINT_DEBUG("vmalloc hook_mem_buf failed\n");
         return -ENOMEM;
     }
+#if defined(CONFIG_ARM) || defined(CONFIG_ARM64)
+    set_allocate_memory_x((unsigned long)hook_mem_buf, 1);
+#endif
     hook_mem_add((uintptr_t)hook_mem_buf, PAGE_SIZE);
 
     for (p_fh_it = p_functions_hooks_array; p_fh_it->name != NULL; p_fh_it++) {
