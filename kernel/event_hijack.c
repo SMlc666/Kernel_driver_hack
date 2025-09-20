@@ -270,3 +270,28 @@ int do_inject_input_event(struct input_event *event)
 
     return 0;
 }
+
+int do_inject_input_package(PEVENT_PACKAGE user_pkg)
+{
+    EVENT_PACKAGE k_pkg;
+    unsigned int i;
+
+    if (!hook_is_active || !original_input_event) {
+        return -EINVAL;
+    }
+
+    if (copy_from_user(&k_pkg, user_pkg, sizeof(EVENT_PACKAGE))) {
+        return -EFAULT;
+    }
+
+    if (k_pkg.count > MAX_EVENTS_PER_READ) {
+        return -EINVAL; // Avoid buffer overflow
+    }
+
+    for (i = 0; i < k_pkg.count; i++) {
+        struct input_event *ev = &k_pkg.events[i];
+        original_input_event(hooked_dev, ev->type, ev->code, ev->value);
+    }
+
+    return 0;
+}

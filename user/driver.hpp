@@ -106,6 +106,7 @@ private:
 		OP_READ_INPUT_EVENTS = 0x812,
 		OP_INJECT_INPUT_EVENT = 0x813,
 		OP_HEARTBEAT = 0x814,
+		OP_INJECT_INPUT_PACKAGE = 0x815,
 	};
 
 public:
@@ -342,6 +343,16 @@ public:
 	{
 		if (fd < 0) return false;
 		if (ioctl(fd, OP_INJECT_INPUT_EVENT, event) != 0)
+		{
+			return false;
+		}
+		return true;
+	}
+
+	bool inject_input_package(PEVENT_PACKAGE pkg)
+	{
+		if (fd < 0) return false;
+		if (ioctl(fd, OP_INJECT_INPUT_PACKAGE, pkg) != 0)
 		{
 			return false;
 		}

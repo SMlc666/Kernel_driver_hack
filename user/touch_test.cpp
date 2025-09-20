@@ -110,19 +110,20 @@ int main() {
             break;
         }
 
-        printf("-> Read a package with %u events:\n", pkg.count);
+        // --- Event Modification and Injection ---
         for (unsigned int i = 0; i < pkg.count; ++i) {
             struct input_event *ev = &pkg.events[i];
-            // Optional: Print the event details
-            // printf("   Event: type %d, code %d, value %d\n", ev->type, ev->code, ev->value);
-
-            // Here you could modify the event, e.g., ev->value = new_value;
-
-            // Inject the (possibly modified) event back into the system
-            if (!driver->inject_input_event(ev)) {
-                printf("[-] Failed to inject event.\n");
+            if (ev->type == EV_ABS && ev->code == ABS_MT_POSITION_Y) {
+                printf("    Original Y: %d -> Modified Y: %d\n", ev->value, ev->value + 200);
+                ev->value += 200;
             }
         }
+
+        // Inject the entire modified package back into the system at once
+        if (!driver->inject_input_package(&pkg)) {
+            printf("[-] Failed to inject event package.\n");
+        }
+        // --- End of Logic ---
     }
 
     printf("[+] Main loop finished. Cleaning up...\n");

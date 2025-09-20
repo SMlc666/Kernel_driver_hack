@@ -286,6 +286,10 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 	{
 		return do_inject_input_event((struct input_event *)arg);
 	}
+	case OP_INJECT_INPUT_PACKAGE:
+	{
+		return do_inject_input_package((PEVENT_PACKAGE)arg);
+	}
 	case OP_HEARTBEAT:
 	{
 		last_heartbeat_jiffies = jiffies;
