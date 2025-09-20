@@ -45,7 +45,7 @@ typedef s8 chain_item_state;
 #define RELOCATE_INST_NUM (TRAMPOLINE_NUM * 8 + 8)
 
 #define HOOK_CHAIN_NUM 0x10
-#define TRANSIT_INST_NUM 0x60
+#define TRANSIT_INST_NUM 0xC0
 
 #define FP_HOOK_CHAIN_NUM 0x20
 
