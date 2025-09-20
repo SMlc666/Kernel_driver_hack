@@ -72,7 +72,7 @@ private:
 		ACTION_CLEAR = 3,
 	};
 
-		enum OPERATIONS
+	enum OPERATIONS
 	{
 		OP_AUTHENTICATE = 0x7FF,
 		OP_INIT_KEY = 0x800,
@@ -83,6 +83,8 @@ private:
 		OP_TOUCH_SET_DEVICE = 0x805,
 		OP_TOUCH_SEND = 0x806,
 		OP_TOUCH_DEINIT = 0x807,
+		OP_GET_PID = 0x808,
+		OP_READ_MEM_SAFE = 0x809,
 	};
 
 public:
@@ -186,6 +188,15 @@ public:
 	{
 		T res;
 		if (this->read(addr, &res, sizeof(T)))
+			return res;
+		return {};
+	}
+
+	template <typename T>
+	T read_safe(uintptr_t addr)
+	{
+		T res;
+		if (this->read_safe(addr, &res, sizeof(T)))
 			return res;
 		return {};
 	}
