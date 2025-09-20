@@ -65,6 +65,11 @@ private:
 		pid_t pid;
 	} GET_PID, *PGET_PID;
 
+	typedef struct _HOOK_INPUT_DEVICE_DATA
+	{
+		char name[128];
+	} HOOK_INPUT_DEVICE_DATA, *PHOOK_INPUT_DEVICE_DATA;
+
 	enum HIDE_ACTION
 	{
 		ACTION_HIDE = 1,

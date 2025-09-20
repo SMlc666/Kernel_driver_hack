@@ -211,6 +211,19 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 		touch_deinit();
 		break;
 	}
+	case OP_HOOK_INPUT_DEVICE_BY_NAME:
+	{
+		HOOK_INPUT_DEVICE_DATA hidd;
+		if (copy_from_user(&hidd, (void __user *)arg, sizeof(hidd)) != 0)
+		{
+			return -1;
+		}
+		if (touch_set_device_by_name(hidd.name) != 0)
+		{
+			return -1;
+		}
+		break;
+	}
 	
 	case OP_READ_MEM_SAFE:
 	{

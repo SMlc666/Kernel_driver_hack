@@ -45,6 +45,19 @@ static struct input_dev *touch_dev = NULL;
 static struct file *touch_filp = NULL; // Keep the file pointer to release it later
 static DEFINE_MUTEX(touch_dev_mutex);
 
+// --- RCU-related includes and globals ---
+#include <linux/rcupdate.h>
+#include <linux/slab.h>
+
+// These are not exported, so we can't use them directly.
+// We will find the list via our dummy device.
+// extern struct list_head input_dev_list;
+// extern struct mutex input_mutex;
+
+// This will be our handle to the hooked device, which we will find.
+static struct input_handle *hooked_handle = NULL;
+
+
 int touch_set_device(const char __user *path) {
     char kpath[64];
     struct evdev_client *client;
@@ -62,6 +75,7 @@ int touch_set_device(const char __user *path) {
             input_put_device(touch_dev);
             touch_dev = NULL;
         }
+		hooked_handle = NULL;
     }
 
     if (strncpy_from_user(kpath, path, sizeof(kpath) - 1) < 0) {
@@ -79,9 +93,6 @@ int touch_set_device(const char __user *path) {
         return PTR_ERR(touch_filp);
     }
 
-    // --- FIX ---
-    // Correctly access the input_dev through the evdev_client struct.
-    // file->private_data points to an evdev_client, not an input_handle.
     client = (struct evdev_client *)touch_filp->private_data;
     if (!client || !client->evdev || !client->evdev->handle.dev) {
         PRINT_DEBUG("[TOUCH] Could not get evdev_client or input_dev from file.\n");
@@ -93,12 +104,104 @@ int touch_set_device(const char __user *path) {
 
     touch_dev = client->evdev->handle.dev;
     input_get_device(touch_dev); // Increment ref count to hold onto it
+	hooked_handle = &client->evdev->handle;
 
     PRINT_DEBUG("[TOUCH] Successfully hijacked device: %s\n", touch_dev->name);
 
     mutex_unlock(&touch_dev_mutex);
     return 0;
 }
+
+int touch_set_device_by_name(const char *name) {
+    struct input_dev *dummy_dev = NULL;
+    struct input_dev *target_dev = NULL;
+    struct input_handle *target_handle = NULL;
+    int ret = 0;
+
+    // --- 1. Create and register a dummy device to get a list anchor ---
+    dummy_dev = input_allocate_device();
+    if (!dummy_dev) {
+        PRINT_DEBUG("[TOUCH_RCU] Failed to allocate dummy device.\n");
+        return -ENOMEM;
+    }
+
+    dummy_dev->name = "khack_dummy_device";
+    ret = input_register_device(dummy_dev);
+    if (ret) {
+        PRINT_DEBUG("[TOUCH_RCU] Failed to register dummy device.\n");
+        input_free_device(dummy_dev);
+        return ret;
+    }
+
+    // --- 2. Safely traverse the list using RCU read-side protection ---
+    PRINT_DEBUG("[TOUCH_RCU] Searching for device: %s\n", name);
+    rcu_read_lock();
+
+    struct list_head *curr = rcu_dereference(dummy_dev->node.next);
+    struct input_dev *dev_iter;
+
+    while (curr != &dummy_dev->node) {
+        dev_iter = list_entry(curr, struct input_dev, node);
+        if (dev_iter && dev_iter->name && strcmp(dev_iter->name, name) == 0) {
+            if (input_get_device(dev_iter)) {
+                target_dev = dev_iter;
+            }
+            break;
+        }
+        curr = rcu_dereference(curr->next);
+    }
+
+    rcu_read_unlock();
+
+    // --- 3. Unregister and free the dummy device ---
+    input_unregister_device(dummy_dev);
+    // Note: input_free_device is called by input_unregister_device's release function.
+
+    // --- 4. Process the found device ---
+    if (!target_dev) {
+        PRINT_DEBUG("[TOUCH_RCU] Device '%s' not found.\n", name);
+        return -ENODEV;
+    }
+
+    PRINT_DEBUG("[TOUCH_RCU] Found device: %s. Now finding evdev handle.\n", target_dev->name);
+
+    // Find the 'evdev' handle associated with this device
+    struct input_handle *handle;
+    list_for_each_entry(handle, &target_dev->h_list, d_node) {
+        if (handle->handler && handle->handler->name && strcmp(handle->handler->name, "evdev") == 0) {
+            target_handle = handle;
+            break;
+        }
+    }
+
+    if (!target_handle) {
+        PRINT_DEBUG("[TOUCH_RCU] Could not find evdev handle for device '%s'.\n", target_dev->name);
+        input_put_device(target_dev);
+        return -ENODEV;
+    }
+
+    // --- 5. Finalize the setup ---
+    mutex_lock(&touch_dev_mutex);
+    // Clean up any previously set device
+    if (touch_dev) {
+        input_put_device(touch_dev);
+    }
+    if (touch_filp) {
+        filp_close(touch_filp, NULL);
+        touch_filp = NULL;
+    }
+
+    // Set the new device and handle
+    touch_dev = target_dev; // Already has an incremented ref count from input_get_device
+    hooked_handle = target_handle;
+    
+    mutex_unlock(&touch_dev_mutex);
+
+    PRINT_DEBUG("[TOUCH_RCU] Successfully set device '%s' via RCU traversal.\n", name);
+
+    return 0;
+}
+
 
 void touch_deinit(void) {
     mutex_lock(&touch_dev_mutex);
@@ -112,6 +215,7 @@ void touch_deinit(void) {
         input_put_device(touch_dev);
         touch_dev = NULL;
     }
+	hooked_handle = NULL;
     mutex_unlock(&touch_dev_mutex);
 }
 
