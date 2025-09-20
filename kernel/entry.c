@@ -49,7 +49,7 @@ static void watchdog_callback(struct timer_list *t)
         return;
     }
 
-    if (time_before(jiffies, last_heartbeat_jiffies + WATCHDOG_TIMEOUT)) {
+    if (time_after(jiffies, last_heartbeat_jiffies + WATCHDOG_TIMEOUT)) {
         PRINT_DEBUG("[WATCHDOG] Client PID %d timed out. Cleaning up hook automatically.\n", client_pid);
         do_cleanup_hook(); // This will also wake up any waiting readers
         // Do not reschedule the timer.
