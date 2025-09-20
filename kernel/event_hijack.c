@@ -14,7 +14,7 @@
 // --- Global State for Hijacking ---
 
 // Pointer to the original event handler function
-static void (*original_event_handler)(struct input_dev *dev, unsigned int type, unsigned int code, int value);
+static void (*original_event_handler)(struct input_handle *handle, unsigned int type, unsigned int code, int value);
 
 // Handle to the hooked device
 static struct input_handle *hooked_handle = NULL;
@@ -42,7 +42,7 @@ static int find_and_hook_handler(const char *name);
  * Our custom event handler that replaces the original one.
  * This function is the entry point for all physical touch events.
  */
-void our_hooked_event_handler(struct input_dev *dev, unsigned int type, unsigned int code, int value)
+void our_hooked_event_handler(struct input_handle *handle, unsigned int type, unsigned int code, int value)
 {
     unsigned long flags;
 
@@ -129,10 +129,10 @@ void do_cleanup_hook(void)
     }
 
     // Restore the original event handler
-    if (hooked_dev && original_event_handler) {
+    if (hooked_handle && hooked_handle->handler && original_event_handler) {
         void *original_event_ptr = &original_event_handler;
         PRINT_DEBUG("[HIJACK] Restoring original event handler for %s.\n", hooked_dev->name);
-        if (remap_write_range(&hooked_dev->event, &original_event_ptr, sizeof(void *), true)) {
+        if (remap_write_range(&hooked_handle->handler->event, &original_event_ptr, sizeof(void *), true)) {
             PRINT_DEBUG("[-] Failed to restore event handler for %s\n", hooked_dev->name);
         }
     }
@@ -199,7 +199,7 @@ int do_inject_input_event(struct input_event *event)
     }
 
     // CRITICAL: Call the original handler to inject the event, bypassing our hook.
-    original_event_handler(hooked_dev, k_event.type, k_event.code, k_event.value);
+    original_event_handler(hooked_handle, k_event.type, k_event.code, k_event.value);
 
     return 0;
 }
@@ -208,12 +208,14 @@ int do_inject_input_event(struct input_event *event)
 // --- Internal Helper Functions ---
 
 /**
- * Finds an input device by name and hooks its 'event' function pointer.
- * This logic is adapted from the project's existing touch.c for robustness.
+ * Finds an input device by name, finds its 'evdev' handler,
+ * and hooks the handler's 'event' function pointer.
  */
 static int find_and_hook_handler(const char *name)
 {
     struct input_dev *dummy_dev = NULL, *target_dev = NULL;
+    struct input_handle *handle = NULL;
+    struct input_handler *evdev_handler = NULL;
 
     dummy_dev = input_allocate_device();
     if (!dummy_dev) return -ENOMEM;
@@ -237,6 +239,17 @@ static int find_and_hook_handler(const char *name)
         }
         curr = rcu_dereference(curr->next);
     }
+
+    if (target_dev) {
+        // Find the 'evdev' handle associated with this device
+        list_for_each_entry_rcu(handle, &target_dev->h_list, d_node) {
+            if (handle->handler && handle->handler->name && strcmp(handle->handler->name, "evdev") == 0) {
+                hooked_handle = handle;
+                evdev_handler = handle->handler;
+                break;
+            }
+        }
+    }
     rcu_read_unlock();
 
     input_unregister_device(dummy_dev);
@@ -246,21 +259,33 @@ static int find_and_hook_handler(const char *name)
         return -ENODEV;
     }
 
+    if (!hooked_handle) {
+        PRINT_DEBUG("[HIJACK] Could not find evdev handle for device '%s'.\n", name);
+        input_put_device(target_dev);
+        return -ENODEV;
+    }
+
     hooked_dev = target_dev;
 
-    // We found the handle, now perform the hook
-    original_event_handler = hooked_dev->event;
+    // We found the handler, now perform the hook on the handler's event function
+    original_event_handler = evdev_handler->event;
     if (!original_event_handler) {
-        PRINT_DEBUG("[HIJACK] Target handle for '%s' has a NULL event handler.\n", name);
+        PRINT_DEBUG("[HIJACK] Target evdev handler for '%s' has a NULL event function.\n", name);
+        input_put_device(target_dev);
+        hooked_handle = NULL;
+        hooked_dev = NULL;
         return -EFAULT;
     }
 
     void *hook_ptr = &our_hooked_event_handler;
-    if (remap_write_range(&hooked_dev->event, &hook_ptr, sizeof(void *), true)) {
+    if (remap_write_range(&evdev_handler->event, &hook_ptr, sizeof(void *), true)) {
         PRINT_DEBUG("[-] Failed to hook event handler for %s\n", name);
+        input_put_device(target_dev);
+        hooked_handle = NULL;
+        hooked_dev = NULL;
+        original_event_handler = NULL;
         return -EFAULT;
     }
 
     return 0;
 }
-
