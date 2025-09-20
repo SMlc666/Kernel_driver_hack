@@ -264,9 +264,19 @@ int do_inject_input_event(struct input_event *event)
         return -EFAULT;
     }
 
+    // Fix: Temporarily disable hook to prevent feedback loop
+    mutex_lock(&hijack_mutex);
+    hook_is_active = false;
+    mutex_unlock(&hijack_mutex);
+
     // CRITICAL: Call the original handler to inject the event.
     // We pass hooked_dev because that's the device context we are simulating.
     original_input_event(hooked_dev, k_event.type, k_event.code, k_event.value);
+
+    // Re-enable hook
+    mutex_lock(&hijack_mutex);
+    hook_is_active = true;
+    mutex_unlock(&hijack_mutex);
 
     return 0;
 }
@@ -288,10 +298,20 @@ int do_inject_input_package(PEVENT_PACKAGE user_pkg)
         return -EINVAL; // Avoid buffer overflow
     }
 
+    // Fix: Temporarily disable hook to prevent feedback loop
+    mutex_lock(&hijack_mutex);
+    hook_is_active = false;
+    mutex_unlock(&hijack_mutex);
+
     for (i = 0; i < k_pkg.count; i++) {
         struct input_event *ev = &k_pkg.events[i];
         original_input_event(hooked_dev, ev->type, ev->code, ev->value);
     }
+
+    // Re-enable hook
+    mutex_lock(&hijack_mutex);
+    hook_is_active = true;
+    mutex_unlock(&hijack_mutex);
 
     return 0;
 }
