@@ -1,6 +1,8 @@
 #ifndef COMM_H
 #define COMM_H
 
+#include <linux/input.h> // For struct input_event
+
 typedef struct _COPY_MEMORY
 {
 	pid_t pid;
