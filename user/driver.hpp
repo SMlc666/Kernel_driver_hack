@@ -85,6 +85,7 @@ private:
 		OP_TOUCH_DEINIT = 0x807,
 		OP_GET_PID = 0x808,
 		OP_READ_MEM_SAFE = 0x809,
+		OP_HOOK_INPUT_DEVICE_BY_NAME = 0x80A,
 	};
 
 public:
@@ -285,6 +286,22 @@ public:
 			return false;
 		}
 		printf("[+] Touch device successfully set to %s\n", path);
+		return true;
+	}
+
+	bool hook_input_device_by_name(const char *name)
+	{
+		if (fd < 0) return false;
+		HOOK_INPUT_DEVICE_DATA hidd;
+		strncpy(hidd.name, name, sizeof(hidd.name) - 1);
+		hidd.name[sizeof(hidd.name) - 1] = '\0';
+
+		if (ioctl(fd, OP_HOOK_INPUT_DEVICE_BY_NAME, &hidd) != 0)
+		{
+			printf("[-] hook_input_device_by_name failed for name: %s\n", name);
+			return false;
+		}
+		printf("[+] Kernel driver is now targeting device name: %s\n", name);
 		return true;
 	}
 
