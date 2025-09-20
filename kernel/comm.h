@@ -49,7 +49,20 @@ enum OPERATIONS
 	OP_GET_PID = 0x808,
 	OP_READ_MEM_SAFE = 0x809,
 	OP_HOOK_INPUT_DEVICE_BY_NAME = 0x80A,
+	// Commands for pure kernel-space event hijacking
+	OP_HOOK_INPUT_DEVICE = 0x810,
+	OP_UNHOOK_INPUT_DEVICE = 0x811,
+	OP_READ_INPUT_EVENTS = 0x812,
+	OP_INJECT_INPUT_EVENT = 0x813,
+	OP_HEARTBEAT = 0x814,
 };
+
+// New struct for event batching
+#define MAX_EVENTS_PER_READ 64
+typedef struct _EVENT_PACKAGE {
+    struct input_event events[MAX_EVENTS_PER_READ];
+    unsigned int count;
+} EVENT_PACKAGE, *PEVENT_PACKAGE;
 
 // Used for OP_HOOK_INPUT_DEVICE_BY_NAME
 typedef struct _HOOK_INPUT_DEVICE_DATA

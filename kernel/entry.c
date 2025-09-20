@@ -5,6 +5,8 @@
 #include <linux/mutex.h>
 #include <linux/sched/signal.h> // For get_pid_task, find_get_pid
 #include <linux/cred.h> // For current_euid()
+#include <linux/timer.h>
+#include <linux/jiffies.h>
 
 #include "comm.h"
 #include "memory.h"
@@ -12,6 +14,7 @@
 #include "hide_proc.h"
 #include "hide_kill.h"
 #include "touch.h"
+#include "event_hijack.h" // <-- Include our new header
 #include "inline_hook/p_lkrg_main.h"
 #include "inline_hook/utils/p_memory.h"
 #include "version_control.h"
@@ -19,6 +22,11 @@
 // --- Start of Hijack Logic ---
 
 #define TARGET_FILE "/proc/version"
+
+// --- Watchdog State ---
+static struct timer_list watchdog_timer;
+static unsigned long last_heartbeat_jiffies;
+#define WATCHDOG_TIMEOUT (5 * HZ)
 
 // Forward declaration
 static void _driver_cleanup(void);
@@ -32,6 +40,25 @@ static DEFINE_MUTEX(auth_mutex); // Mutex to protect client_pid
 static long (*original_ioctl)(struct file *, unsigned int, unsigned long) = NULL;
 static struct file_operations *proc_version_fops = NULL;
 static bool is_hijacked = false;
+
+// --- Watchdog Callback ---
+static void watchdog_callback(struct timer_list *t)
+{
+    if (!is_hook_active()) {
+        // Hook is not active, no need for watchdog.
+        return;
+    }
+
+    if (time_is_after(jiffies, last_heartbeat_jiffies + WATCHDOG_TIMEOUT)) {
+        PRINT_DEBUG("[WATCHDOG] Client PID %d timed out. Cleaning up hook automatically.\n", client_pid);
+        do_cleanup_hook(); // This will also wake up any waiting readers
+        // Do not reschedule the timer.
+    } else {
+        // Client is still alive, check again later.
+        mod_timer(&watchdog_timer, jiffies + msecs_to_jiffies(2000));
+    }
+}
+
 
 // --- End of Hijack Logic ---
 
@@ -230,7 +257,40 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 		PRINT_DEBUG("[+] touch_set_device_by_name successful.\n");
 		break;
 	}
-	
+	case OP_HOOK_INPUT_DEVICE:
+	{
+		HOOK_INPUT_DEVICE_DATA hidd;
+		if (copy_from_user(&hidd, (void __user *)arg, sizeof(hidd)) != 0) {
+			return -EFAULT;
+		}
+		if (do_hook_input_device(hidd.name) == 0) {
+			// Hook successful, start the watchdog
+			last_heartbeat_jiffies = jiffies;
+			mod_timer(&watchdog_timer, jiffies + msecs_to_jiffies(2000));
+		} else {
+			return -EINVAL; // Hook failed
+		}
+		break;
+	}
+	case OP_UNHOOK_INPUT_DEVICE:
+	{
+		del_timer_sync(&watchdog_timer);
+		do_cleanup_hook();
+		break;
+	}
+	case OP_READ_INPUT_EVENTS:
+	{
+		return do_read_input_events((PEVENT_PACKAGE)arg);
+	}
+	case OP_INJECT_INPUT_EVENT:
+	{
+		return do_inject_input_event((struct input_event *)arg);
+	}
+	case OP_HEARTBEAT:
+	{
+		last_heartbeat_jiffies = jiffies;
+		break;
+	}
 	case OP_READ_MEM_SAFE:
 	{
 		if (copy_from_user(&cm, (void __user *)arg, sizeof(cm)) != 0)
@@ -302,6 +362,10 @@ int __init driver_entry(void)
 is_hijacked = true;
 	PRINT_DEBUG("[+] Successfully hooked unlocked_ioctl for %s\n", TARGET_FILE);
 
+    // Initialize our subsystems
+    event_hijack_init();
+    timer_setup(&watchdog_timer, watchdog_callback, 0);
+
 	ret = hide_proc_init();
 	if (ret)
 	{
@@ -346,6 +410,9 @@ static void _driver_cleanup(void)
 	}
     
     
+    // Cleanup our subsystems
+    del_timer_sync(&watchdog_timer);
+    event_hijack_exit();
 
 	touch_deinit();
 	hide_kill_exit();
