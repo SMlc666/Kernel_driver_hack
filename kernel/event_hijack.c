@@ -6,6 +6,7 @@
 #include <linux/uaccess.h>
 #include <linux/rcupdate.h>
 #include <linux/slab.h>
+#include "inline_hook/utils/p_memory.h"
 
 #include "event_hijack.h"
 #include "version_control.h"
@@ -128,8 +129,11 @@ void do_cleanup_hook(void)
 
     // Restore the original event handler
     if (hooked_handle && original_event_handler) {
+        void *original_event_ptr = &original_event_handler;
         PRINT_DEBUG("[HIJACK] Restoring original event handler for %s.\n", hooked_handle->name);
-        hooked_handle->handler->event = original_event_handler;
+        if (remap_write_range(&hooked_handle->handler->event, &original_event_ptr, sizeof(void *), true)) {
+            PRINT_DEBUG("[-] Failed to restore event handler for %s\n", hooked_handle->name);
+        }
     }
 
     // Clear all state
@@ -261,7 +265,11 @@ static int find_and_hook_handler(const char *name)
         return -EFAULT;
     }
 
-    hooked_handle->handler->event = &our_hooked_event_handler;
+    void *hook_ptr = &our_hooked_event_handler;
+    if (remap_write_range(&hooked_handle->handler->event, &hook_ptr, sizeof(void *), true)) {
+        PRINT_DEBUG("[-] Failed to hook event handler for %s\n", name);
+        return -EFAULT;
+    }
 
     return 0;
 }
