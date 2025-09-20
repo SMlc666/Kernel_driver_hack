@@ -10,6 +10,8 @@
 
 #define HOOK_INTO_BRANCH_FUNC
 
+u64 branch_func_addr(u64 addr);
+
 typedef enum
 {
     HOOK_NO_ERR = 0,
