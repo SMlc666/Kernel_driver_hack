@@ -153,14 +153,34 @@ int khook_init(void){
         PRINT_DEBUG("kallsyms_lookup_name not available, only direct pointer mode supported\n");
     }
 
-    hook_mem_buf = vmalloc(PAGE_SIZE);
-    if (!hook_mem_buf) {
-        PRINT_DEBUG("vmalloc hook_mem_buf failed\n");
-        return -ENOMEM;
+    if (kallsyms_available) {
+        P_SYM(p_module_alloc) = (void *(*)(long))P_SYM(p_kallsyms_lookup_name)("module_alloc");
     }
+
+    if (P_SYM(p_module_alloc)) {
+        hook_mem_buf = P_SYM(p_module_alloc)(PAGE_SIZE);
+        if (!hook_mem_buf) {
+             PRINT_DEBUG("module_alloc hook_mem_buf failed\n");
+             return -ENOMEM;
+        }
+        PRINT_DEBUG("Allocated hook memory with module_alloc\n");
+    } else {
+        PRINT_DEBUG("module_alloc not found, falling back to vmalloc\n");
+        hook_mem_buf = vmalloc(PAGE_SIZE);
+        if (!hook_mem_buf) {
+            PRINT_DEBUG("vmalloc hook_mem_buf failed\n");
+            return -ENOMEM;
+        }
 #if defined(CONFIG_ARM) || defined(CONFIG_ARM64)
-    set_allocate_memory_x((unsigned long)hook_mem_buf, 1);
+        if (set_allocate_memory_x((unsigned long)hook_mem_buf, 1) != 0) {
+             PRINT_DEBUG("Failed to make vmalloc memory executable\n");
+             vfree(hook_mem_buf);
+             hook_mem_buf = NULL;
+             return -EFAULT;
+        }
 #endif
+    }
+
     hook_mem_add((uintptr_t)hook_mem_buf, PAGE_SIZE);
 
     for (p_fh_it = p_functions_hooks_array; p_fh_it->name != NULL; p_fh_it++) {
@@ -176,6 +196,7 @@ int khook_init(void){
     PRINT_DEBUG("load success\n");
     return 0;
 }
+
 
 
 void khook_exit(void){
