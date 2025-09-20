@@ -4,77 +4,76 @@
 #include <linux/wait.h>
 #include <linux/spinlock.h>
 #include <linux/uaccess.h>
-#include <linux/rcupdate.h>
+#include <linux/kallsyms.h> // For kallsyms_lookup_name
 #include <linux/slab.h>
-#include "inline_hook/utils/p_memory.h"
+#include <linux/rcupdate.h>
 
 #include "event_hijack.h"
 #include "version_control.h"
+#include "inline_hook/p_hook.h" // For hook_wrap
 
 // --- Global State for Hijacking ---
 
-// Pointer to the original event handler function
-static void (*original_event_handler)(struct input_handle *handle, unsigned int type, unsigned int code, int value);
-
-// Handle to the hooked device
-static struct input_handle *hooked_handle = NULL;
+// The device we want to hijack events from
 static struct input_dev *hooked_dev = NULL;
 
-// Kernel buffer for hijacked events (simple array-based ring buffer)
+// Kernel buffer for hijacked events
 static EVENT_PACKAGE event_buffer;
 static spinlock_t buffer_lock;
-static unsigned int buffer_head = 0;
-static unsigned int buffer_tail = 0;
 
-// Wait queue for user-space process to sleep on when buffer is empty
+// Wait queue for user-space process
 static wait_queue_head_t read_wait_queue;
 
 // Flag to indicate if the hook is active
 static bool hook_is_active = false;
-static DEFINE_MUTEX(hijack_mutex); // Protects against race conditions during hook/unhook
+static DEFINE_MUTEX(hijack_mutex);
 
-// --- Forward Declarations ---
-static int find_and_hook_handler(const char *name);
+// Pointer to the original input_event function, retrieved from the hook engine
+static void (*original_input_event)(struct input_dev *dev, unsigned int type, unsigned int code, int value) = NULL;
 
 // --- Core Hijacking Logic ---
 
 /**
- * Our custom event handler that replaces the original one.
- * This function is the entry point for all physical touch events.
+ * This is the "before" callback for our hook on input_event.
+ * It gets called for EVERY input event in the system.
  */
-void our_hooked_event_handler(struct input_handle *handle, unsigned int type, unsigned int code, int value)
+static void hooked_input_event_callback(hook_fargs4_t *fargs, void *udata)
 {
+    struct input_dev *dev = (struct input_dev *)fargs->arg0;
     unsigned long flags;
 
-    PRINT_DEBUG("[HIJACK] Event captured! type=%u, code=%u, value=%d\n", type, code, value);
+    // Check if the event is from the device we are interested in
+    if (hook_is_active && dev == hooked_dev) {
+        unsigned int type = (unsigned int)fargs->arg1;
+        unsigned int code = (unsigned int)fargs->arg2;
+        int value = (int)fargs->arg3;
 
-    // 1. Lock the buffer
-    spin_lock_irqsave(&buffer_lock, flags);
+        // It's our event, hijack it.
+        
+        // 1. Lock the buffer
+        spin_lock_irqsave(&buffer_lock, flags);
 
+        // 2. Store the event in our kernel buffer
+        if (event_buffer.count < MAX_EVENTS_PER_READ) {
+            struct input_event *event = &event_buffer.events[event_buffer.count];
+            event->type = type;
+            event->code = code;
+            event->value = value;
+            do_gettimeofday(&event->time);
+            event_buffer.count++;
+        }
 
-    // 2. Check if the buffer is full
-    if (event_buffer.count < MAX_EVENTS_PER_READ) {
-        // 3. Store the event in our kernel buffer
-        struct input_event *event = &event_buffer.events[event_buffer.count];
-        event->type = type;
-        event->code = code;
-        event->value = value;
-        // get_jiffies_64() is preferred for timestamps if needed
-        do_gettimeofday(&event->time);
-        event_buffer.count++;
-    } else {
-        // Buffer is full, we could drop the event or log a warning
-        // For now, we drop it.
+        // 3. Unlock the buffer
+        spin_unlock_irqrestore(&buffer_lock, flags);
+
+        // 4. Wake up the sleeping user-space process
+        wake_up_interruptible(&read_wait_queue);
+
+        // 5. CRITICAL: Skip the original input_event function call
+        fargs->skip_origin = 1;
     }
-
-    // 4. Unlock the buffer
-    spin_unlock_irqrestore(&buffer_lock, flags);
-
-    // 5. Wake up the sleeping user-space process
-    wake_up_interruptible(&read_wait_queue);
-
-    // 6. CRITICAL: Do not call the original handler. This is the hijack.
-    return;
+    
+    // If it's not our device, we do nothing, and the original function will be called.
 }
 
 // --- Public API Implementation ---
@@ -99,7 +98,10 @@ bool is_hook_active(void)
 
 int do_hook_input_device(const char *name)
 {
-    int ret;
+    struct input_dev *dummy_dev = NULL, *target_dev = NULL;
+    void *input_event_addr;
+    hook_chain_t *chain;
+
     mutex_lock(&hijack_mutex);
 
     if (hook_is_active) {
@@ -108,22 +110,86 @@ int do_hook_input_device(const char *name)
         return -EBUSY;
     }
 
-    ret = find_and_hook_handler(name);
-    if (ret == 0) {
-        hook_is_active = true;
-        PRINT_DEBUG("[HIJACK] Successfully hooked device '%s'.\n", name);
-    } else {
-        // Cleanup in case of partial success
-        original_event_handler = NULL;
-        hooked_handle = NULL;
+    // 1. Find the target device by name using the dummy device trick
+    dummy_dev = input_allocate_device();
+    if (!dummy_dev) {
+        mutex_unlock(&hijack_mutex);
+        return -ENOMEM;
+    }
+    dummy_dev->name = "khack_dummy_device";
+    if (input_register_device(dummy_dev)) {
+        input_free_device(dummy_dev);
+        mutex_unlock(&hijack_mutex);
+        return -EFAULT;
     }
 
+    rcu_read_lock();
+    struct list_head *curr = rcu_dereference(dummy_dev->node.next);
+    struct input_dev *dev_iter;
+    while (curr != &dummy_dev->node) {
+        dev_iter = list_entry(curr, struct input_dev, node);
+        if (dev_iter && dev_iter->name && strcmp(dev_iter->name, name) == 0) {
+            if (input_get_device(dev_iter)) {
+                target_dev = dev_iter;
+            }
+            break;
+        }
+        curr = rcu_dereference(curr->next);
+    }
+    rcu_read_unlock();
+    input_unregister_device(dummy_dev);
+
+    if (!target_dev) {
+        PRINT_DEBUG("[HIJACK] Device '%s' not found.\n", name);
+        mutex_unlock(&hijack_mutex);
+        return -ENODEV;
+    }
+
+    // 2. Find the address of the global input_event function
+    input_event_addr = (void *)kallsyms_lookup_name("input_event");
+    if (!input_event_addr) {
+        PRINT_DEBUG("[HIJACK] Failed to find address of input_event().\n");
+        input_put_device(target_dev);
+        mutex_unlock(&hijack_mutex);
+        return -EFAULT;
+    }
+
+    // 3. Install the hook using the inline hook engine
+    if (hook_wrap(input_event_addr, 4, hooked_input_event_callback, NULL, NULL) != HOOK_NO_ERR) {
+        PRINT_DEBUG("[HIJACK] Failed to wrap input_event().\n");
+        input_put_device(target_dev);
+        mutex_unlock(&hijack_mutex);
+        return -EFAULT;
+    }
+
+    // 4. Save state
+    hooked_dev = target_dev;
+    hook_is_active = true;
+
+    // 5. Get the original function pointer for injection
+    chain = hook_get_mem_from_origin(branch_func_addr((u64)input_event_addr));
+    if (chain) {
+        original_input_event = (void *)chain->hook.relo_addr;
+    } else {
+        // This is a critical failure, we must unwind
+        PRINT_DEBUG("[HIJACK] CRITICAL: Could not retrieve original function pointer after hook.\n");
+        hook_unwrap(input_event_addr, hooked_input_event_callback, NULL);
+        input_put_device(hooked_dev);
+        hooked_dev = NULL;
+        hook_is_active = false;
+        mutex_unlock(&hijack_mutex);
+        return -EFAULT;
+    }
+
+    PRINT_DEBUG("[HIJACK] Successfully hooked input_event() for device '%s'.\n", name);
     mutex_unlock(&hijack_mutex);
-    return ret;
+    return 0;
 }
 
 void do_cleanup_hook(void)
 {
+    void *input_event_addr;
+
     mutex_lock(&hijack_mutex);
 
     if (!hook_is_active) {
@@ -131,25 +197,22 @@ void do_cleanup_hook(void)
         return;
     }
 
-    // Restore the original event handler
-    if (hooked_handle && hooked_handle->handler && original_event_handler) {
-        void *original_event_ptr = &original_event_handler;
-        PRINT_DEBUG("[HIJACK] Restoring original event handler for %s.\n", hooked_dev->name);
-        if (remap_write_range(&hooked_handle->handler->event, &original_event_ptr, sizeof(void *), true)) {
-            PRINT_DEBUG("[-] Failed to restore event handler for %s\n", hooked_dev->name);
-        }
+    // 1. Find address and unwrap the hook
+    input_event_addr = (void *)kallsyms_lookup_name("input_event");
+    if (input_event_addr) {
+        hook_unwrap(input_event_addr, hooked_input_event_callback, NULL);
+        PRINT_DEBUG("[HIJACK] Unwrapped input_event().\n");
     }
 
-    // Clear all state
-    original_event_handler = NULL;
-    hooked_handle = NULL;
+    // 2. Clear state
     if (hooked_dev) {
         input_put_device(hooked_dev);
         hooked_dev = NULL;
     }
+    original_input_event = NULL;
     hook_is_active = false;
 
-    // Wake up any sleeping reader so it can exit cleanly
+    // 3. Wake up any sleeping reader so it can exit cleanly
     wake_up_interruptible(&read_wait_queue);
 
     PRINT_DEBUG("[HIJACK] Hook cleaned up.\n");
@@ -158,13 +221,12 @@ void do_cleanup_hook(void)
 
 int do_read_input_events(PEVENT_PACKAGE user_pkg)
 {
-    unsigned long flags;
     int ret;
+    unsigned long flags;
 
     // Wait until the buffer has events or the hook is disabled
     ret = wait_event_interruptible(read_wait_queue, event_buffer.count > 0 || !hook_is_active);
     if (ret) {
-        // Interrupted by a signal
         return -ERESTARTSYS;
     }
 
@@ -173,7 +235,7 @@ int do_read_input_events(PEVENT_PACKAGE user_pkg)
         return -ESHUTDOWN;
     }
 
-    // Lock, copy data to a temporary package, and clear the buffer
+    // Lock, copy data to user space, and clear the buffer
     spin_lock_irqsave(&buffer_lock, flags);
     
     if (copy_to_user(user_pkg, &event_buffer, sizeof(EVENT_PACKAGE))) {
@@ -193,7 +255,7 @@ int do_inject_input_event(struct input_event *event)
 {
     struct input_event k_event;
 
-    if (!hook_is_active || !original_event_handler || !hooked_handle) {
+    if (!hook_is_active || !original_input_event) {
         return -EINVAL;
     }
 
@@ -201,94 +263,9 @@ int do_inject_input_event(struct input_event *event)
         return -EFAULT;
     }
 
-    // CRITICAL: Call the original handler to inject the event, bypassing our hook.
-    original_event_handler(hooked_handle, k_event.type, k_event.code, k_event.value);
-
-    return 0;
-}
-
-
-// --- Internal Helper Functions ---
-
-/**
- * Finds an input device by name, finds its 'evdev' handler,
- * and hooks the handler's 'event' function pointer.
- */
-static int find_and_hook_handler(const char *name)
-{
-    struct input_dev *dummy_dev = NULL, *target_dev = NULL;
-    struct input_handle *handle = NULL;
-    struct input_handler *evdev_handler = NULL;
-
-    dummy_dev = input_allocate_device();
-    if (!dummy_dev) return -ENOMEM;
-
-    dummy_dev->name = "khack_dummy_device";
-    if (input_register_device(dummy_dev)) {
-        input_free_device(dummy_dev);
-        return -EFAULT;
-    }
-
-    rcu_read_lock();
-    struct list_head *curr = rcu_dereference(dummy_dev->node.next);
-    struct input_dev *dev_iter;
-    while (curr != &dummy_dev->node) {
-        dev_iter = list_entry(curr, struct input_dev, node);
-        if (dev_iter && dev_iter->name && strcmp(dev_iter->name, name) == 0) {
-            if (input_get_device(dev_iter)) {
-                target_dev = dev_iter;
-            }
-            break;
-        }
-        curr = rcu_dereference(curr->next);
-    }
-
-    if (target_dev) {
-        // Find the 'evdev' handle associated with this device
-        list_for_each_entry_rcu(handle, &target_dev->h_list, d_node) {
-            if (handle->handler && handle->handler->name && strcmp(handle->handler->name, "evdev") == 0) {
-                hooked_handle = handle;
-                evdev_handler = handle->handler;
-                break;
-            }
-        }
-    }
-    rcu_read_unlock();
-
-    input_unregister_device(dummy_dev);
-
-    if (!target_dev) {
-        PRINT_DEBUG("[HIJACK] Device '%s' not found.\n", name);
-        return -ENODEV;
-    }
-
-    if (!hooked_handle) {
-        PRINT_DEBUG("[HIJACK] Could not find evdev handle for device '%s'.\n", name);
-        input_put_device(target_dev);
-        return -ENODEV;
-    }
-
-    hooked_dev = target_dev;
-
-    // We found the handler, now perform the hook on the handler's event function
-    original_event_handler = evdev_handler->event;
-    if (!original_event_handler) {
-        PRINT_DEBUG("[HIJACK] Target evdev handler for '%s' has a NULL event function.\n", name);
-        input_put_device(target_dev);
-        hooked_handle = NULL;
-        hooked_dev = NULL;
-        return -EFAULT;
-    }
-
-    void *hook_ptr = &our_hooked_event_handler;
-    if (remap_write_range(&evdev_handler->event, &hook_ptr, sizeof(void *), true)) {
-        PRINT_DEBUG("[-] Failed to hook event handler for %s\n", name);
-        input_put_device(target_dev);
-        hooked_handle = NULL;
-        hooked_dev = NULL;
-        original_event_handler = NULL;
-        return -EFAULT;
-    }
+    // CRITICAL: Call the original handler to inject the event.
+    // We pass hooked_dev because that's the device context we are simulating.
+    original_input_event(hooked_dev, k_event.type, k_event.code, k_event.value);
 
     return 0;
 }
