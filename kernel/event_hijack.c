@@ -18,6 +18,7 @@ static void (*original_event_handler)(struct input_handle *handle, unsigned int 
 
 // Handle to the hooked device
 static struct input_handle *hooked_handle = NULL;
+static struct input_dev *hooked_dev = NULL;
 
 // Kernel buffer for hijacked events (simple array-based ring buffer)
 static EVENT_PACKAGE event_buffer;
@@ -139,6 +140,10 @@ void do_cleanup_hook(void)
     // Clear all state
     original_event_handler = NULL;
     hooked_handle = NULL;
+    if (hooked_dev) {
+        input_put_device(hooked_dev);
+        hooked_dev = NULL;
+    }
     hook_is_active = false;
 
     // Wake up any sleeping reader so it can exit cleanly
@@ -251,12 +256,13 @@ static int find_and_hook_handler(const char *name)
         }
     }
 
-    input_put_device(target_dev); // We got the device, now we can release it.
-
     if (!hooked_handle) {
+        input_put_device(target_dev); // We got the device, now we can release it.
         PRINT_DEBUG("[HIJACK] Could not find evdev handle for device '%s'.\n", name);
         return -ENODEV;
     }
+    
+    hooked_dev = target_dev;
 
     // We found the handle, now perform the hook
     original_event_handler = hooked_handle->handler->event;
