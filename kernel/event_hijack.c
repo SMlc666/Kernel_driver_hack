@@ -13,6 +13,16 @@
 #include "inline_hook/p_hook.h" // For hook_wrap
 #include "inline_hook/p_hmem.h" // For hook_get_mem_from_origin
 
+// --- Touch Mode State ---
+typedef enum {
+    MODE_PASS_THROUGH, // Default mode, events go to the system
+    MODE_INTERCEPT     // Intercept mode, events are blocked from the system
+} touch_mode;
+
+static touch_mode current_touch_mode = MODE_PASS_THROUGH;
+static DEFINE_SPINLOCK(mode_lock);
+
+
 // --- Global State for Hijacking ---
 
 // The device we want to hijack events from
@@ -47,7 +57,10 @@ static void hooked_input_event_callback(hook_fargs4_t *fargs, void *udata)
 {
     struct input_dev *dev = (struct input_dev *)fargs->arg0;
     unsigned long flags;
-	bool is_injecting;
+    bool is_injecting;
+    touch_mode current_mode;
+    struct input_event *event_to_copy;
+    struct input_event original_event;
 
     // Check if we are currently injecting an event to prevent feedback
     spin_lock_irqsave(&injection_lock, flags);
@@ -61,36 +74,48 @@ static void hooked_input_event_callback(hook_fargs4_t *fargs, void *udata)
 
     // Check if the event is from the device we are interested in
     if (hook_is_active && dev == hooked_dev) {
-        unsigned int type = (unsigned int)fargs->arg1;
-        unsigned int code = (unsigned int)fargs->arg2;
-        int value = (int)fargs->arg3;
-
-        // It's our event, hijack it.
-        
-        // 1. Lock the buffer
+        // Always copy the event to the user buffer, regardless of mode.
+        // This ensures the user-space application can always "see" the raw event.
         spin_lock_irqsave(&buffer_lock, flags);
-
-        // 2. Store the event in our kernel buffer
         if (event_buffer.count < MAX_EVENTS_PER_READ) {
-            struct input_event *event = &event_buffer.events[event_buffer.count];
-            event->type = type;
-            event->code = code;
-            event->value = value;
-            do_gettimeofday(&event->time);
+            event_to_copy = &event_buffer.events[event_buffer.count];
+            event_to_copy->type = (unsigned int)fargs->arg1;
+            event_to_copy->code = (unsigned int)fargs->arg2;
+            event_to_copy->value = (int)fargs->arg3;
+            do_gettimeofday(&event_to_copy->time);
             event_buffer.count++;
         }
-
-        // 3. Unlock the buffer
         spin_unlock_irqrestore(&buffer_lock, flags);
-
-        // 4. Wake up the sleeping user-space process
         wake_up_interruptible(&read_wait_queue);
 
-        // 5. CRITICAL: Skip the original input_event function call
-        fargs->skip_origin = 1;
+        // Read the current touch mode to decide the next action
+        spin_lock_irqsave(&mode_lock, flags);
+        current_mode = current_touch_mode;
+        spin_unlock_irqrestore(&mode_lock, flags);
+
+        // If in intercept mode, prevent the original function from being called
+        if (current_mode == MODE_INTERCEPT) {
+            fargs->skip_origin = 1;
+        }
+        // In MODE_PASS_THROUGH, we do nothing, and the event flows to the original function.
+    }
+}
+
+int do_set_touch_mode(unsigned int mode)
+{
+    unsigned long flags;
+
+    PRINT_DEBUG("[HIJACK] Setting touch mode to %u\n", mode);
+
+    spin_lock_irqsave(&mode_lock, flags);
+    if (mode == MODE_PASS_THROUGH || mode == MODE_INTERCEPT) {
+        current_touch_mode = (touch_mode)mode;
+        spin_unlock_irqrestore(&mode_lock, flags);
+        return 0;
     }
     
-    // If it's not our device, we do nothing, and the original function will be called.
+    spin_unlock_irqrestore(&mode_lock, flags);
+    return -EINVAL; // Invalid mode
 }
 
 // --- Public API Implementation ---

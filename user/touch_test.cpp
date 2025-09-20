@@ -114,7 +114,7 @@ int main() {
         for (unsigned int i = 0; i < pkg.count; ++i) {
             struct input_event *ev = &pkg.events[i];
             if (ev->type == EV_ABS && ev->code == ABS_MT_POSITION_Y) {
-                printf("    Original Y: %d -> Modified Y: %d\n", ev->value, ev->value + 200);
+                // printf("    Original Y: %d -> Modified Y: %d\n", ev->value, ev->value + 200);
                 ev->value += 200;
             }
         }

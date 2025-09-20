@@ -16,6 +16,7 @@ int do_read_input_events(PEVENT_PACKAGE user_pkg);
 int do_inject_input_event(struct input_event *event);
 int do_inject_input_package(PEVENT_PACKAGE user_pkg);
 void do_cleanup_hook(void);
+int do_set_touch_mode(unsigned int mode);
 
 // Check if the hook is currently active
 bool is_hook_active(void);

@@ -58,6 +58,7 @@ enum OPERATIONS
 	OP_INJECT_INPUT_EVENT = 0x813,
 	OP_HEARTBEAT = 0x814,
 	OP_INJECT_INPUT_PACKAGE = 0x815,
+	OP_SET_TOUCH_MODE = 0x816,
 };
 
 // New struct for event batching

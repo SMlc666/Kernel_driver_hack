@@ -107,9 +107,15 @@ private:
 		OP_INJECT_INPUT_EVENT = 0x813,
 		OP_HEARTBEAT = 0x814,
 		OP_INJECT_INPUT_PACKAGE = 0x815,
+		OP_SET_TOUCH_MODE = 0x816,
 	};
 
-public:
+	public:
+	enum touch_mode {
+		MODE_PASS_THROUGH = 0,
+		MODE_INTERCEPT = 1
+	};
+
 	c_driver()
 	{
 		fd = open(DEVICE_NAME, O_RDWR);
@@ -365,6 +371,16 @@ public:
 		return ioctl(fd, OP_HEARTBEAT) == 0;
 	}
 
+	bool set_touch_mode(touch_mode mode)
+	{
+		if (fd < 0) return false;
+		int val = mode;
+		if (ioctl(fd, OP_SET_TOUCH_MODE, &val) != 0)
+		{
+			return false;
+		}
+		return true;
+	}
 
 	// --- Legacy Touch API ---
 

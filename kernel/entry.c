@@ -307,6 +307,15 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 		}
 		break;
 	}
+	case OP_SET_TOUCH_MODE:
+	{
+		int mode;
+		if (copy_from_user(&mode, (void __user *)arg, sizeof(mode)) != 0)
+		{
+			return -EFAULT;
+		}
+		return do_set_touch_mode(mode);
+	}
 	default:
 		return -EINVAL; // Unrecognized command for our driver
 	}
