@@ -358,6 +358,20 @@ bool write_process_memory(
 	return result;
 }
 
+#ifndef L1_CACHE_BYTES
+#define L1_CACHE_BYTES 64
+#endif
+
+static inline void manual_flush_dcache_area(void *addr, size_t size)
+{
+    unsigned long i;
+    for (i = (unsigned long)addr; i < (unsigned long)addr + size; i += L1_CACHE_BYTES) {
+        // Data Cache Clean and Invalidate by VA to Point of Coherency
+        asm volatile("dc civac, %0" : : "r"(i) : "memory");
+    }
+    asm volatile("dsb ish" : : : "memory"); // Ensure completion
+}
+
 bool read_physical_address_safe(phys_addr_t pa, void *buffer, size_t size)
 {
 	void *mapped;
@@ -380,6 +394,11 @@ bool read_physical_address_safe(phys_addr_t pa, void *buffer, size_t size)
 		iounmap(mapped);
 		return false;
 	}
+
+    // Per user's suggestion, flush the cache for the area we just read
+    // to fight the hardware prefetcher.
+    manual_flush_dcache_area(mapped, size);
+
 	iounmap(mapped);
 	return true;
 }
