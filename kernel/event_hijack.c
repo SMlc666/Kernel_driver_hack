@@ -1,4 +1,5 @@
 #include <linux/input.h>
+#include <linux/input/mt.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/wait.h>
@@ -350,9 +351,10 @@ int do_read_input_events(PEVENT_PACKAGE user_pkg)
 int do_inject_input_event(struct input_event *event)
 {
     struct input_event k_event;
-	unsigned long flags;
+    unsigned long flags;
 
-    if (!hook_is_active || !original_input_event) {
+    // We inject into the hooked_dev, so it must exist.
+    if (!hook_is_active || !hooked_dev) {
         return -EINVAL;
     }
 
@@ -360,15 +362,14 @@ int do_inject_input_event(struct input_event *event)
         return -EFAULT;
     }
 
-    // Set flag to prevent feedback loop
+    // Set flag to prevent our own hook from catching this event
     spin_lock_irqsave(&injection_lock, flags);
     injection_in_progress = true;
     spin_unlock_irqrestore(&injection_lock, flags);
 
-
-    // CRITICAL: Call the original handler to inject the event.
-    // We pass hooked_dev because that's the device context we are simulating.
-    original_input_event(hooked_dev, k_event.type, k_event.code, k_event.value);
+    // Use the standard kernel API to inject the event.
+    // This allows the input subsystem to manage state correctly.
+    input_event(hooked_dev, k_event.type, k_event.code, k_event.value);
 
     // Clear flag
     spin_lock_irqsave(&injection_lock, flags);
@@ -382,9 +383,10 @@ int do_inject_input_package(PEVENT_PACKAGE user_pkg)
 {
     EVENT_PACKAGE k_pkg;
     unsigned int i;
-	unsigned long flags;
+    unsigned long flags;
 
-    if (!hook_is_active || !original_input_event) {
+    // We inject into the hooked_dev, so it must exist.
+    if (!hook_is_active || !hooked_dev) {
         return -EINVAL;
     }
 
@@ -396,14 +398,15 @@ int do_inject_input_package(PEVENT_PACKAGE user_pkg)
         return -EINVAL; // Avoid buffer overflow
     }
 
-    // Set flag to prevent feedback loop
+    // Set flag to prevent our own hook from catching these events
     spin_lock_irqsave(&injection_lock, flags);
     injection_in_progress = true;
     spin_unlock_irqrestore(&injection_lock, flags);
 
+    // Use standard kernel APIs to inject events, which correctly handles device state.
     for (i = 0; i < k_pkg.count; i++) {
         struct input_event *ev = &k_pkg.events[i];
-        original_input_event(hooked_dev, ev->type, ev->code, ev->value);
+        input_event(hooked_dev, ev->type, ev->code, ev->value);
     }
 
     // Clear flag
