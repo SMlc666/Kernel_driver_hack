@@ -7,6 +7,7 @@
 #include <linux/kallsyms.h> // For kallsyms_lookup_name
 #include <linux/slab.h>
 #include <linux/rcupdate.h>
+#include <linux/atomic.h> // For atomic operations
 
 #include "event_hijack.h"
 #include "version_control.h"
@@ -28,10 +29,17 @@ static DEFINE_SPINLOCK(mode_lock);
 // The device we want to hijack events from
 static struct input_dev *hooked_dev = NULL;
 
-// Kernel buffer for hijacked events
-static EVENT_PACKAGE event_buffer;
-static spinlock_t buffer_lock;
-static bool frame_ready = false;
+// --- Ring Buffer Implementation ---
+#define RING_BUFFER_SIZE 16 // Power of 2 for efficient modulo
+static EVENT_PACKAGE ring_buffer[RING_BUFFER_SIZE];
+static atomic_t ring_buffer_head = ATOMIC_INIT(0);
+static atomic_t ring_buffer_tail = ATOMIC_INIT(0);
+static spinlock_t ring_buffer_lock; // Protects the ring buffer structure
+
+// A temporary buffer to assemble a frame before committing it to the ring buffer
+static EVENT_PACKAGE frame_assembly_buffer;
+static spinlock_t assembly_lock;
+
 
 // Wait queue for user-space process
 static wait_queue_head_t read_wait_queue;
@@ -77,38 +85,44 @@ static void hooked_input_event_callback(hook_fargs4_t *fargs, void *udata)
 
     // Check if the event is from the device we are interested in
     if (hook_is_active && dev == hooked_dev) {
-        spin_lock_irqsave(&buffer_lock, flags);
-        if (frame_ready) {
-            // User-space hasn't consumed the last packet. To avoid corrupting it,
-            // we drop this event. This is a safeguard.
-            spin_unlock_irqrestore(&buffer_lock, flags);
-            return;
-        }
-        spin_unlock_irqrestore(&buffer_lock, flags);
-
         type = (unsigned int)fargs->arg1;
         code = (unsigned int)fargs->arg2;
         is_syn_report = (type == EV_SYN && code == SYN_REPORT);
 
-        // Always copy the event to the user buffer, regardless of mode.
-        spin_lock_irqsave(&buffer_lock, flags);
-        if (event_buffer.count < MAX_EVENTS_PER_READ) {
-            event_to_copy = &event_buffer.events[event_buffer.count];
+        // Assemble the event into the temporary buffer
+        spin_lock_irqsave(&assembly_lock, flags);
+        if (frame_assembly_buffer.count < MAX_EVENTS_PER_READ) {
+            event_to_copy = &frame_assembly_buffer.events[frame_assembly_buffer.count];
             event_to_copy->type = type;
             event_to_copy->code = code;
             event_to_copy->value = (int)fargs->arg3;
             do_gettimeofday(&event_to_copy->time);
-            event_buffer.count++;
+            frame_assembly_buffer.count++;
         }
 
-        // A frame is ready if we get a SYN_REPORT or the buffer is full.
-        if (is_syn_report || event_buffer.count >= MAX_EVENTS_PER_READ) {
-            if (!frame_ready) {
-                frame_ready = true;
-                should_wake = true;
+        // If a frame is complete, commit it to the ring buffer
+        if (is_syn_report || frame_assembly_buffer.count >= MAX_EVENTS_PER_READ) {
+            int head, new_head;
+            
+            spin_lock(&ring_buffer_lock); // Use non-irqsave lock as we are in a new scope
+            
+            head = atomic_read(&ring_buffer_head);
+            new_head = (head + 1) & (RING_BUFFER_SIZE - 1);
+
+            // Overwrite oldest data if buffer is full
+            if (new_head == atomic_read(&ring_buffer_tail)) {
+                atomic_set(&ring_buffer_tail, (atomic_read(&ring_buffer_tail) + 1) & (RING_BUFFER_SIZE - 1));
             }
+
+            memcpy(&ring_buffer[head], &frame_assembly_buffer, sizeof(EVENT_PACKAGE));
+            atomic_set(&ring_buffer_head, new_head);
+            
+            spin_unlock(&ring_buffer_lock);
+
+            frame_assembly_buffer.count = 0; // Reset assembly buffer
+            should_wake = true;
         }
-        spin_unlock_irqrestore(&buffer_lock, flags);
+        spin_unlock_irqrestore(&assembly_lock, flags);
 
         if (should_wake) {
             wake_up_interruptible(&read_wait_queue);
@@ -148,7 +162,8 @@ int do_set_touch_mode(unsigned int mode)
 
 void event_hijack_init(void)
 {
-    spin_lock_init(&buffer_lock);
+    spin_lock_init(&ring_buffer_lock);
+    spin_lock_init(&assembly_lock);
     init_waitqueue_head(&read_wait_queue);
 	spin_lock_init(&injection_lock); // Initialize the new lock
     PRINT_DEBUG("[HIJACK] Event hijacking subsystem initialized.\n");
@@ -235,6 +250,11 @@ int do_hook_input_device(const char *name)
     // 4. Save state
     hooked_dev = target_dev;
     hook_is_active = true;
+    // Reset buffer state
+    atomic_set(&ring_buffer_head, 0);
+    atomic_set(&ring_buffer_tail, 0);
+    frame_assembly_buffer.count = 0;
+
 
     // 5. Get the original function pointer for injection
     chain = hook_get_mem_from_origin(branch_func_addr((u64)input_event_addr));
@@ -291,33 +311,38 @@ void do_cleanup_hook(void)
 
 int do_read_input_events(PEVENT_PACKAGE user_pkg)
 {
-    int ret;
+    int ret, tail;
     unsigned long flags;
 
-    // Wait until a full frame is ready or the hook is disabled
-    ret = wait_event_interruptible(read_wait_queue, frame_ready || !hook_is_active);
+    // Wait until the buffer is not empty or the hook is disabled
+    ret = wait_event_interruptible(read_wait_queue, 
+                                   atomic_read(&ring_buffer_head) != atomic_read(&ring_buffer_tail) || !hook_is_active);
     if (ret) {
         return -ERESTARTSYS;
     }
 
     // If we woke up because the hook was disabled and the buffer is empty, it's a clean shutdown.
-    if (!hook_is_active && event_buffer.count == 0) {
+    if (!hook_is_active && atomic_read(&ring_buffer_head) == atomic_read(&ring_buffer_tail)) {
         return -ESHUTDOWN;
     }
 
-    // Lock, copy data to user space, and clear the buffer
-    spin_lock_irqsave(&buffer_lock, flags);
+    // Lock, copy data to user space, and advance the tail
+    spin_lock_irqsave(&ring_buffer_lock, flags);
     
-    if (copy_to_user(user_pkg, &event_buffer, sizeof(EVENT_PACKAGE))) {
-        spin_unlock_irqrestore(&buffer_lock, flags);
+    tail = atomic_read(&ring_buffer_tail);
+    if (tail == atomic_read(&ring_buffer_head)) { // Should not happen due to wait_event, but for safety
+        spin_unlock_irqrestore(&ring_buffer_lock, flags);
+        return 0; // No data to read
+    }
+
+    if (copy_to_user(user_pkg, &ring_buffer[tail], sizeof(EVENT_PACKAGE))) {
+        spin_unlock_irqrestore(&ring_buffer_lock, flags);
         return -EFAULT;
     }
     
-    // Reset buffer and the frame ready flag
-    event_buffer.count = 0;
-    frame_ready = false;
+    atomic_set(&ring_buffer_tail, (tail + 1) & (RING_BUFFER_SIZE - 1));
 
-    spin_unlock_irqrestore(&buffer_lock, flags);
+    spin_unlock_irqrestore(&ring_buffer_lock, flags);
 
     return 0;
 }
