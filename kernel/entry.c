@@ -214,25 +214,6 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 		}
 		break;
 	}
-	case OP_TOUCH_SET_DEVICE:
-	{
-		// The argument 'arg' is a user-space pointer to the path string
-		if (touch_set_device((const char __user *)arg) != 0)
-		{
-			return -1;
-		}
-		break;
-	}
-	case OP_TOUCH_SEND:
-	{
-		static TOUCH_DATA td;
-		if (copy_from_user(&td, (void __user *)arg, sizeof(td)) != 0)
-		{
-			return -1;
-		}
-		touch_send_event(&td);
-		break;
-	}
 	case OP_TOUCH_DEINIT:
 	{
 		touch_deinit();

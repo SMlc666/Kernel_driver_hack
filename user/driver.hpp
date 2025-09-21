@@ -94,8 +94,6 @@ private:
 		OP_WRITE_MEM = 0x802,
 		OP_MODULE_BASE = 0x803,
 		OP_HIDE_PROC = 0x804,
-		OP_TOUCH_SET_DEVICE = 0x805,
-		OP_TOUCH_SEND = 0x806,
 		OP_TOUCH_DEINIT = 0x807,
 		OP_GET_PID = 0x808,
 		OP_READ_MEM_SAFE = 0x809,
@@ -384,18 +382,6 @@ private:
 
 	// --- Legacy Touch API ---
 
-	bool touch_set_device(const char *path)
-	{
-		if (fd < 0) return false;
-		if (ioctl(fd, OP_TOUCH_SET_DEVICE, path) != 0)
-		{
-			printf("[-] touch_set_device failed for path: %s\n", path);
-			return false;
-		}
-		printf("[+] Touch device successfully set to %s\n", path);
-		return true;
-	}
-
 	bool hook_input_device_by_name(const char *name)
 	{
 		if (fd < 0) return false;
@@ -409,16 +395,6 @@ private:
 			return false;
 		}
 		printf("[+] Kernel driver is now targeting device name: %s\n", name);
-		return true;
-	}
-
-	bool touch_send(PTOUCH_DATA data)
-	{
-		if (fd < 0) return false;
-		if (ioctl(fd, OP_TOUCH_SEND, data) != 0)
-		{
-			return false;
-		}
 		return true;
 	}
 

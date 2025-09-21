@@ -57,61 +57,6 @@ static DEFINE_MUTEX(touch_dev_mutex);
 // This will be our handle to the hooked device, which we will find.
 static struct input_handle *hooked_handle = NULL;
 
-
-int touch_set_device(const char __user *path) {
-    char kpath[64];
-    struct evdev_client *client;
-
-    mutex_lock(&touch_dev_mutex);
-
-    if (touch_dev) {
-        PRINT_DEBUG("[TOUCH] Device already set. Deinitializing first.\n");
-        // Release previous device if any
-        if (touch_filp) {
-            filp_close(touch_filp, NULL);
-            touch_filp = NULL;
-        }
-        if (touch_dev) {
-            input_put_device(touch_dev);
-            touch_dev = NULL;
-        }
-		hooked_handle = NULL;
-    }
-
-    if (strncpy_from_user(kpath, path, sizeof(kpath) - 1) < 0) {
-        mutex_unlock(&touch_dev_mutex);
-        return -EFAULT;
-    }
-    kpath[sizeof(kpath) - 1] = '\0';
-
-    PRINT_DEBUG("[TOUCH] Opening real touch device: %s\n", kpath);
-    touch_filp = filp_open(kpath, O_RDWR, 0);
-    if (IS_ERR(touch_filp)) {
-        PRINT_DEBUG("[TOUCH] Failed to open %s. Error %ld\n", kpath, PTR_ERR(touch_filp));
-        touch_filp = NULL;
-        mutex_unlock(&touch_dev_mutex);
-        return PTR_ERR(touch_filp);
-    }
-
-    client = (struct evdev_client *)touch_filp->private_data;
-    if (!client || !client->evdev || !client->evdev->handle.dev) {
-        PRINT_DEBUG("[TOUCH] Could not get evdev_client or input_dev from file.\n");
-        filp_close(touch_filp, NULL);
-        touch_filp = NULL;
-        mutex_unlock(&touch_dev_mutex);
-        return -EFAULT;
-    }
-
-    touch_dev = client->evdev->handle.dev;
-    input_get_device(touch_dev); // Increment ref count to hold onto it
-	hooked_handle = &client->evdev->handle;
-
-    PRINT_DEBUG("[TOUCH] Successfully hijacked device: %s\n", touch_dev->name);
-
-    mutex_unlock(&touch_dev_mutex);
-    return 0;
-}
-
 int touch_set_device_by_name(const char *name) {
     struct input_dev *dummy_dev = NULL;
     struct input_dev *target_dev = NULL;
@@ -216,43 +161,5 @@ void touch_deinit(void) {
         touch_dev = NULL;
     }
 	hooked_handle = NULL;
-    mutex_unlock(&touch_dev_mutex);
-}
-
-void touch_send_event(PTOUCH_DATA data) {
-    int i;
-
-    mutex_lock(&touch_dev_mutex);
-
-    if (!touch_dev) {
-        mutex_unlock(&touch_dev_mutex);
-        return;
-    }
-
-    for (i = 0; i < data->point_count; i++) {
-        input_mt_slot(touch_dev, data->points[i].id);
-        input_mt_report_slot_state(touch_dev, MT_TOOL_FINGER, true);
-        input_report_abs(touch_dev, ABS_MT_TRACKING_ID, data->points[i].id);
-        input_report_abs(touch_dev, ABS_MT_POSITION_X, data->points[i].x);
-        input_report_abs(touch_dev, ABS_MT_POSITION_Y, data->points[i].y);
-        if (data->points[i].size1 > 0)
-            input_report_abs(touch_dev, ABS_MT_TOUCH_MAJOR, data->points[i].size1);
-        if (data->points[i].size2 > 0)
-            input_report_abs(touch_dev, ABS_MT_WIDTH_MAJOR, data->points[i].size2);
-        if (data->points[i].size3 > 0)
-            input_report_abs(touch_dev, ABS_MT_TOUCH_MINOR, data->points[i].size3);
-    }
-
-    if (data->point_count == 0) {
-        input_mt_sync_frame(touch_dev);
-        input_report_key(touch_dev, BTN_TOUCH, 0);
-        input_report_key(touch_dev, BTN_TOOL_FINGER, 0);
-    } else {
-        input_report_key(touch_dev, BTN_TOUCH, 1);
-        input_report_key(touch_dev, BTN_TOOL_FINGER, 1);
-        input_mt_sync_frame(touch_dev);
-    }
-
-    input_sync(touch_dev);
     mutex_unlock(&touch_dev_mutex);
 }
