@@ -67,20 +67,28 @@ static void __iomem *my_ioremap_ram_nocache(phys_addr_t phys_addr, size_t size)
 	if (!size || last_addr < phys_addr || (last_addr & ~PHYS_MASK))
 		return NULL;
 
+	printk(KERN_INFO "[KHACK_DEBUG] Calling get_vm_area_caller_ptr for size %zu\n", size);
 	area = get_vm_area_caller_ptr(size, VM_IOREMAP, caller);
-	if (!area)
+	if (!area) {
+		printk(KERN_ERR "[KHACK_DEBUG] get_vm_area_caller_ptr FAILED and returned NULL!\n");
 		return NULL;
+	}
 	addr = (unsigned long)area->addr;
 	area->phys_addr = phys_addr;
+	printk(KERN_INFO "[KHACK_DEBUG] get_vm_area_caller_ptr OK. addr = 0x%lx\n", addr);
 
+	printk(KERN_INFO "[KHACK_DEBUG] Calling ioremap_page_range_ptr for pa=0x%llx, va=0x%lx\n", (unsigned long long)phys_addr, addr);
 	err = ioremap_page_range_ptr(addr, addr + size, phys_addr, pgprot_noncached(PAGE_KERNEL));
 	if (err) {
+		printk(KERN_ERR "[KHACK_DEBUG] ioremap_page_range_ptr FAILED with error code %d\n", err);
 		vunmap((void *)addr);
 		return NULL;
 	}
 
+	printk(KERN_INFO "[KHACK_DEBUG] ioremap_page_range_ptr OK.\n");
 	return (void __iomem *)(offset + addr);
 }
+
 
 extern struct mm_struct *get_task_mm(struct task_struct *task);
 
