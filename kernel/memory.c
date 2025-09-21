@@ -115,7 +115,44 @@ static inline int my_valid_phys_addr_range(phys_addr_t addr, size_t count)
 {
 	return addr + count <= __pa(high_memory);
 }
+// Based on the kernel source provided by the user.
+// This is a DANGEROUS function that bypasses kernel safety checks. Use with extreme caution.
+static void __iomem *my_ioremap_ram_nocache(phys_addr_t phys_addr, size_t size)
+{
+	unsigned long last_addr;
+	unsigned long offset = phys_addr & ~PAGE_MASK;
+	int err;
+	unsigned long addr;
+	struct vm_struct *area;
+    void *caller = __builtin_return_address(0);
 
+	phys_addr &= PAGE_MASK;
+	size = PAGE_ALIGN(size + offset);
+
+	last_addr = phys_addr + size - 1;
+	if (!size || last_addr < phys_addr || (last_addr & ~PHYS_MASK))
+		return NULL;
+
+	/*
+	 * The check for RAM mapping has been intentionally removed. This is risky.
+	 * if (WARN_ON(pfn_valid(__phys_to_pfn(phys_addr))))
+	 *	 return NULL;
+	 */
+
+	area = get_vm_area_caller(size, VM_IOREMAP, caller);
+	if (!area)
+		return NULL;
+	addr = (unsigned long)area->addr;
+	area->phys_addr = phys_addr;
+
+	err = ioremap_page_range(addr, addr + size, phys_addr, pgprot_noncached(PAGE_KERNEL));
+	if (err) {
+		vunmap((void *)addr);
+		return NULL;
+	}
+
+	return (void __iomem *)(offset + addr);
+}
 
 bool read_physical_address(phys_addr_t pa, void *buffer, size_t size)
 {
@@ -296,7 +333,7 @@ bool read_physical_address_safe(phys_addr_t pa, void *buffer, size_t size)
 	{
 		return false;
 	}
-	mapped = ioremap_nocache(pa, size);
+	mapped = my_ioremap_ram_nocache(pa, size);
 	if (!mapped)
 	{
 		return false;
