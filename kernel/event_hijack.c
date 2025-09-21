@@ -77,6 +77,15 @@ static void hooked_input_event_callback(hook_fargs4_t *fargs, void *udata)
 
     // Check if the event is from the device we are interested in
     if (hook_is_active && dev == hooked_dev) {
+        spin_lock_irqsave(&buffer_lock, flags);
+        if (frame_ready) {
+            // User-space hasn't consumed the last packet. To avoid corrupting it,
+            // we drop this event. This is a safeguard.
+            spin_unlock_irqrestore(&buffer_lock, flags);
+            return;
+        }
+        spin_unlock_irqrestore(&buffer_lock, flags);
+
         type = (unsigned int)fargs->arg1;
         code = (unsigned int)fargs->arg2;
         is_syn_report = (type == EV_SYN && code == SYN_REPORT);

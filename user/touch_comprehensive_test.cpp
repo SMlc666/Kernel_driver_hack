@@ -161,7 +161,7 @@ void test_hijack_modify() {
         if (driver->read_input_events(&pkg)) {
             for (unsigned int i = 0; i < pkg.count; ++i) {
                 struct input_event *ev = &pkg.events[i];
-                if (ev->type == EV_ABS && ev->code == ABS_MT_POSITION_X) {
+                if (ev->type == EV_ABS && (ev->code == ABS_MT_POSITION_X || ev->code == ABS_X)) {
                     ev->value = g_max_x - ev->value;
                 }
             }
