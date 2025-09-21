@@ -60,7 +60,9 @@ static void hooked_input_event_callback(hook_fargs4_t *fargs, void *udata)
     bool is_injecting;
     touch_mode current_mode;
     struct input_event *event_to_copy;
-    struct input_event original_event;
+    unsigned int type, code;
+    bool is_syn_report;
+    bool should_wake = false;
 
     // Check if we are currently injecting an event to prevent feedback
     spin_lock_irqsave(&injection_lock, flags);
@@ -74,19 +76,33 @@ static void hooked_input_event_callback(hook_fargs4_t *fargs, void *udata)
 
     // Check if the event is from the device we are interested in
     if (hook_is_active && dev == hooked_dev) {
+        type = (unsigned int)fargs->arg1;
+        code = (unsigned int)fargs->arg2;
+        is_syn_report = (type == EV_SYN && code == SYN_REPORT);
+
         // Always copy the event to the user buffer, regardless of mode.
-        // This ensures the user-space application can always "see" the raw event.
         spin_lock_irqsave(&buffer_lock, flags);
         if (event_buffer.count < MAX_EVENTS_PER_READ) {
             event_to_copy = &event_buffer.events[event_buffer.count];
-            event_to_copy->type = (unsigned int)fargs->arg1;
-            event_to_copy->code = (unsigned int)fargs->arg2;
+            event_to_copy->type = type;
+            event_to_copy->code = code;
             event_to_copy->value = (int)fargs->arg3;
             do_gettimeofday(&event_to_copy->time);
             event_buffer.count++;
         }
+
+        // A frame is ready if we get a SYN_REPORT or the buffer is full.
+        if (is_syn_report || event_buffer.count >= MAX_EVENTS_PER_READ) {
+            if (!frame_ready) {
+                frame_ready = true;
+                should_wake = true;
+            }
+        }
         spin_unlock_irqrestore(&buffer_lock, flags);
-        wake_up_interruptible(&read_wait_queue);
+
+        if (should_wake) {
+            wake_up_interruptible(&read_wait_queue);
+        }
 
         // Read the current touch mode to decide the next action
         spin_lock_irqsave(&mode_lock, flags);
