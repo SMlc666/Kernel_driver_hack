@@ -31,6 +31,7 @@ static struct input_dev *hooked_dev = NULL;
 // Kernel buffer for hijacked events
 static EVENT_PACKAGE event_buffer;
 static spinlock_t buffer_lock;
+static bool frame_ready = false;
 
 // Wait queue for user-space process
 static wait_queue_head_t read_wait_queue;
@@ -160,6 +161,8 @@ int do_hook_input_device(const char *name)
     struct input_dev *dummy_dev = NULL, *target_dev = NULL;
     void *input_event_addr;
     hook_chain_t *chain;
+    struct list_head *curr;
+    struct input_dev *dev_iter;
 
     mutex_lock(&hijack_mutex);
 
@@ -183,8 +186,7 @@ int do_hook_input_device(const char *name)
     }
 
     rcu_read_lock();
-    struct list_head *curr = rcu_dereference(dummy_dev->node.next);
-    struct input_dev *dev_iter;
+    curr = rcu_dereference(dummy_dev->node.next);
     while (curr != &dummy_dev->node) {
         dev_iter = list_entry(curr, struct input_dev, node);
         if (dev_iter && dev_iter->name && strcmp(dev_iter->name, name) == 0) {
