@@ -283,13 +283,13 @@ int do_read_input_events(PEVENT_PACKAGE user_pkg)
     int ret;
     unsigned long flags;
 
-    // Wait until the buffer has events or the hook is disabled
-    ret = wait_event_interruptible(read_wait_queue, event_buffer.count > 0 || !hook_is_active);
+    // Wait until a full frame is ready or the hook is disabled
+    ret = wait_event_interruptible(read_wait_queue, frame_ready || !hook_is_active);
     if (ret) {
         return -ERESTARTSYS;
     }
 
-    // If we woke up because the hook was disabled and buffer is empty, return error
+    // If we woke up because the hook was disabled and the buffer is empty, it's a clean shutdown.
     if (!hook_is_active && event_buffer.count == 0) {
         return -ESHUTDOWN;
     }
@@ -302,8 +302,9 @@ int do_read_input_events(PEVENT_PACKAGE user_pkg)
         return -EFAULT;
     }
     
-    // Reset buffer
+    // Reset buffer and the frame ready flag
     event_buffer.count = 0;
+    frame_ready = false;
 
     spin_unlock_irqrestore(&buffer_lock, flags);
 
