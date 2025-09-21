@@ -1,16 +1,86 @@
-#include "memory.h"
+#include <linux/kallsyms.h>
 #include <linux/tty.h>
 #include <linux/io.h>
 #include <linux/mm.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
 #include <linux/version.h>
-#include <linux/sched/mm.h>      // 包含 get_task_mm 的声明
-#include <linux/sched/signal.h>  // 包含 find_get_pid 和 get_pid_task 的声明
+#include <linux/sched/mm.h>
+#include <linux/sched/signal.h>
 #include <asm/cpu.h>
 #include <asm/io.h>
 #include <asm/page.h>
 #include <asm/pgtable.h>
+#include <linux/vmalloc.h>
+
+#include "memory.h"
+
+// Define function pointer types for the functions we need to look up
+typedef struct vm_struct *(*get_vm_area_caller_t)(unsigned long, unsigned long, void *);
+typedef int (*ioremap_page_range_t)(unsigned long, unsigned long, phys_addr_t, pgprot_t);
+
+// Global variables to hold the resolved function addresses
+static get_vm_area_caller_t get_vm_area_caller_ptr;
+static ioremap_page_range_t ioremap_page_range_ptr;
+
+// Function to resolve symbols using kallsyms_lookup_name.
+static int resolve_manual_ioremap_symbols(void)
+{
+	if (get_vm_area_caller_ptr && ioremap_page_range_ptr)
+		return 0;
+
+	get_vm_area_caller_ptr = (get_vm_area_caller_t)kallsyms_lookup_name("get_vm_area_caller");
+	if (!get_vm_area_caller_ptr) {
+		printk(KERN_ERR "[KHACK] Failed to resolve get_vm_area_caller\n");
+		return -ENOENT;
+	}
+
+	ioremap_page_range_ptr = (ioremap_page_range_t)kallsyms_lookup_name("ioremap_page_range");
+	if (!ioremap_page_range_ptr) {
+		printk(KERN_ERR "[KHACK] Failed to resolve ioremap_page_range\n");
+		return -ENOENT;
+	}
+    
+	return 0;
+}
+
+
+// Based on the kernel source provided by the user, using dynamically resolved symbols.
+static void __iomem *my_ioremap_ram_nocache(phys_addr_t phys_addr, size_t size)
+{
+	unsigned long last_addr;
+	unsigned long offset = phys_addr & ~PAGE_MASK;
+	int err;
+	unsigned long addr;
+	struct vm_struct *area;
+    void *caller = __builtin_return_address(0);
+
+    if (resolve_manual_ioremap_symbols() != 0) {
+        printk(KERN_ERR "[KHACK] Cannot perform manual ioremap, symbols not found.\n");
+        return NULL;
+    }
+
+	phys_addr &= PAGE_MASK;
+	size = PAGE_ALIGN(size + offset);
+
+	last_addr = phys_addr + size - 1;
+	if (!size || last_addr < phys_addr || (last_addr & ~PHYS_MASK))
+		return NULL;
+
+	area = get_vm_area_caller_ptr(size, VM_IOREMAP, caller);
+	if (!area)
+		return NULL;
+	addr = (unsigned long)area->addr;
+	area->phys_addr = phys_addr;
+
+	err = ioremap_page_range_ptr(addr, addr + size, phys_addr, pgprot_noncached(PAGE_KERNEL));
+	if (err) {
+		vunmap((void *)addr);
+		return NULL;
+	}
+
+	return (void __iomem *)(offset + addr);
+}
 
 extern struct mm_struct *get_task_mm(struct task_struct *task);
 
@@ -58,9 +128,7 @@ phys_addr_t translate_linear_address(struct mm_struct *mm, uintptr_t va)
 	{
 		return 0;
 	}
-	// 页物理地址
 	page_addr = (phys_addr_t)(pte_pfn(*pte) << PAGE_SHIFT);
-	// 页内偏移
 	page_offset = va & (PAGE_SIZE - 1);
 
 	return page_addr + page_offset;
@@ -101,9 +169,7 @@ phys_addr_t translate_linear_address(struct mm_struct *mm, uintptr_t va)
 	{
 		return 0;
 	}
-	// 页物理地址
 	page_addr = (phys_addr_t)(pte_pfn(*pte) << PAGE_SHIFT);
-	// 页内偏移
 	page_offset = va & (PAGE_SIZE - 1);
 
 	return page_addr + page_offset;
@@ -115,44 +181,7 @@ static inline int my_valid_phys_addr_range(phys_addr_t addr, size_t count)
 {
 	return addr + count <= __pa(high_memory);
 }
-// Based on the kernel source provided by the user.
-// This is a DANGEROUS function that bypasses kernel safety checks. Use with extreme caution.
-static void __iomem *my_ioremap_ram_nocache(phys_addr_t phys_addr, size_t size)
-{
-	unsigned long last_addr;
-	unsigned long offset = phys_addr & ~PAGE_MASK;
-	int err;
-	unsigned long addr;
-	struct vm_struct *area;
-    void *caller = __builtin_return_address(0);
 
-	phys_addr &= PAGE_MASK;
-	size = PAGE_ALIGN(size + offset);
-
-	last_addr = phys_addr + size - 1;
-	if (!size || last_addr < phys_addr || (last_addr & ~PHYS_MASK))
-		return NULL;
-
-	/*
-	 * The check for RAM mapping has been intentionally removed. This is risky.
-	 * if (WARN_ON(pfn_valid(__phys_to_pfn(phys_addr))))
-	 *	 return NULL;
-	 */
-
-	area = get_vm_area_caller(size, VM_IOREMAP, caller);
-	if (!area)
-		return NULL;
-	addr = (unsigned long)area->addr;
-	area->phys_addr = phys_addr;
-
-	err = ioremap_page_range(addr, addr + size, phys_addr, pgprot_noncached(PAGE_KERNEL));
-	if (err) {
-		vunmap((void *)addr);
-		return NULL;
-	}
-
-	return (void __iomem *)(offset + addr);
-}
 
 bool read_physical_address(phys_addr_t pa, void *buffer, size_t size)
 {
