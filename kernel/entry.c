@@ -26,7 +26,7 @@ struct TestSharedMemory {
 #include "hide_proc.h"
 #include "hide_kill.h"
 #include "touch.h"
-#include "event_hijack.h" // <-- Include our new header
+#include "touch_control.h"
 #include "inline_hook/p_lkrg_main.h"
 #include "inline_hook/utils/p_memory.h"
 #include "version_control.h"
@@ -255,68 +255,6 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 		}
 		break;
 	}
-	case OP_TOUCH_DEINIT:
-	{
-		touch_deinit();
-		break;
-	}
-	case OP_HOOK_INPUT_DEVICE_BY_NAME:
-	{
-		HOOK_INPUT_DEVICE_DATA hidd;
-		PRINT_DEBUG("[+] In case OP_HOOK_INPUT_DEVICE_BY_NAME. Attempting copy_from_user.\n");
-		if (copy_from_user(&hidd, (void __user *)arg, sizeof(hidd)) != 0)
-		{
-			PRINT_DEBUG("[-] copy_from_user failed!\n");
-			return -EFAULT;
-		}
-		
-		PRINT_DEBUG("[+] copy_from_user successful. Calling touch_set_device_by_name.\n");
-		if (touch_set_device_by_name(hidd.name) != 0)
-		{
-			PRINT_DEBUG("[-] touch_set_device_by_name failed!\n");
-			return -1;
-		}
-		PRINT_DEBUG("[+] touch_set_device_by_name successful.\n");
-		break;
-	}
-	case OP_HOOK_INPUT_DEVICE:
-	{
-		HOOK_INPUT_DEVICE_DATA hidd;
-		if (copy_from_user(&hidd, (void __user *)arg, sizeof(hidd)) != 0) {
-			return -EFAULT;
-		}
-		if (do_hook_input_device(hidd.name) == 0) {
-			// Hook successful, start the watchdog
-			last_heartbeat_jiffies = jiffies;
-			mod_timer(&watchdog_timer, jiffies + msecs_to_jiffies(2000));
-		} else {
-			return -EINVAL; // Hook failed
-		}
-		break;
-	}
-	case OP_UNHOOK_INPUT_DEVICE:
-	{
-		del_timer_sync(&watchdog_timer);
-		do_cleanup_hook();
-		break;
-	}
-	case OP_READ_INPUT_EVENTS:
-	{
-		return do_read_input_events((PEVENT_PACKAGE)arg);
-	}
-	case OP_INJECT_INPUT_EVENT:
-	{
-		return do_inject_input_event((struct input_event *)arg);
-	}
-	case OP_INJECT_INPUT_PACKAGE:
-	{
-		return do_inject_input_package((PEVENT_PACKAGE)arg);
-	}
-	case OP_HEARTBEAT:
-	{
-		last_heartbeat_jiffies = jiffies;
-		break;
-	}
 	case OP_READ_MEM_SAFE:
 	{
 		if (copy_from_user(&cm, (void __user *)arg, sizeof(cm)) != 0)
@@ -329,23 +267,21 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 		}
 		break;
 	}
-	case OP_SET_TOUCH_MODE:
+	// --- New Touch Control IOCTLs ---
+	case OP_HOOK_INPUT_DEVICE:
 	{
-		int mode;
-		if (copy_from_user(&mode, (void __user *)arg, sizeof(mode)) != 0)
-		{
+		HOOK_INPUT_DEVICE_DATA hidd;
+		if (copy_from_user(&hidd, (void __user *)arg, sizeof(hidd)) != 0) {
 			return -EFAULT;
 		}
-		return do_set_touch_mode(mode);
-	}
-	case OP_VERIFY_MMAP:
-	{
-		if (shared_mem) {
-			struct TestSharedMemory* test_mem = (struct TestSharedMemory*)shared_mem;
-			PRINT_DEBUG("[MMAP_TEST] Kernel reads magic value: 0x%llx\n", test_mem->magic_value);
-		} else {
-			PRINT_DEBUG("[MMAP_TEST] Shared memory is NULL!\n");
+		if (touch_control_start_hijack(hidd.name) != 0) {
+			return -EINVAL; // Hook failed
 		}
+		break;
+	}
+	case OP_UNHOOK_INPUT_DEVICE:
+	{
+		touch_control_stop_hijack();
 		break;
 	}
 	default:
@@ -432,8 +368,7 @@ is_hijacked = true;
 	PRINT_DEBUG("[+] Successfully hooked unlocked_ioctl and mmap for %s\n", TARGET_FILE);
 
     // Initialize our subsystems
-    event_hijack_init();
-    timer_setup(&watchdog_timer, watchdog_callback, 0);
+    touch_control_init(shared_mem);
 
 	ret = hide_proc_init();
 	if (ret)
@@ -498,8 +433,7 @@ static void _driver_cleanup(void)
     
     
     // Cleanup our subsystems
-    del_timer_sync(&watchdog_timer);
-    event_hijack_exit();
+    touch_control_exit();
 
 	touch_deinit();
 	hide_kill_exit();

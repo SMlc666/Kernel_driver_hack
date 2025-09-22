@@ -40,24 +40,16 @@ enum HIDE_ACTION
 enum OPERATIONS
 {
 	OP_AUTHENTICATE = 0x7FF,
-	OP_INIT_KEY = 0x800,
 	OP_READ_MEM = 0x801,
 	OP_WRITE_MEM = 0x802,
 	OP_MODULE_BASE = 0x803,
 	OP_HIDE_PROC = 0x804,
-	OP_TOUCH_DEINIT = 0x807,
 	OP_GET_PID = 0x808,
 	OP_READ_MEM_SAFE = 0x809,
-	OP_HOOK_INPUT_DEVICE_BY_NAME = 0x80A,
-	// Commands for pure kernel-space event hijacking
+
+	// New control commands for touch
 	OP_HOOK_INPUT_DEVICE = 0x810,
 	OP_UNHOOK_INPUT_DEVICE = 0x811,
-	OP_READ_INPUT_EVENTS = 0x812,
-	OP_INJECT_INPUT_EVENT = 0x813,
-	OP_HEARTBEAT = 0x814,
-	OP_INJECT_INPUT_PACKAGE = 0x815,
-	OP_SET_TOUCH_MODE = 0x816,
-	OP_VERIFY_MMAP = 0x817, // For testing mmap hijack
 };
 
 // New struct for event batching
