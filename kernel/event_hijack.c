@@ -127,18 +127,9 @@ static void hooked_input_event_callback(hook_fargs4_t *fargs, void *udata)
             wake_up_interruptible(&read_wait_queue);
         }
 
-        // New logic: In intercept mode, we must block the original event.
-        // This prevents the kernel from processing the event twice (once here,
-        // and once when the user-space client injects the modified version).
-        spin_lock_irqsave(&mode_lock, flags);
-        current_mode = hijack_mode;
-        spin_unlock_irqrestore(&mode_lock, flags);
-
-        if (current_mode == 1) { // MODE_INTERCEPT
-            fargs->skip_origin = 1; // Block original event.
-        } else { // MODE_PASS_THROUGH
-            fargs->skip_origin = 0; // Allow original event.
-        }
+        // ALWAYS let the original event pass through to update kernel state.
+        // The evdev_event hook will handle blocking it from userspace.
+        fargs->skip_origin = 0;
         return;
     }
     
