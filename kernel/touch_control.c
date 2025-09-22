@@ -3,14 +3,7 @@
 #include <linux/input.h>
 #include <linux/input/mt.h>
 #include <linux/kallsyms.h>
-#include <linux/slab.h> // For kzalloc, kfree
-
-// For input_dev_list
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 29)
-#include <linux/input/input_sec.h>
-#else
-#include <linux/input/input-polldev.h>
-#endif
+#include <linux/slab.h> // For input_allocate_device
 
 #include "version_control.h"
 #include "inline_hook/p_hook.h"
@@ -211,32 +204,39 @@ void touch_control_stop_hijack(void) {
 }
 
 // Helper to find input device by name using the dummy device traversal trick
-struct input_dev *input_find_device(const char *name)
+static struct input_dev *input_find_device(const char *name)
 {
-    struct input_dev *dev = NULL, *dummy_dev;
-    
-    // 1. Allocate a dummy device to get an anchor in the input device list
+    struct input_dev *dev = NULL, *dummy_dev, *dev_iter;
+    int ret;
+
     dummy_dev = input_allocate_device();
     if (!dummy_dev) {
-        PRINT_DEBUG("[-] Failed to allocate dummy device for list traversal.\n");
+        PRINT_DEBUG("[-] Failed to allocate dummy device.\n");
         return NULL;
     }
 
-    // 2. Safely traverse the list using RCU read-side protection
+    dummy_dev->name = "khack_dummy_device";
+    ret = input_register_device(dummy_dev);
+    if (ret) {
+        PRINT_DEBUG("[-] Failed to register dummy device.\n");
+        input_free_device(dummy_dev);
+        return NULL;
+    }
+
     rcu_read_lock();
-    list_for_each_entry_rcu(dev, &input_dev_list, node) {
-        if (dev->name && strcmp(dev->name, name) == 0) {
-            if(input_get_device(dev)) { // Increment refcount if found
-                rcu_read_unlock();
-                input_free_device(dummy_dev);
-                return dev;
+    list_for_each_entry_rcu(dev_iter, &dummy_dev->node, node) {
+        if (dev_iter->name && strcmp(dev_iter->name, name) == 0) {
+            if (input_get_device(dev_iter)) { // Increment refcount
+                dev = dev_iter;
             }
+            break;
         }
     }
     rcu_read_unlock();
 
-    // 3. Free the dummy device if not found
-    input_free_device(dummy_dev);
-    return NULL;
+    input_unregister_device(dummy_dev);
+
+    return dev;
 }
+
 
