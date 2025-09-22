@@ -35,11 +35,6 @@ struct TestSharedMemory {
 
 #define TARGET_FILE "/proc/version"
 
-// --- Watchdog State ---
-static struct timer_list watchdog_timer;
-static unsigned long last_heartbeat_jiffies;
-#define WATCHDOG_TIMEOUT (5 * HZ)
-
 // Forward declaration
 static void _driver_cleanup(void);
 
@@ -79,25 +74,6 @@ static int hijacked_proc_version_mmap(struct file *filp, struct vm_area_struct *
     vma->vm_flags |= VM_IO | VM_DONTEXPAND | VM_DONTDUMP;
     PRINT_DEBUG("[+] Shared memory mapped successfully via hijack.\n");
     return 0;
-}
-
-
-// --- Watchdog Callback ---
-static void watchdog_callback(struct timer_list *t)
-{
-    if (!is_hook_active()) {
-        // Hook is not active, no need for watchdog.
-        return;
-    }
-
-    if (time_after(jiffies, last_heartbeat_jiffies + WATCHDOG_TIMEOUT)) {
-        PRINT_DEBUG("[WATCHDOG] Client PID %d timed out. Cleaning up hook automatically.\n", client_pid);
-        do_cleanup_hook(); // This will also wake up any waiting readers
-        // Do not reschedule the timer.
-    } else {
-        // Client is still alive, check again later.
-        mod_timer(&watchdog_timer, jiffies + msecs_to_jiffies(2000));
-    }
 }
 
 
