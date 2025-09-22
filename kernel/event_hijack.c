@@ -15,22 +15,12 @@
 #include "inline_hook/p_hook.h" // For hook_wrap
 #include "inline_hook/p_hmem.h" // For hook_get_mem_from_origin
 
-// --- Touch Mode State ---
-typedef enum {
-    MODE_PASS_THROUGH, // Default mode, events go to the system
-    MODE_INTERCEPT     // Intercept mode, events are blocked from the system
-} touch_mode;
-
-static touch_mode current_touch_mode = MODE_PASS_THROUGH;
-static DEFINE_SPINLOCK(mode_lock);
-
-
 // --- Global State for Hijacking ---
 
 // The device we want to hijack events from
 static struct input_dev *hooked_dev = NULL;
 
-// --- Ring Buffer Implementation ---
+// --- Ring Buffer for passing events to userspace ---
 #define RING_BUFFER_SIZE 16 // Power of 2 for efficient modulo
 static EVENT_PACKAGE ring_buffer[RING_BUFFER_SIZE];
 static atomic_t ring_buffer_head = ATOMIC_INIT(0);
@@ -41,48 +31,40 @@ static spinlock_t ring_buffer_lock; // Protects the ring buffer structure
 static EVENT_PACKAGE frame_assembly_buffer;
 static spinlock_t assembly_lock;
 
-
 // Wait queue for user-space process
 static wait_queue_head_t read_wait_queue;
 
-// Flag to indicate if the hook is active
+// --- State for Dual Hooking ---
 static bool hook_is_active = false;
 static DEFINE_MUTEX(hijack_mutex);
 
-// Pointer to the original input_event function, retrieved from the hook engine
-static void (*original_input_event)(struct input_dev *dev, unsigned int type, unsigned int code, int value) = NULL;
-
-// New state to prevent injection feedback loop
+// Flag to prevent injection feedback loop
 static bool injection_in_progress = false;
 static spinlock_t injection_lock;
+
+// State for HOOK 1 (input_event)
+static void *input_event_addr_global = NULL;
+
+// State for HOOK 2 (evdev_event)
+static bool evdev_hook_is_active = false;
+static void *evdev_event_addr_global = NULL;
 
 
 // --- Core Hijacking Logic ---
 
 /**
- * This is the "before" callback for our hook on input_event.
- * It gets called for EVERY input event in the system.
+ * HOOK 1: This is the "before" callback for our hook on input_event.
+ * Its ONLY purpose is to SNOOP (listen) to events to maintain kernel state
+ * and to pass them to userspace. It NEVER blocks the original event.
  */
 static void hooked_input_event_callback(hook_fargs4_t *fargs, void *udata)
 {
     struct input_dev *dev = (struct input_dev *)fargs->arg0;
     unsigned long flags;
-    bool is_injecting;
-    touch_mode current_mode;
     struct input_event *event_to_copy;
     unsigned int type, code;
     bool is_syn_report;
     bool should_wake = false;
-
-    // Check if we are currently injecting an event to prevent feedback
-    spin_lock_irqsave(&injection_lock, flags);
-    is_injecting = injection_in_progress;
-    spin_unlock_irqrestore(&injection_lock, flags);
-
-    if (is_injecting) {
-        // This is our own event being injected. Let it pass through to the original function.
-        return;
-    }
 
     // Check if the event is from the device we are interested in
     if (hook_is_active && dev == hooked_dev) {
@@ -105,12 +87,11 @@ static void hooked_input_event_callback(hook_fargs4_t *fargs, void *udata)
         if (is_syn_report || frame_assembly_buffer.count >= MAX_EVENTS_PER_READ) {
             int head, new_head;
             
-            spin_lock(&ring_buffer_lock); // Use non-irqsave lock as we are in a new scope
+            spin_lock(&ring_buffer_lock);
             
             head = atomic_read(&ring_buffer_head);
             new_head = (head + 1) & (RING_BUFFER_SIZE - 1);
 
-            // Overwrite oldest data if buffer is full
             if (new_head == atomic_read(&ring_buffer_tail)) {
                 atomic_set(&ring_buffer_tail, (atomic_read(&ring_buffer_tail) + 1) & (RING_BUFFER_SIZE - 1));
             }
@@ -120,7 +101,7 @@ static void hooked_input_event_callback(hook_fargs4_t *fargs, void *udata)
             
             spin_unlock(&ring_buffer_lock);
 
-            frame_assembly_buffer.count = 0; // Reset assembly buffer
+            frame_assembly_buffer.count = 0;
             should_wake = true;
         }
         spin_unlock_irqrestore(&assembly_lock, flags);
@@ -128,36 +109,45 @@ static void hooked_input_event_callback(hook_fargs4_t *fargs, void *udata)
         if (should_wake) {
             wake_up_interruptible(&read_wait_queue);
         }
-
-        // Read the current touch mode to decide the next action
-        spin_lock_irqsave(&mode_lock, flags);
-        current_mode = current_touch_mode;
-        spin_unlock_irqrestore(&mode_lock, flags);
-
-        // If in intercept mode, prevent the original function from being called
-        if (current_mode == MODE_INTERCEPT) {
-            fargs->skip_origin = 1;
-        }
-        // In MODE_PASS_THROUGH, we do nothing, and the event flows to the original function.
-    }
-}
-
-int do_set_touch_mode(unsigned int mode)
-{
-    unsigned long flags;
-
-    PRINT_DEBUG("[HIJACK] Setting touch mode to %u\n", mode);
-
-    spin_lock_irqsave(&mode_lock, flags);
-    if (mode == MODE_PASS_THROUGH || mode == MODE_INTERCEPT) {
-        current_touch_mode = (touch_mode)mode;
-        spin_unlock_irqrestore(&mode_lock, flags);
-        return 0;
     }
     
-    spin_unlock_irqrestore(&mode_lock, flags);
-    return -EINVAL; // Invalid mode
+    // CRITICAL: We NEVER block the original input_event.
+    // This ensures the kernel's input subsystem state is always correct.
+    fargs->skip_origin = 0;
 }
+
+/**
+ * HOOK 2: This is the "before" callback for our hook on evdev_event.
+ * Its ONLY purpose is to BLOCK the original, unmodified events from
+ * reaching the userspace file descriptor (/dev/input/eventX).
+ */
+static void hooked_evdev_event_callback(hook_fargs4_t *fargs, void *udata)
+{
+    struct input_handle *handle = (struct input_handle *)fargs->arg0;
+    unsigned long flags;
+    bool is_injecting;
+
+    // Check if we are currently injecting an event to prevent feedback
+    spin_lock_irqsave(&injection_lock, flags);
+    is_injecting = injection_in_progress;
+    spin_unlock_irqrestore(&injection_lock, flags);
+
+    // If we are injecting our own event for the hooked device, it MUST be allowed to pass.
+    if (is_injecting && handle->dev == hooked_dev) {
+        fargs->skip_origin = 0;
+        return;
+    }
+
+    // If this is a raw, physical event from the device we've hooked, block it.
+    if (handle->dev == hooked_dev) {
+        fargs->skip_origin = 1; // This is the firewall.
+        return;
+    }
+
+    // All other events (from other devices) pass through normally.
+    fargs->skip_origin = 0;
+}
+
 
 // --- Public API Implementation ---
 
@@ -166,7 +156,7 @@ void event_hijack_init(void)
     spin_lock_init(&ring_buffer_lock);
     spin_lock_init(&assembly_lock);
     init_waitqueue_head(&read_wait_queue);
-	spin_lock_init(&injection_lock); // Initialize the new lock
+	sipin_lock_init(&injection_lock);
     PRINT_DEBUG("[HIJACK] Event hijacking subsystem initialized.\n");
 }
 
@@ -184,10 +174,8 @@ bool is_hook_active(void)
 int do_hook_input_device(const char *name)
 {
     struct input_dev *dummy_dev = NULL, *target_dev = NULL;
-    void *input_event_addr;
-    hook_chain_t *chain;
-    struct list_head *curr;
-    struct input_dev *dev_iter;
+    struct input_handle *handle;
+    void *evdev_event_addr = NULL;
 
     mutex_lock(&hijack_mutex);
 
@@ -197,30 +185,20 @@ int do_hook_input_device(const char *name)
         return -EBUSY;
     }
 
-    // 1. Find the target device by name using the dummy device trick
+    // 1. Find the target device by name
     dummy_dev = input_allocate_device();
-    if (!dummy_dev) {
-        mutex_unlock(&hijack_mutex);
-        return -ENOMEM;
-    }
+    if (!dummy_dev) { mutex_unlock(&hijack_mutex); return -ENOMEM; }
     dummy_dev->name = "khack_dummy_device";
-    if (input_register_device(dummy_dev)) {
-        input_free_device(dummy_dev);
-        mutex_unlock(&hijack_mutex);
-        return -EFAULT;
-    }
+    if (input_register_device(dummy_dev)) { input_free_device(dummy_dev); mutex_unlock(&hijack_mutex); return -EFAULT; }
 
     rcu_read_lock();
-    curr = rcu_dereference(dummy_dev->node.next);
-    while (curr != &dummy_dev->node) {
-        dev_iter = list_entry(curr, struct input_dev, node);
-        if (dev_iter && dev_iter->name && strcmp(dev_iter->name, name) == 0) {
-            if (input_get_device(dev_iter)) {
-                target_dev = dev_iter;
+    list_for_each_entry_rcu(handle, &dummy_dev->node.next->h_list, d_node) {
+        if (handle->dev && handle->dev->name && strcmp(handle->dev->name, name) == 0) {
+            if (input_get_device(handle->dev)) {
+                target_dev = handle->dev;
             }
             break;
         }
-        curr = rcu_dereference(curr->next);
     }
     rcu_read_unlock();
     input_unregister_device(dummy_dev);
@@ -231,56 +209,65 @@ int do_hook_input_device(const char *name)
         return -ENODEV;
     }
 
-    // 2. Find the address of the global input_event function
-    input_event_addr = (void *)kallsyms_lookup_name("input_event");
-    if (!input_event_addr) {
+    // 2. Install HOOK 1 on input_event (Snooping Hook)
+    input_event_addr_global = (void *)kallsyms_lookup_name("input_event");
+    if (!input_event_addr_global) {
         PRINT_DEBUG("[HIJACK] Failed to find address of input_event().\n");
         input_put_device(target_dev);
         mutex_unlock(&hijack_mutex);
         return -EFAULT;
     }
-
-    // 3. Install the hook using the inline hook engine
-    if (hook_wrap(input_event_addr, 4, hooked_input_event_callback, NULL, NULL) != HOOK_NO_ERR) {
+    if (hook_wrap(input_event_addr_global, 4, hooked_input_event_callback, NULL, NULL) != HOOK_NO_ERR) {
         PRINT_DEBUG("[HIJACK] Failed to wrap input_event().\n");
         input_put_device(target_dev);
         mutex_unlock(&hijack_mutex);
         return -EFAULT;
     }
+    PRINT_DEBUG("[HIJACK] HOOK 1 (Snoop) installed on input_event.\n");
 
-    // 4. Save state
+    // 3. Install HOOK 2 on evdev_event (Blocking Hook)
+    mutex_lock(&target_dev->mutex);
+    list_for_each_entry(handle, &target_dev->h_list, d_node) {
+        if (handle->handler && handle->handler->name && strcmp(handle->handler->name, "evdev") == 0) {
+            evdev_event_addr = handle->handler->event;
+            break;
+        }
+    }
+    mutex_unlock(&target_dev->mutex);
+
+    if (!evdev_event_addr) {
+        PRINT_DEBUG("[HIJACK] CRITICAL: Could not find evdev_event for '%s'. Unwinding.\n", name);
+        hook_unwrap(input_event_addr_global, hooked_input_event_callback, NULL);
+        input_put_device(target_dev);
+        mutex_unlock(&hijack_mutex);
+        return -EFAULT;
+    }
+    
+    evdev_event_addr_global = evdev_event_addr;
+    if (hook_wrap(evdev_event_addr_global, 4, hooked_evdev_event_callback, NULL, NULL) != HOOK_NO_ERR) {
+        PRINT_DEBUG("[HIJACK] Failed to wrap evdev_event(). Unwinding.\n");
+        hook_unwrap(input_event_addr_global, hooked_input_event_callback, NULL);
+        input_put_device(target_dev);
+        mutex_unlock(&hijack_mutex);
+        return -EFAULT;
+    }
+    evdev_hook_is_active = true;
+    PRINT_DEBUG("[HIJACK] HOOK 2 (Block) installed on evdev_event at %p.\n", evdev_event_addr_global);
+
+    // 4. Finalize state
     hooked_dev = target_dev;
     hook_is_active = true;
-    // Reset buffer state
     atomic_set(&ring_buffer_head, 0);
     atomic_set(&ring_buffer_tail, 0);
     frame_assembly_buffer.count = 0;
 
-
-    // 5. Get the original function pointer for injection
-    chain = hook_get_mem_from_origin(branch_func_addr((u64)input_event_addr));
-    if (chain) {
-        original_input_event = (void *)chain->hook.relo_addr;
-    } else {
-        // This is a critical failure, we must unwind
-        PRINT_DEBUG("[HIJACK] CRITICAL: Could not retrieve original function pointer after hook.\n");
-        hook_unwrap(input_event_addr, hooked_input_event_callback, NULL);
-        input_put_device(hooked_dev);
-        hooked_dev = NULL;
-        hook_is_active = false;
-        mutex_unlock(&hijack_mutex);
-        return -EFAULT;
-    }
-
-    PRINT_DEBUG("[HIJACK] Successfully hooked input_event() for device '%s'.\n", name);
+    PRINT_DEBUG("[HIJACK] Successfully established DUAL HOOK on device '%s'.\n", name);
     mutex_unlock(&hijack_mutex);
     return 0;
 }
 
 void do_cleanup_hook(void)
 {
-    void *input_event_addr;
-
     mutex_lock(&hijack_mutex);
 
     if (!hook_is_active) {
@@ -288,25 +275,32 @@ void do_cleanup_hook(void)
         return;
     }
 
-    // 1. Find address and unwrap the hook
-    input_event_addr = (void *)kallsyms_lookup_name("input_event");
-    if (input_event_addr) {
-        hook_unwrap(input_event_addr, hooked_input_event_callback, NULL);
+    // 1. Uninstall HOOK 2 (evdev_event)
+    if (evdev_hook_is_active && evdev_event_addr_global) {
+        hook_unwrap(evdev_event_addr_global, hooked_evdev_event_callback, NULL);
+        PRINT_DEBUG("[HIJACK] Unwrapped evdev_event().\n");
+    }
+    evdev_hook_is_active = false;
+    evdev_event_addr_global = NULL;
+
+    // 2. Uninstall HOOK 1 (input_event)
+    if (input_event_addr_global) {
+        hook_unwrap(input_event_addr_global, hooked_input_event_callback, NULL);
         PRINT_DEBUG("[HIJACK] Unwrapped input_event().\n");
     }
+    input_event_addr_global = NULL;
 
-    // 2. Clear state
+    // 3. Clear state
     if (hooked_dev) {
         input_put_device(hooked_dev);
         hooked_dev = NULL;
     }
-    original_input_event = NULL;
     hook_is_active = false;
 
-    // 3. Wake up any sleeping reader so it can exit cleanly
+    // 4. Wake up any sleeping reader
     wake_up_interruptible(&read_wait_queue);
 
-    PRINT_DEBUG("[HIJACK] Hook cleaned up.\n");
+    PRINT_DEBUG("[HIJACK] All hooks cleaned up.\n");
     mutex_unlock(&hijack_mutex);
 }
 
@@ -315,25 +309,19 @@ int do_read_input_events(PEVENT_PACKAGE user_pkg)
     int ret, tail;
     unsigned long flags;
 
-    // Wait until the buffer is not empty or the hook is disabled
     ret = wait_event_interruptible(read_wait_queue, 
                                    atomic_read(&ring_buffer_head) != atomic_read(&ring_buffer_tail) || !hook_is_active);
-    if (ret) {
-        return -ERESTARTSYS;
-    }
+    if (ret) return -ERESTARTSYS;
 
-    // If we woke up because the hook was disabled and the buffer is empty, it's a clean shutdown.
     if (!hook_is_active && atomic_read(&ring_buffer_head) == atomic_read(&ring_buffer_tail)) {
         return -ESHUTDOWN;
     }
 
-    // Lock, copy data to user space, and advance the tail
     spin_lock_irqsave(&ring_buffer_lock, flags);
-    
     tail = atomic_read(&ring_buffer_tail);
-    if (tail == atomic_read(&ring_buffer_head)) { // Should not happen due to wait_event, but for safety
+    if (tail == atomic_read(&ring_buffer_head)) {
         spin_unlock_irqrestore(&ring_buffer_lock, flags);
-        return 0; // No data to read
+        return 0;
     }
 
     if (copy_to_user(user_pkg, &ring_buffer[tail], sizeof(EVENT_PACKAGE))) {
@@ -342,7 +330,6 @@ int do_read_input_events(PEVENT_PACKAGE user_pkg)
     }
     
     atomic_set(&ring_buffer_tail, (tail + 1) & (RING_BUFFER_SIZE - 1));
-
     spin_unlock_irqrestore(&ring_buffer_lock, flags);
 
     return 0;
@@ -353,25 +340,15 @@ int do_inject_input_event(struct input_event *event)
     struct input_event k_event;
     unsigned long flags;
 
-    // We inject into the hooked_dev, so it must exist.
-    if (!hook_is_active || !hooked_dev) {
-        return -EINVAL;
-    }
+    if (!hook_is_active || !hooked_dev) return -EINVAL;
+    if (copy_from_user(&k_event, event, sizeof(struct input_event))) return -EFAULT;
 
-    if (copy_from_user(&k_event, event, sizeof(struct input_event))) {
-        return -EFAULT;
-    }
-
-    // Set flag to prevent our own hook from catching this event
     spin_lock_irqsave(&injection_lock, flags);
     injection_in_progress = true;
     spin_unlock_irqrestore(&injection_lock, flags);
 
-    // Use the standard kernel API to inject the event.
-    // This allows the input subsystem to manage state correctly.
     input_event(hooked_dev, k_event.type, k_event.code, k_event.value);
 
-    // Clear flag
     spin_lock_irqsave(&injection_lock, flags);
     injection_in_progress = false;
     spin_unlock_irqrestore(&injection_lock, flags);
@@ -385,34 +362,30 @@ int do_inject_input_package(PEVENT_PACKAGE user_pkg)
     unsigned int i;
     unsigned long flags;
 
-    // We inject into the hooked_dev, so it must exist.
-    if (!hook_is_active || !hooked_dev) {
-        return -EINVAL;
-    }
+    if (!hook_is_active || !hooked_dev) return -EINVAL;
+    if (copy_from_user(&k_pkg, user_pkg, sizeof(EVENT_PACKAGE))) return -EFAULT;
+    if (k_pkg.count > MAX_EVENTS_PER_READ) return -EINVAL;
 
-    if (copy_from_user(&k_pkg, user_pkg, sizeof(EVENT_PACKAGE))) {
-        return -EFAULT;
-    }
-
-    if (k_pkg.count > MAX_EVENTS_PER_READ) {
-        return -EINVAL; // Avoid buffer overflow
-    }
-
-    // Set flag to prevent our own hook from catching these events
     spin_lock_irqsave(&injection_lock, flags);
     injection_in_progress = true;
     spin_unlock_irqrestore(&injection_lock, flags);
 
-    // Use standard kernel APIs to inject events, which correctly handles device state.
     for (i = 0; i < k_pkg.count; i++) {
         struct input_event *ev = &k_pkg.events[i];
         input_event(hooked_dev, ev->type, ev->code, ev->value);
     }
 
-    // Clear flag
     spin_lock_irqsave(&injection_lock, flags);
     injection_in_progress = false;
     spin_unlock_irqrestore(&injection_lock, flags);
 
+    return 0;
+}
+
+// This function is now obsolete with the dual-hook model, but kept for API compatibility.
+// It no longer has any effect.
+int do_set_touch_mode(unsigned int mode)
+{
+    PRINT_DEBUG("[HIJACK] do_set_touch_mode is obsolete with dual-hook and has no effect.\n");
     return 0;
 }
