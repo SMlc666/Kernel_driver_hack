@@ -142,17 +142,20 @@ void test_hijack_intercept() {
 }
 
 void test_hijack_modify() {
-    printf("\n--- [Test 4: Hijack and Modify (Mirror X-axis)] ---\n");
-    printf("Touches on the screen should be mirrored horizontally.\n");
+    printf("\n--- [Test 4: Hijack and Modify (Add 200 to Y-axis)] ---\n");
+    printf("Touches on the screen should be shifted down by 200 pixels.\n");
     printf("Press Ctrl+C to stop.\n");
 
-    if (g_max_x == 0) {
-        printf("[-] Screen dimensions not found, cannot run mirror test.\n");
+    if (g_max_y == 0) {
+        printf("[-] Screen dimensions not found, cannot run modify test.\n");
         return;
     }
 
     if (!driver->hook_input_device(g_device_name.c_str())) return;
+    
+    // Explicitly set intercept mode for modification
     driver->set_touch_mode(c_driver::MODE_INTERCEPT);
+    printf("[+] Set mode to INTERCEPT.\n");
 
     running = true;
     std::thread t(heartbeat_thread);
@@ -161,8 +164,12 @@ void test_hijack_modify() {
         if (driver->read_input_events(&pkg)) {
             for (unsigned int i = 0; i < pkg.count; ++i) {
                 struct input_event *ev = &pkg.events[i];
-                if (ev->type == EV_ABS && (ev->code == ABS_MT_POSITION_X || ev->code == ABS_X)) {
-                    ev->value = g_max_x - ev->value;
+                if (ev->type == EV_ABS && (ev->code == ABS_MT_POSITION_Y || ev->code == ABS_Y)) {
+                    ev->value = ev->value + 200;
+                    // Clamp the value to prevent it from going off-screen
+                    if (ev->value > g_max_y) {
+                        ev->value = g_max_y;
+                    }
                 }
             }
             driver->inject_input_package(&pkg);

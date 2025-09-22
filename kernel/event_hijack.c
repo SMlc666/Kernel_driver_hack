@@ -70,6 +70,7 @@ static void hooked_input_event_callback(hook_fargs4_t *fargs, void *udata)
     bool is_syn_report;
     bool should_wake = false;
     bool is_injecting;
+    unsigned int current_mode;
 
     // Check if we are currently injecting an event to prevent feedback loop.
     // If so, we must not capture this event and send it back to userspace.
@@ -125,10 +126,23 @@ static void hooked_input_event_callback(hook_fargs4_t *fargs, void *udata)
         if (should_wake) {
             wake_up_interruptible(&read_wait_queue);
         }
+
+        // New logic: In intercept mode, we must block the original event.
+        // This prevents the kernel from processing the event twice (once here,
+        // and once when the user-space client injects the modified version).
+        spin_lock_irqsave(&mode_lock, flags);
+        current_mode = hijack_mode;
+        spin_unlock_irqrestore(&mode_lock, flags);
+
+        if (current_mode == 1) { // MODE_INTERCEPT
+            fargs->skip_origin = 1; // Block original event.
+        } else { // MODE_PASS_THROUGH
+            fargs->skip_origin = 0; // Allow original event.
+        }
+        return;
     }
     
-    // CRITICAL: We NEVER block the original input_event.
-    // This ensures the kernel's input subsystem state is always correct.
+    // For any other event (not our device, or hook not active), let it pass.
     fargs->skip_origin = 0;
 }
 
