@@ -20,6 +20,10 @@
 // The device we want to hijack events from
 static struct input_dev *hooked_dev = NULL;
 
+// Current hijacking mode (pass-through or intercept)
+static unsigned int hijack_mode = 0; // 0 for pass-through, 1 for intercept
+static spinlock_t mode_lock;
+
 // --- Ring Buffer for passing events to userspace ---
 #define RING_BUFFER_SIZE 16 // Power of 2 for efficient modulo
 static EVENT_PACKAGE ring_buffer[RING_BUFFER_SIZE];
@@ -138,6 +142,7 @@ static void hooked_evdev_event_callback(hook_fargs4_t *fargs, void *udata)
     struct input_handle *handle = (struct input_handle *)fargs->arg0;
     unsigned long flags;
     bool is_injecting;
+    unsigned int current_mode;
 
     // Check if we are currently injecting an event to prevent feedback
     spin_lock_irqsave(&injection_lock, flags);
@@ -150,9 +155,17 @@ static void hooked_evdev_event_callback(hook_fargs4_t *fargs, void *udata)
         return;
     }
 
-    // If this is a raw, physical event from the device we've hooked, block it.
+    // If this is a raw, physical event from the device we've hooked, check the mode.
     if (handle->dev == hooked_dev) {
-        fargs->skip_origin = 1; // This is the firewall.
+        spin_lock_irqsave(&mode_lock, flags);
+        current_mode = hijack_mode;
+        spin_unlock_irqrestore(&mode_lock, flags);
+
+        if (current_mode == 1) { // MODE_INTERCEPT
+            fargs->skip_origin = 1; // This is the firewall.
+        } else { // MODE_PASS_THROUGH
+            fargs->skip_origin = 0;
+        }
         return;
     }
 
@@ -168,7 +181,8 @@ void event_hijack_init(void)
     spin_lock_init(&ring_buffer_lock);
     spin_lock_init(&assembly_lock);
     init_waitqueue_head(&read_wait_queue);
-	  spin_lock_init(&injection_lock);
+	spin_lock_init(&injection_lock);
+    spin_lock_init(&mode_lock);
     PRINT_DEBUG("[HIJACK] Event hijacking subsystem initialized.\n");
 }
 
@@ -188,6 +202,7 @@ int do_hook_input_device(const char *name)
     struct input_dev *dummy_dev = NULL, *target_dev = NULL;
     struct input_handle *handle;
     void *evdev_event_addr = NULL;
+    unsigned long flags;
 
     mutex_lock(&hijack_mutex);
 
@@ -283,6 +298,11 @@ int do_hook_input_device(const char *name)
     atomic_set(&ring_buffer_tail, 0);
     frame_assembly_buffer.count = 0;
 
+    // Set default mode to pass-through
+    spin_lock_irqsave(&mode_lock, flags);
+    hijack_mode = 0; // MODE_PASS_THROUGH
+    spin_unlock_irqrestore(&mode_lock, flags);
+
     PRINT_DEBUG("[HIJACK] Successfully established DUAL HOOK on device '%s'.\n", name);
     mutex_unlock(&hijack_mutex);
     return 0;
@@ -290,6 +310,7 @@ int do_hook_input_device(const char *name)
 
 void do_cleanup_hook(void)
 {
+    unsigned long flags;
     mutex_lock(&hijack_mutex);
 
     if (!hook_is_active) {
@@ -318,6 +339,10 @@ void do_cleanup_hook(void)
         hooked_dev = NULL;
     }
     hook_is_active = false;
+
+    spin_lock_irqsave(&mode_lock, flags);
+    hijack_mode = 0; // Reset mode
+    spin_unlock_irqrestore(&mode_lock, flags);
 
     // 4. Wake up any sleeping reader
     wake_up_interruptible(&read_wait_queue);
@@ -404,10 +429,18 @@ int do_inject_input_package(PEVENT_PACKAGE user_pkg)
     return 0;
 }
 
-// This function is now obsolete with the dual-hook model, but kept for API compatibility.
-// It no longer has any effect.
+// This function is now restored to its original purpose.
 int do_set_touch_mode(unsigned int mode)
 {
-    PRINT_DEBUG("[HIJACK] do_set_touch_mode is obsolete with dual-hook and has no effect.\n");
+    unsigned long flags;
+    if (mode > 1) { // Only allow 0 or 1
+        return -EINVAL;
+    }
+
+    spin_lock_irqsave(&mode_lock, flags);
+    hijack_mode = mode;
+    spin_unlock_irqrestore(&mode_lock, flags);
+    
+    PRINT_DEBUG("[HIJACK] Set touch mode to %s.\n", mode == 1 ? "INTERCEPT" : "PASS_THROUGH");
     return 0;
 }
