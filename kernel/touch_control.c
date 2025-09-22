@@ -4,6 +4,7 @@
 #include <linux/input/mt.h>
 #include <linux/kallsyms.h>
 #include <linux/slab.h> // For input_allocate_device
+#include <linux/sched/signal.h> // For is_pid_alive
 
 #include "version_control.h"
 #include "inline_hook/p_hook.h"
@@ -26,16 +27,46 @@ static int g_current_slot = 0;
 static void process_user_commands(void);
 static void hijacked_input_event_callback(hook_fargs4_t *fargs, void *udata);
 static struct input_dev *input_find_device(const char *name);
+static bool is_pid_alive(pid_t pid);
+
+// --- Watchdog & PID Liveness Check ---
+static bool is_pid_alive(pid_t pid)
+{
+    struct task_struct *task;
+    if (pid <= 0) return false;
+    task = get_pid_task(find_get_pid(pid), PIDTYPE_PID);
+    if (task) {
+        put_task_struct(task);
+        return true;
+    }
+    return false;
+}
+
 
 // --- Kernel Thread for Injection ---
 static int injection_thread_func(void *data) {
     #define MIN_POLLING_INTERVAL_MS 1
     #define MAX_POLLING_INTERVAL_MS 100
+    #define WATCHDOG_CHECK_INTERVAL_MS 1000
     uint32_t sleep_interval_ms;
+	unsigned long last_watchdog_check = jiffies;
+
 
     PRINT_DEBUG("[TCTRL] Injection thread started.\n");
 
     while (!kthread_should_stop()) {
+        // --- Watchdog Logic ---
+        if (time_after(jiffies, last_watchdog_check + msecs_to_jiffies(WATCHDOG_CHECK_INTERVAL_MS))) {
+            if (g_shared_mem->user_pid > 0 && !is_pid_alive(g_shared_mem->user_pid)) {
+                PRINT_DEBUG("[TCTRL] Watchdog: Client PID %d is no longer alive. Cleaning up hook.\n", g_shared_mem->user_pid);
+                touch_control_stop_hijack();
+                // The thread will be stopped by the cleanup function, so we must exit.
+                break;
+            }
+            last_watchdog_check = jiffies;
+        }
+
+		// --- Command Processing Logic ---
         if (g_shared_mem->user_sequence > g_last_processed_user_seq) {
             smp_rmb(); // Read barrier
             process_user_commands();
@@ -55,20 +86,47 @@ static int injection_thread_func(void *data) {
 
 // --- Core Logic ---
 static void process_user_commands(void) {
-    int i;
+    int i, j, slot;
     int count = g_shared_mem->user_command_count;
-    if (count > MAX_USER_COMMANDS) count = MAX_USER_COMMANDS; // Sanity check
+    bool active_slots_in_command[MAX_TOUCH_POINTS] = {false};
 
+    if (count > MAX_USER_COMMANDS) count = MAX_USER_COMMANDS;
+
+    // 1. Process all user commands for this frame, injecting modified/new points
     for (i = 0; i < count; ++i) {
         struct UserCommand *cmd = &g_shared_mem->user_commands[i];
-        // TODO: Implement command processing logic (pass-through, modify, inject)
-        // This is complex and needs to reconstruct the event stream for injection.
-        // For now, we just print a debug message.
-        if (cmd->action == ACTION_MODIFY) {
-             PRINT_DEBUG("[TCTRL] TODO: Modify event for ID %d to (%d, %d)\n", cmd->original_tracking_id, cmd->new_data.x, cmd->new_data.y);
+        slot = -1;
+
+        // Find the slot associated with this tracking ID from our internal state
+        for (j = 0; j < MAX_TOUCH_POINTS; ++j) {
+            if (g_internal_touch_state[j].is_active && g_internal_touch_state[j].tracking_id == cmd->original_tracking_id) {
+                slot = g_internal_touch_state[j].slot;
+                break;
+            }
+        }
+
+        if (slot != -1 && (cmd->action == ACTION_MODIFY || cmd->action == ACTION_PASS_THROUGH)) {
+            input_mt_slot(g_hooked_dev, slot);
+            input_report_abs(g_hooked_dev, ABS_MT_TRACKING_ID, cmd->original_tracking_id);
+            input_report_abs(g_hooked_dev, ABS_MT_POSITION_X, cmd->new_data.x);
+            input_report_abs(g_hooked_dev, ABS_MT_POSITION_Y, cmd->new_data.y);
+            input_report_abs(g_hooked_dev, ABS_MT_PRESSURE, cmd->new_data.pressure);
+            active_slots_in_command[slot] = true;
         }
     }
+
+    // 2. Process touch-ups for points that are no longer in the command list
+    for (i = 0; i < MAX_TOUCH_POINTS; i++) {
+        if (g_internal_touch_state[i].is_active && !active_slots_in_command[i]) {
+            input_mt_slot(g_hooked_dev, i);
+            input_report_abs(g_hooked_dev, ABS_MT_TRACKING_ID, -1); // Report touch up
+        }
+    }
+
+    // 3. Finalize the frame
+    input_sync(g_hooked_dev);
 }
+
 
 static void reset_internal_state(void) {
     int i;
