@@ -65,6 +65,18 @@ static void hooked_input_event_callback(hook_fargs4_t *fargs, void *udata)
     unsigned int type, code;
     bool is_syn_report;
     bool should_wake = false;
+    bool is_injecting;
+
+    // Check if we are currently injecting an event to prevent feedback loop.
+    // If so, we must not capture this event and send it back to userspace.
+    spin_lock_irqsave(&injection_lock, flags);
+    is_injecting = injection_in_progress;
+    spin_unlock_irqrestore(&injection_lock, flags);
+
+    if (is_injecting && dev == hooked_dev) {
+        fargs->skip_origin = 0; // Let the original event proceed, but do nothing else.
+        return;
+    }
 
     // Check if the event is from the device we are interested in
     if (hook_is_active && dev == hooked_dev) {
