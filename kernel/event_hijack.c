@@ -43,7 +43,7 @@ static bool hook_is_active = false;
 static DEFINE_MUTEX(hijack_mutex);
 
 // Flag to prevent injection feedback loop
-static bool injection_in_progress = false;
+static struct task_struct *injector_task = NULL; // Used to identify the injecting process
 static spinlock_t injection_lock;
 
 // State for HOOK 1 (input_event)
@@ -69,17 +69,15 @@ static void hooked_input_event_callback(hook_fargs4_t *fargs, void *udata)
     unsigned int type, code;
     bool is_syn_report;
     bool should_wake = false;
-    bool is_injecting;
-    unsigned int current_mode;
+    struct task_struct *current_injector;
 
-    // Check if we are currently injecting an event to prevent feedback loop.
-    // If so, we must not capture this event and send it back to userspace.
+    // Check if the event is from the injecting task to prevent feedback loop
     spin_lock_irqsave(&injection_lock, flags);
-    is_injecting = injection_in_progress;
+    current_injector = injector_task;
     spin_unlock_irqrestore(&injection_lock, flags);
 
-    if (is_injecting && dev == hooked_dev) {
-        fargs->skip_origin = 0; // Let the original event proceed, but do nothing else.
+    if (current_injector != NULL && current == current_injector && dev == hooked_dev) {
+        fargs->skip_origin = 0; // Let the injected event pass through without capturing it.
         return;
     }
 
@@ -146,16 +144,16 @@ static void hooked_evdev_event_callback(hook_fargs4_t *fargs, void *udata)
 {
     struct input_handle *handle = (struct input_handle *)fargs->arg0;
     unsigned long flags;
-    bool is_injecting;
+    struct task_struct *current_injector;
     unsigned int current_mode;
 
-    // Check if we are currently injecting an event to prevent feedback
+    // Check if the event is from the injecting task
     spin_lock_irqsave(&injection_lock, flags);
-    is_injecting = injection_in_progress;
+    current_injector = injector_task;
     spin_unlock_irqrestore(&injection_lock, flags);
 
-    // If we are injecting our own event for the hooked device, it MUST be allowed to pass.
-    if (is_injecting && handle->dev == hooked_dev) {
+    // If the current task is the one we recorded as the injector, always let it pass.
+    if (current_injector != NULL && current == current_injector && handle->dev == hooked_dev) {
         fargs->skip_origin = 0;
         return;
     }
@@ -419,7 +417,7 @@ int do_inject_input_package(PEVENT_PACKAGE user_pkg)
     if (k_pkg.count > MAX_EVENTS_PER_READ) return -EINVAL;
 
     spin_lock_irqsave(&injection_lock, flags);
-    injection_in_progress = true;
+    injector_task = current; // Record the injecting task
     spin_unlock_irqrestore(&injection_lock, flags);
 
     for (i = 0; i < k_pkg.count; i++) {
@@ -428,7 +426,7 @@ int do_inject_input_package(PEVENT_PACKAGE user_pkg)
     }
 
     spin_lock_irqsave(&injection_lock, flags);
-    injection_in_progress = false;
+    injector_task = NULL; // Clear the record
     spin_unlock_irqrestore(&injection_lock, flags);
 
     return 0;
