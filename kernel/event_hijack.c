@@ -185,17 +185,27 @@ int do_hook_input_device(const char *name)
         return -EBUSY;
     }
 
-    // 1. Find the target device by name
+    struct input_dev *dev_iter;
+
+    // 1. Find the target device by name using the dummy device trick
     dummy_dev = input_allocate_device();
-    if (!dummy_dev) { mutex_unlock(&hijack_mutex); return -ENOMEM; }
+    if (!dummy_dev) {
+        mutex_unlock(&hijack_mutex);
+        return -ENOMEM;
+    }
     dummy_dev->name = "khack_dummy_device";
-    if (input_register_device(dummy_dev)) { input_free_device(dummy_dev); mutex_unlock(&hijack_mutex); return -EFAULT; }
+    if (input_register_device(dummy_dev)) {
+        input_free_device(dummy_dev);
+        mutex_unlock(&hijack_mutex);
+        return -EFAULT;
+    }
 
     rcu_read_lock();
-    list_for_each_entry_rcu(handle, &dummy_dev->node.next->h_list, d_node) {
-        if (handle->dev && handle->dev->name && strcmp(handle->dev->name, name) == 0) {
-            if (input_get_device(handle->dev)) {
-                target_dev = handle->dev;
+    // Correctly iterate through the input_dev list starting from our dummy device
+    list_for_each_entry_rcu(dev_iter, &dummy_dev->node, node) {
+        if (dev_iter->name && strcmp(dev_iter->name, name) == 0) {
+            if (input_get_device(dev_iter)) {
+                target_dev = dev_iter;
             }
             break;
         }
