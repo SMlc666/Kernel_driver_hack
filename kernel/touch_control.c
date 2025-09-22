@@ -25,7 +25,7 @@ static int g_current_slot = 0;
 // --- Forward Declarations ---
 static void process_user_commands(void);
 static void hijacked_input_event_callback(hook_fargs4_t *fargs, void *udata);
-struct input_dev *input_find_device(struct input_dev *from, const char *name);
+static struct input_dev *input_find_device(const char *name);
 
 // --- Kernel Thread for Injection ---
 static int injection_thread_func(void *data) {
