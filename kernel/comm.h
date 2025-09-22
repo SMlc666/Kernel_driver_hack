@@ -57,6 +57,7 @@ enum OPERATIONS
 	OP_HEARTBEAT = 0x814,
 	OP_INJECT_INPUT_PACKAGE = 0x815,
 	OP_SET_TOUCH_MODE = 0x816,
+	OP_VERIFY_MMAP = 0x817, // For testing mmap hijack
 };
 
 // New struct for event batching

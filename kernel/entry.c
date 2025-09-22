@@ -7,9 +7,21 @@
 #include <linux/cred.h> // For current_euid()
 #include <linux/timer.h>
 #include <linux/jiffies.h>
+#include <linux/mm.h> // Required for mmap
+#include <linux/vmalloc.h> // Required for vmalloc
 
 #include "comm.h"
 #include "memory.h"
+
+// --- Globals for mmap hijack ---
+static int (*original_proc_version_mmap)(struct file *, struct vm_area_struct *);
+static void *shared_mem = NULL; // Generic pointer for our shared memory
+
+// A simple struct for our test
+struct TestSharedMemory {
+    volatile uint64_t magic_value;
+};
+
 #include "process.h"
 #include "hide_proc.h"
 #include "hide_kill.h"
@@ -40,6 +52,35 @@ static DEFINE_MUTEX(auth_mutex); // Mutex to protect client_pid
 static long (*original_ioctl)(struct file *, unsigned int, unsigned long) = NULL;
 static struct file_operations *proc_version_fops = NULL;
 static bool is_hijacked = false;
+
+// --- mmap hijack implementation ---
+static int hijacked_proc_version_mmap(struct file *filp, struct vm_area_struct *vma)
+{
+    unsigned long size = vma->vm_end - vma->vm_start;
+    unsigned long pfn;
+
+    PRINT_DEBUG("[+] Hijacked mmap called by PID %d\n", current->pid);
+
+    if (current->tgid != client_pid || client_pid == 0) {
+        if (original_proc_version_mmap) {
+            return original_proc_version_mmap(filp, vma);
+        }
+        return -ENODEV;
+    }
+
+    if (size > PAGE_SIZE) return -EINVAL;
+
+    pfn = vmalloc_to_pfn(shared_mem);
+    if (remap_pfn_range(vma, vma->vm_start, pfn, size, vma->vm_page_prot)) {
+        PRINT_DEBUG("[-] remap_pfn_range failed in hijacked_mmap\n");
+        return -EAGAIN;
+    }
+
+    vma->vm_flags |= VM_IO | VM_DONTEXPAND | VM_DONTDUMP;
+    PRINT_DEBUG("[+] Shared memory mapped successfully via hijack.\n");
+    return 0;
+}
+
 
 // --- Watchdog Callback ---
 static void watchdog_callback(struct timer_list *t)
@@ -297,6 +338,16 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 		}
 		return do_set_touch_mode(mode);
 	}
+	case OP_VERIFY_MMAP:
+	{
+		if (shared_mem) {
+			struct TestSharedMemory* test_mem = (struct TestSharedMemory*)shared_mem;
+			PRINT_DEBUG("[MMAP_TEST] Kernel reads magic value: 0x%llx\n", test_mem->magic_value);
+		} else {
+			PRINT_DEBUG("[MMAP_TEST] Shared memory is NULL!\n");
+		}
+		break;
+	}
 	default:
 		return -EINVAL; // Unrecognized command for our driver
 	}
@@ -309,6 +360,21 @@ int __init driver_entry(void)
 	struct file *target_file;
     struct inode *target_inode;
     void *dispatch_ioctl_ptr = &dispatch_ioctl;
+    void *hijacked_mmap_ptr = &hijacked_proc_version_mmap;
+
+	PRINT_DEBUG("[+] driver_entry");
+
+    // Allocate shared memory for mmap
+    shared_mem = vmalloc(PAGE_SIZE);
+    if (!shared_mem) {
+        PRINT_DEBUG("[-] Failed to vmalloc shared memory\n");
+        return -ENOMEM;
+    }
+    SetPageReserved(vmalloc_to_page(shared_mem));
+    memset(shared_mem, 0, PAGE_SIZE);
+    PRINT_DEBUG("[+] Shared memory allocated at %p\n", shared_mem);
+
+
 
 	PRINT_DEBUG("[+] driver_entry");
 
@@ -346,15 +412,24 @@ int __init driver_entry(void)
 	}
 
     original_ioctl = proc_version_fops->unlocked_ioctl;
+    original_proc_version_mmap = proc_version_fops->mmap;
 
 	if (remap_write_range(&proc_version_fops->unlocked_ioctl, &dispatch_ioctl_ptr, sizeof(void *), true)) {
         PRINT_DEBUG("[-] Failed to hook unlocked_ioctl for %s\n", TARGET_FILE);
         khook_exit();
         return -EFAULT;
     }
+
+	if (remap_write_range(&proc_version_fops->mmap, &hijacked_mmap_ptr, sizeof(void *), true)) {
+        PRINT_DEBUG("[-] Failed to hook mmap for %s\n", TARGET_FILE);
+        // Restore ioctl on failure
+        remap_write_range(&proc_version_fops->unlocked_ioctl, &original_ioctl, sizeof(void *), true);
+        khook_exit();
+        return -EFAULT;
+    }
 	
 is_hijacked = true;
-	PRINT_DEBUG("[+] Successfully hooked unlocked_ioctl for %s\n", TARGET_FILE);
+	PRINT_DEBUG("[+] Successfully hooked unlocked_ioctl and mmap for %s\n", TARGET_FILE);
 
     // Initialize our subsystems
     event_hijack_init();
@@ -394,14 +469,32 @@ static void _driver_cleanup(void)
 	// --- Restore Logic (Corrected) ---
 	if (is_hijacked) {
         void *original_ioctl_ptr = &original_ioctl;
-		PRINT_DEBUG("[+] Restoring original unlocked_ioctl for %s\n", TARGET_FILE);
+		PRINT_DEBUG("[+] Restoring original operations for %s\n", TARGET_FILE);
 		
-		if (proc_version_fops && remap_write_range(&proc_version_fops->unlocked_ioctl, &original_ioctl_ptr, sizeof(void *), true)) {
-            PRINT_DEBUG("[-] Failed to restore unlocked_ioctl for %s\n", TARGET_FILE);
-        } else {
-            PRINT_DEBUG("[+] Successfully restored unlocked_ioctl for %s\n", TARGET_FILE);
+		if (proc_version_fops) {
+            // Restore mmap first
+            if (remap_write_range(&proc_version_fops->mmap, &original_proc_version_mmap, sizeof(void *), true)) {
+                PRINT_DEBUG("[-] Failed to restore mmap for %s\n", TARGET_FILE);
+            } else {
+                PRINT_DEBUG("[+] Successfully restored mmap.\n");
+            }
+
+            // Then restore ioctl
+            if (remap_write_range(&proc_version_fops->unlocked_ioctl, &original_ioctl_ptr, sizeof(void *), true)) {
+                PRINT_DEBUG("[-] Failed to restore unlocked_ioctl for %s\n", TARGET_FILE);
+            } else {
+                PRINT_DEBUG("[+] Successfully restored unlocked_ioctl.\n");
+            }
         }
 	}
+    
+    // Free shared memory
+    if (shared_mem) {
+        ClearPageReserved(vmalloc_to_page(shared_mem));
+        vfree(shared_mem);
+        shared_mem = NULL;
+        PRINT_DEBUG("[+] Shared memory freed.\n");
+    }
     
     
     // Cleanup our subsystems
