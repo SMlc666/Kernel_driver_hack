@@ -206,15 +206,6 @@ int do_hook_input_device(const char *name)
     struct input_handle *handle;
     void *evdev_event_addr = NULL;
     unsigned long flags;
-
-    mutex_lock(&hijack_mutex);
-
-    if (hook_is_active) {
-        PRINT_DEBUG("[HIJACK] Hook is already active. Please unhook first.\n");
-        mutex_unlock(&hijack_mutex);
-        return -EBUSY;
-    }
-
     struct input_dev *dev_iter;
 
     // 1. Find the target device by name using the dummy device trick
@@ -394,13 +385,13 @@ int do_inject_input_event(struct input_event *event)
     if (copy_from_user(&k_event, event, sizeof(struct input_event))) return -EFAULT;
 
     spin_lock_irqsave(&injection_lock, flags);
-    injection_in_progress = true;
+    injector_task = current;
     spin_unlock_irqrestore(&injection_lock, flags);
 
     input_event(hooked_dev, k_event.type, k_event.code, k_event.value);
 
     spin_lock_irqsave(&injection_lock, flags);
-    injection_in_progress = false;
+    injector_task = NULL;
     spin_unlock_irqrestore(&injection_lock, flags);
 
     return 0;
@@ -417,7 +408,7 @@ int do_inject_input_package(PEVENT_PACKAGE user_pkg)
     if (k_pkg.count > MAX_EVENTS_PER_READ) return -EINVAL;
 
     spin_lock_irqsave(&injection_lock, flags);
-    injector_task = current; // Record the injecting task
+    injector_task = current;
     spin_unlock_irqrestore(&injection_lock, flags);
 
     for (i = 0; i < k_pkg.count; i++) {
@@ -426,7 +417,7 @@ int do_inject_input_package(PEVENT_PACKAGE user_pkg)
     }
 
     spin_lock_irqsave(&injection_lock, flags);
-    injector_task = NULL; // Clear the record
+    injector_task = NULL;
     spin_unlock_irqrestore(&injection_lock, flags);
 
     return 0;
