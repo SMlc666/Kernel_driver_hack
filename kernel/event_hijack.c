@@ -156,7 +156,7 @@ void event_hijack_init(void)
     spin_lock_init(&ring_buffer_lock);
     spin_lock_init(&assembly_lock);
     init_waitqueue_head(&read_wait_queue);
-	sipin_lock_init(&injection_lock);
+	  spin_lock_init(&injection_lock);
     PRINT_DEBUG("[HIJACK] Event hijacking subsystem initialized.\n");
 }
 
