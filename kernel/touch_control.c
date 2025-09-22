@@ -3,6 +3,14 @@
 #include <linux/input.h>
 #include <linux/input/mt.h>
 #include <linux/kallsyms.h>
+#include <linux/slab.h> // For kzalloc, kfree
+
+// For input_dev_list
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 29)
+#include <linux/input/input_sec.h>
+#else
+#include <linux/input/input-polldev.h>
+#endif
 
 #include "version_control.h"
 #include "inline_hook/p_hook.h"
@@ -154,8 +162,8 @@ void touch_control_exit(void) {
 }
 
 int touch_control_start_hijack(const char *device_name) {
-    // Find device by name (simplified, real implementation needs to iterate input_dev list)
-    g_hooked_dev = input_find_device(NULL, device_name);
+    // Find device by name
+    g_hooked_dev = input_find_device(device_name);
     if (!g_hooked_dev) {
         PRINT_DEBUG("[-] Device '%s' not found.\n", device_name);
         return -1;
@@ -202,21 +210,33 @@ void touch_control_stop_hijack(void) {
     PRINT_DEBUG("[TCTRL] Hijack stopped.\n");
 }
 
-// Helper to find input device by name
-// This is a simplified version. A robust one should iterate the input_dev list.
-struct input_dev *input_find_device(struct input_dev *from, const char *name)
+// Helper to find input device by name using the dummy device traversal trick
+struct input_dev *input_find_device(const char *name)
 {
-    struct input_dev *dev = NULL;
-    struct input_dev *iter;
+    struct input_dev *dev = NULL, *dummy_dev;
+    
+    // 1. Allocate a dummy device to get an anchor in the input device list
+    dummy_dev = input_allocate_device();
+    if (!dummy_dev) {
+        PRINT_DEBUG("[-] Failed to allocate dummy device for list traversal.\n");
+        return NULL;
+    }
 
+    // 2. Safely traverse the list using RCU read-side protection
     rcu_read_lock();
-    list_for_each_entry_rcu(iter, &from->node, node) {
-        if (iter->name && !strcmp(iter->name, name)) {
-            dev = iter;
-            break;
+    list_for_each_entry_rcu(dev, &input_dev_list, node) {
+        if (dev->name && strcmp(dev->name, name) == 0) {
+            if(input_get_device(dev)) { // Increment refcount if found
+                rcu_read_unlock();
+                input_free_device(dummy_dev);
+                return dev;
+            }
         }
     }
     rcu_read_unlock();
 
-    return dev;
+    // 3. Free the dummy device if not found
+    input_free_device(dummy_dev);
+    return NULL;
 }
+

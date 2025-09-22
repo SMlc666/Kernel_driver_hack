@@ -43,9 +43,13 @@ bool find_touchscreen_device() {
             int fd = open(path.c_str(), O_RDONLY);
             if (fd < 0) continue;
 
-            unsigned char prop_bits[2] = {0};
-            ioctl(fd, EVIOCGPROP(sizeof(prop_bits)), prop_bits);
-            if (prop_bits[0] & INPUT_PROP_DIRECT) {
+            unsigned char prop_bits[INPUT_PROP_MAX / 8 + 1] = {0};
+            if (ioctl(fd, EVIOCGPROP(sizeof(prop_bits)), prop_bits) < 0) {
+                close(fd);
+                continue;
+            }
+
+            if (prop_bits[INPUT_PROP_DIRECT / 8] & (1 << (INPUT_PROP_DIRECT % 8))) {
                 char name[256] = {0};
                 ioctl(fd, EVIOCGNAME(sizeof(name)), name);
                 g_device_name = name;
