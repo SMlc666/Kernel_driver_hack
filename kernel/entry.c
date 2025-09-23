@@ -30,6 +30,7 @@ struct TestSharedMemory {
 #include "inline_hook/p_lkrg_main.h"
 #include "inline_hook/utils/p_memory.h"
 #include "version_control.h"
+#include "touch_shared.h"
 
 // --- Start of Hijack Logic ---
 
