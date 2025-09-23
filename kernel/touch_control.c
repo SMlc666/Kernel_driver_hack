@@ -92,45 +92,43 @@ static int injection_thread_func(void *data) {
 }
 
 // --- Core Logic ---
+// SIMPLIFIED: This function now acts as a simple, stateless command processor.
 static void process_user_commands(void) {
-    int i, slot;
+    int i;
     int count = g_shared_mem->user_command_count;
-    bool active_slots_in_command[MAX_TOUCH_POINTS] = {false};
 
     if (count > MAX_USER_COMMANDS) count = MAX_USER_COMMANDS;
 
-    
-
-    // 1. Process "down" and "move" events from user commands
     for (i = 0; i < count; ++i) {
         struct UserCommand *cmd = &g_shared_mem->user_commands[i];
-        slot = cmd->slot;
 
-        if (slot >= 0 && slot < MAX_TOUCH_POINTS && (cmd->action == ACTION_MODIFY || cmd->action == ACTION_PASS_THROUGH)) {
-            input_mt_slot(g_hooked_dev, slot);
-            input_report_abs(g_hooked_dev, ABS_MT_TRACKING_ID, cmd->new_data.tracking_id);
-            input_report_abs(g_hooked_dev, ABS_MT_POSITION_X, cmd->new_data.x);
-            input_report_abs(g_hooked_dev, ABS_MT_POSITION_Y, cmd->new_data.y);
-            input_report_abs(g_hooked_dev, ABS_MT_PRESSURE, cmd->new_data.pressure);
+        if (cmd->slot < 0 || cmd->slot >= MAX_TOUCH_POINTS) continue;
+
+        // Select the hardware slot we want to report events for.
+        input_mt_slot(g_hooked_dev, cmd->slot);
+
+        switch (cmd->action) {
+            case ACTION_MODIFY:
+                // For a new touch or a moving touch, report all properties.
+                input_report_abs(g_hooked_dev, ABS_MT_TRACKING_ID, cmd->new_data.tracking_id);
+                input_report_abs(g_hooked_dev, ABS_MT_POSITION_X, cmd->new_data.x);
+                input_report_abs(g_hooked_dev, ABS_MT_POSITION_Y, cmd->new_data.y);
+                input_report_abs(g_hooked_dev, ABS_MT_PRESSURE, cmd->new_data.pressure);
+                break;
             
-            active_slots_in_command[slot] = true;
-            g_injected_touch_state[slot].is_active = 1; // Update our injected state
+            case ACTION_UP:
+                // For an "up" event, we only need to report the tracking ID as -1.
+                input_report_abs(g_hooked_dev, ABS_MT_TRACKING_ID, -1);
+                break;
+
+            default:
+                // Ignore other actions for now.
+                break;
         }
     }
 
-    // 2. Process "up" events for slots that were previously injected but are no longer in the user command list
-    for (i = 0; i < MAX_TOUCH_POINTS; i++) {
-        if (g_injected_touch_state[i].is_active && !active_slots_in_command[i]) {
-            input_mt_slot(g_hooked_dev, i);
-            input_report_abs(g_hooked_dev, ABS_MT_TRACKING_ID, -1);
-            g_injected_touch_state[i].is_active = 0; // Update our injected state
-        }
-    }
-
-    // 3. Finalize the frame
+    // After processing all commands for this frame, send a SYN_REPORT to finalize.
     input_sync(g_hooked_dev);
-
-    
 }
 
 

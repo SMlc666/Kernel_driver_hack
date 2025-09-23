@@ -30,6 +30,7 @@ enum UserAction {
     ACTION_PASS_THROUGH = 1,// 原样放行此原始触摸点
     ACTION_MODIFY = 2,      // 修改此触摸点
     ACTION_INJECT = 3,      // 注入一个全新的触摸点
+    ACTION_UP = 4,          // 显式声明一个触摸点抬起
 };
 
 // 用户指令，由用户层写入
