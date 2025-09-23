@@ -53,7 +53,7 @@ static bool is_hijacked = false;
 static int hijacked_proc_version_mmap(struct file *filp, struct vm_area_struct *vma)
 {
     unsigned long size = vma->vm_end - vma->vm_start;
-    unsigned long pfn;
+    unsigned long offset;
 	size_t shared_mem_size = PAGE_ALIGN(sizeof(struct SharedTouchMemory));
 
     PRINT_DEBUG("[+] Hijacked mmap called by PID %d for size %lu\n", current->pid, size);
@@ -70,10 +70,12 @@ static int hijacked_proc_version_mmap(struct file *filp, struct vm_area_struct *
 		return -EINVAL;
 	}
 
-    pfn = vmalloc_to_pfn(shared_mem);
-    if (remap_pfn_range(vma, vma->vm_start, pfn, size, vma->vm_page_prot)) {
-        PRINT_DEBUG("[-] remap_pfn_range failed in hijacked_mmap\n");
-        return -EAGAIN;
+    for (offset = 0; offset < size; offset += PAGE_SIZE) {
+        unsigned long pfn = vmalloc_to_pfn((void *)((unsigned long)shared_mem + offset));
+        if (remap_pfn_range(vma, vma->vm_start + offset, pfn, PAGE_SIZE, vma->vm_page_prot)) {
+            PRINT_DEBUG("[-] remap_pfn_range failed for offset %lu in hijacked_mmap\n", offset);
+            return -EAGAIN;
+        }
     }
 
     vma->vm_flags |= VM_IO | VM_DONTEXPAND | VM_DONTDUMP;
