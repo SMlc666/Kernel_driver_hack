@@ -3,10 +3,10 @@
 #include <linux/input.h>
 #include <linux/input/mt.h>
 #include <linux/kallsyms.h>
-#include <linux/slab.h> // For input_allocate_device
-#include <linux/sched/signal.h> // For is_pid_alive
+#include <linux/slab.h> 
+#include <linux/sched/signal.h> 
 #include <linux/spinlock.h>
-#include <linux/percpu.h> // For per-cpu variables
+#include <linux/percpu.h>
 
 #include "version_control.h"
 #include "inline_hook/p_hook.h"
@@ -22,13 +22,15 @@ static uint64_t g_last_processed_user_seq = 0;
 static struct input_dev *g_hooked_dev = NULL;
 static void *g_input_event_addr = NULL;
 
-// Use a per-cpu variable to prevent race conditions on SMP systems for the injection flag.
-// This is more robust than a simple global bool.
 static DEFINE_PER_CPU(bool, g_is_injecting);
 
-// Internal state for parsing multi-touch events
+// Internal state for parsing raw physical touch events
 static struct KernelTouchPoint g_internal_touch_state[MAX_TOUCH_POINTS];
 static int g_current_slot = 0;
+
+// State for tracking what has been *injected* into the system
+static struct KernelTouchPoint g_injected_touch_state[MAX_TOUCH_POINTS];
+
 
 // --- Forward Declarations ---
 static void process_user_commands(void);
@@ -96,7 +98,6 @@ static void process_user_commands(void) {
     int i, slot;
     int count = g_shared_mem->user_command_count;
     bool active_slots_in_command[MAX_TOUCH_POINTS] = {false};
-    unsigned long flags;
 
     if (count > MAX_USER_COMMANDS) count = MAX_USER_COMMANDS;
 
@@ -104,7 +105,7 @@ static void process_user_commands(void) {
     this_cpu_write(g_is_injecting, true);
     smp_wmb(); // Ensure flag is written before injecting
 
-    // 1. Process all user commands for this frame, injecting modified/new points
+    // 1. Process "down" and "move" events from user commands
     for (i = 0; i < count; ++i) {
         struct UserCommand *cmd = &g_shared_mem->user_commands[i];
         slot = cmd->slot;
@@ -115,30 +116,19 @@ static void process_user_commands(void) {
             input_report_abs(g_hooked_dev, ABS_MT_POSITION_X, cmd->new_data.x);
             input_report_abs(g_hooked_dev, ABS_MT_POSITION_Y, cmd->new_data.y);
             input_report_abs(g_hooked_dev, ABS_MT_PRESSURE, cmd->new_data.pressure);
+            
             active_slots_in_command[slot] = true;
+            g_injected_touch_state[slot].is_active = 1; // Update our injected state
         }
     }
 
-    // 2. Process touch-ups for points that are no longer in the command list.
-    // This part is critical for the deadlock. We must not call input_* functions while holding the lock.
-    // So, we first gather the slots to be released, then release the lock, then inject.
-    int slots_to_release[MAX_TOUCH_POINTS];
-    int release_count = 0;
-    
-    spin_lock_irqsave(&g_touch_state_lock, flags);
+    // 2. Process "up" events for slots that were previously injected but are no longer in the user command list
     for (i = 0; i < MAX_TOUCH_POINTS; i++) {
-        if (g_internal_touch_state[i].is_active && !active_slots_in_command[i]) {
-            if (release_count < MAX_TOUCH_POINTS) {
-                slots_to_release[release_count++] = i;
-            }
+        if (g_injected_touch_state[i].is_active && !active_slots_in_command[i]) {
+            input_mt_slot(g_hooked_dev, i);
+            input_report_abs(g_hooked_dev, ABS_MT_TRACKING_ID, -1);
+            g_injected_touch_state[i].is_active = 0; // Update our injected state
         }
-    }
-    spin_unlock_irqrestore(&g_touch_state_lock, flags);
-
-    // Now inject the touch-up events without holding the lock.
-    for (i = 0; i < release_count; i++) {
-        input_mt_slot(g_hooked_dev, slots_to_release[i]);
-        input_report_abs(g_hooked_dev, ABS_MT_TRACKING_ID, -1); // Report touch up
     }
 
     // 3. Finalize the frame
@@ -158,6 +148,11 @@ static void reset_internal_state(void) {
         g_internal_touch_state[i].is_active = 0;
         g_internal_touch_state[i].tracking_id = -1;
         g_internal_touch_state[i].slot = i;
+
+        // Also reset the injected state
+        g_injected_touch_state[i].is_active = 0;
+        g_injected_touch_state[i].tracking_id = -1;
+        g_injected_touch_state[i].slot = i;
     }
     g_current_slot = 0;
     spin_unlock_irqrestore(&g_touch_state_lock, flags);
