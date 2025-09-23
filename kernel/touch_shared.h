@@ -24,11 +24,12 @@ enum UserAction {
 
 struct UserCommand {
     enum UserAction action;
-    int32_t original_tracking_id; 
-    
+    int32_t slot;
+
     struct {
         int32_t x, y;
         int32_t pressure;
+        int32_t tracking_id;
     } new_data;
 };
 

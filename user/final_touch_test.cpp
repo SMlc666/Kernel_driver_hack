@@ -111,7 +111,8 @@ void run_touch_modification_test() {
                 // Prepare a command to modify this point
                 UserCommand* cmd = &mem->user_commands[mem->user_command_count++];
                 cmd->action = ACTION_MODIFY;
-                cmd->original_tracking_id = pt->tracking_id;
+                cmd->slot = pt->slot;
+                cmd->new_data.tracking_id = pt->tracking_id;
                 cmd->new_data.x = pt->x;
                 cmd->new_data.y = pt->y + 200; // The modification logic!
                 cmd->new_data.pressure = pt->pressure;

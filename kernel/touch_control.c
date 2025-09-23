@@ -5,6 +5,7 @@
 #include <linux/kallsyms.h>
 #include <linux/slab.h> // For input_allocate_device
 #include <linux/sched/signal.h> // For is_pid_alive
+#include <linux/spinlock.h> // <<< CHANGE: Added for spinlock
 
 #include "version_control.h"
 #include "inline_hook/p_hook.h"
@@ -12,6 +13,7 @@
 #include "touch_control.h"
 
 // --- Globals ---
+static DEFINE_SPINLOCK(g_touch_state_lock); // <<< CHANGE: Added spinlock to protect g_internal_touch_state
 static struct SharedTouchMemory *g_shared_mem = NULL;
 static struct task_struct *g_injection_thread = NULL;
 static uint64_t g_last_processed_user_seq = 0;
@@ -85,29 +87,24 @@ static int injection_thread_func(void *data) {
 }
 
 // --- Core Logic ---
+// <<< CHANGE: Rewritten process_user_commands to remove race condition
 static void process_user_commands(void) {
-    int i, j, slot;
+    int i, slot;
     int count = g_shared_mem->user_command_count;
     bool active_slots_in_command[MAX_TOUCH_POINTS] = {false};
+    unsigned long flags;
 
     if (count > MAX_USER_COMMANDS) count = MAX_USER_COMMANDS;
 
     // 1. Process all user commands for this frame, injecting modified/new points
     for (i = 0; i < count; ++i) {
         struct UserCommand *cmd = &g_shared_mem->user_commands[i];
-        slot = -1;
+        slot = cmd->slot;
 
-        // Find the slot associated with this tracking ID from our internal state
-        for (j = 0; j < MAX_TOUCH_POINTS; ++j) {
-            if (g_internal_touch_state[j].is_active && g_internal_touch_state[j].tracking_id == cmd->original_tracking_id) {
-                slot = g_internal_touch_state[j].slot;
-                break;
-            }
-        }
-
-        if (slot != -1 && (cmd->action == ACTION_MODIFY || cmd->action == ACTION_PASS_THROUGH)) {
+        // Directly use the slot from the command. No racy lookup needed.
+        if (slot >= 0 && slot < MAX_TOUCH_POINTS && (cmd->action == ACTION_MODIFY || cmd->action == ACTION_PASS_THROUGH)) {
             input_mt_slot(g_hooked_dev, slot);
-            input_report_abs(g_hooked_dev, ABS_MT_TRACKING_ID, cmd->original_tracking_id);
+            input_report_abs(g_hooked_dev, ABS_MT_TRACKING_ID, cmd->new_data.tracking_id);
             input_report_abs(g_hooked_dev, ABS_MT_POSITION_X, cmd->new_data.x);
             input_report_abs(g_hooked_dev, ABS_MT_POSITION_Y, cmd->new_data.y);
             input_report_abs(g_hooked_dev, ABS_MT_PRESSURE, cmd->new_data.pressure);
@@ -115,38 +112,51 @@ static void process_user_commands(void) {
         }
     }
 
-    // 2. Process touch-ups for points that are no longer in the command list
+    // 2. Process touch-ups for points that are no longer in the command list.
+    // This part still reads g_internal_touch_state, so it needs locking.
+    spin_lock_irqsave(&g_touch_state_lock, flags);
     for (i = 0; i < MAX_TOUCH_POINTS; i++) {
         if (g_internal_touch_state[i].is_active && !active_slots_in_command[i]) {
             input_mt_slot(g_hooked_dev, i);
             input_report_abs(g_hooked_dev, ABS_MT_TRACKING_ID, -1); // Report touch up
         }
     }
+    spin_unlock_irqrestore(&g_touch_state_lock, flags);
+
 
     // 3. Finalize the frame
     input_sync(g_hooked_dev);
 }
 
 
+// <<< CHANGE: Added spinlock
 static void reset_internal_state(void) {
     int i;
+    unsigned long flags;
+    spin_lock_irqsave(&g_touch_state_lock, flags);
     for(i = 0; i < MAX_TOUCH_POINTS; ++i) {
         g_internal_touch_state[i].is_active = 0;
         g_internal_touch_state[i].tracking_id = -1;
         g_internal_touch_state[i].slot = i;
     }
     g_current_slot = 0;
+    spin_unlock_irqrestore(&g_touch_state_lock, flags);
 }
 
+// <<< CHANGE: Added spinlock
 static void hijacked_input_event_callback(hook_fargs4_t *fargs, void *udata) {
     struct input_dev *dev = (struct input_dev *)fargs->arg0;
     unsigned int type = (unsigned int)fargs->arg1;
     unsigned int code = (unsigned int)fargs->arg2;
     int value = (int)fargs->arg3;
+    unsigned long flags;
 
     // Always intercept events from the hooked device
     if (dev == g_hooked_dev) {
         fargs->skip_origin = 1;
+
+        // Lock before touching the shared internal state
+        spin_lock_irqsave(&g_touch_state_lock, flags);
 
         // Parse MT protocol
         switch(type) {
@@ -191,6 +201,8 @@ static void hijacked_input_event_callback(hook_fargs4_t *fargs, void *udata) {
                 }
                 break;
         }
+        
+        spin_unlock_irqrestore(&g_touch_state_lock, flags);
         return;
     }
 
@@ -296,5 +308,3 @@ static struct input_dev *input_find_device(const char *name)
 
     return dev;
 }
-
-
