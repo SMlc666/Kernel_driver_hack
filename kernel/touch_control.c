@@ -13,260 +13,53 @@
 #include "touch_control.h"
 
 // --- Globals ---
-static DEFINE_SPINLOCK(g_touch_state_lock);
-static struct SharedTouchMemory *g_shared_mem = NULL;
-static struct task_struct *g_injection_thread = NULL;
-static pid_t g_injection_thread_pid = 0;
-static uint64_t g_last_processed_user_seq = 0;
-
+// Most globals are no longer needed for the synchronous test
 static struct input_dev *g_hooked_dev = NULL;
 static void *g_input_event_addr = NULL;
 
-// Internal state for parsing raw physical touch events
-static struct KernelTouchPoint g_internal_touch_state[MAX_TOUCH_POINTS];
-static int g_current_slot = 0;
-
-// State for tracking what has been *injected* into the system
-static struct KernelTouchPoint g_injected_touch_state[MAX_TOUCH_POINTS];
-
 
 // --- Forward Declarations ---
-static void process_user_commands(void);
 static void hijacked_input_event_callback(hook_fargs4_t *fargs, void *udata);
 static struct input_dev *input_find_device(const char *name);
-static bool is_pid_alive(pid_t pid);
-
-// --- Watchdog & PID Liveness Check ---
-static bool is_pid_alive(pid_t pid)
-{
-    struct task_struct *task;
-    if (pid <= 0) return false;
-    task = get_pid_task(find_get_pid(pid), PIDTYPE_PID);
-    if (task) {
-        put_task_struct(task);
-        return true;
-    }
-    return false;
-}
 
 
-// --- Kernel Thread for Injection ---
-static int injection_thread_func(void *data) {
-    #define MIN_POLLING_INTERVAL_MS 1
-    #define MAX_POLLING_INTERVAL_MS 100
-    #define WATCHDOG_CHECK_INTERVAL_MS 1000
-    uint32_t sleep_interval_ms;
-	unsigned long last_watchdog_check = jiffies;
-
-    g_injection_thread_pid = current->pid;
-    PRINT_DEBUG("[TCTRL] Injection thread started with PID: %d.\n", g_injection_thread_pid);
-
-    while (!kthread_should_stop()) {
-        // --- Watchdog Logic ---
-        if (time_after(jiffies, last_watchdog_check + msecs_to_jiffies(WATCHDOG_CHECK_INTERVAL_MS))) {
-            if (g_shared_mem->user_pid > 0 && !is_pid_alive(g_shared_mem->user_pid)) {
-                PRINT_DEBUG("[TCTRL] Watchdog: Client PID %d is no longer alive. Cleaning up hook.\n", g_shared_mem->user_pid);
-                touch_control_stop_hijack();
-                // The thread will be stopped by the cleanup function, so we must exit.
-                break;
-            }
-            last_watchdog_check = jiffies;
-        }
-
-		// --- Command Processing Logic ---
-        if (g_shared_mem->user_sequence > g_last_processed_user_seq) {
-            PRINT_DEBUG("[TCTRL] Detected new user sequence %llu (last was %llu). Processing commands.\n", g_shared_mem->user_sequence, g_last_processed_user_seq);
-            smp_rmb(); // Read barrier
-            process_user_commands();
-            g_last_processed_user_seq = g_shared_mem->user_sequence;
-        }
-
-        sleep_interval_ms = g_shared_mem->polling_interval_ms;
-        if (sleep_interval_ms < MIN_POLLING_INTERVAL_MS) sleep_interval_ms = MIN_POLLING_INTERVAL_MS;
-        if (sleep_interval_ms > MAX_POLLING_INTERVAL_MS) sleep_interval_ms = MAX_POLLING_INTERVAL_MS;
-        
-        msleep(sleep_interval_ms);
-    }
-
-    PRINT_DEBUG("[TCTRL] Injection thread stopped.\n");
-    return 0;
-}
-
-// --- Core Logic ---
-// SIMPLIFIED: This function now acts as a simple, stateless command processor.
-static void process_user_commands(void) {
-    int i;
-    int count = g_shared_mem->user_command_count;
-
-    PRINT_DEBUG("[TCTRL] process_user_commands called with %d commands.\n", count);
-
-    if (count > MAX_USER_COMMANDS) count = MAX_USER_COMMANDS;
-
-    for (i = 0; i < count; ++i) {
-        struct UserCommand *cmd = &g_shared_mem->user_commands[i];
-
-        if (cmd->slot < 0 || cmd->slot >= MAX_TOUCH_POINTS) {
-            PRINT_DEBUG("[TCTRL]   - Cmd %d: Invalid slot %d. Skipping.\n", i, cmd->slot);
-            continue;
-        }
-
-        // Select the hardware slot we want to report events for.
-        input_mt_slot(g_hooked_dev, cmd->slot);
-
-        switch (cmd->action) {
-            case ACTION_MODIFY:
-                PRINT_DEBUG("[TCTRL]   - Cmd %d: ACTION_MODIFY on slot %d (ID: %d, X: %d, Y: %d)\n", i, cmd->slot, cmd->new_data.tracking_id, cmd->new_data.x, cmd->new_data.y);
-                // For a new touch or a moving touch, report all properties.
-                input_report_abs(g_hooked_dev, ABS_MT_TRACKING_ID, cmd->new_data.tracking_id);
-                input_report_abs(g_hooked_dev, ABS_MT_POSITION_X, cmd->new_data.x);
-                input_report_abs(g_hooked_dev, ABS_MT_POSITION_Y, cmd->new_data.y);
-                input_report_abs(g_hooked_dev, ABS_MT_PRESSURE, cmd->new_data.pressure);
-                break;
-            
-            case ACTION_UP:
-                PRINT_DEBUG("[TCTRL]   - Cmd %d: ACTION_UP on slot %d\n", i, cmd->slot);
-                // For an "up" event, we only need to report the tracking ID as -1.
-                input_report_abs(g_hooked_dev, ABS_MT_TRACKING_ID, -1);
-                break;
-
-            default:
-                PRINT_DEBUG("[TCTRL]   - Cmd %d: Unknown action %d. Ignoring.\n", i, cmd->action);
-                // Ignore other actions for now.
-                break;
-        }
-    }
-
-    // After processing all commands for this frame, send a SYN_REPORT to finalize.
-    input_sync(g_hooked_dev);
-    PRINT_DEBUG("[TCTRL] process_user_commands finished, input_sync called.\n");
-}
-
-
-static void reset_internal_state(void) {
-    int i;
-    unsigned long flags;
-    spin_lock_irqsave(&g_touch_state_lock, flags);
-    for(i = 0; i < MAX_TOUCH_POINTS; ++i) {
-        g_internal_touch_state[i].is_active = 0;
-        g_internal_touch_state[i].tracking_id = -1;
-        g_internal_touch_state[i].slot = i;
-
-        // Also reset the injected state
-        g_injected_touch_state[i].is_active = 0;
-        g_injected_touch_state[i].tracking_id = -1;
-        g_injected_touch_state[i].slot = i;
-    }
-    g_current_slot = 0;
-    spin_unlock_irqrestore(&g_touch_state_lock, flags);
-}
-
+// --- Core Logic (New Synchronous Version) ---
 static void hijacked_input_event_callback(hook_fargs4_t *fargs, void *udata) {
     struct input_dev *dev = (struct input_dev *)fargs->arg0;
     unsigned int type = (unsigned int)fargs->arg1;
     unsigned int code = (unsigned int)fargs->arg2;
-    int value = (int)fargs->arg3;
-    unsigned long flags;
+    // The original value is in fargs->arg3. We access it directly.
 
-    // If this event is from our own injection thread, let it pass through without interception.
-    if (g_injection_thread_pid != 0 && current->pid == g_injection_thread_pid) {
-        fargs->skip_origin = 0;
-        return;
-    }
-
-    // Intercept events only from the hooked device
-    if (dev == g_hooked_dev) {
-        fargs->skip_origin = 1; // Block original event
-
-        // Lock before touching the shared internal state
-        spin_lock_irqsave(&g_touch_state_lock, flags);
-
-        // Parse MT protocol
-        switch(type) {
-            case EV_ABS:
-                switch(code) {
-                    case ABS_MT_SLOT:
-                        g_current_slot = value;
-                        if (g_current_slot >= MAX_TOUCH_POINTS) g_current_slot = 0;
-                        break;
-                    case ABS_MT_TRACKING_ID:
-                        if (value < 0) { // Touch up
-                            g_internal_touch_state[g_current_slot].is_active = 0;
-                        } else { // Touch down
-                            g_internal_touch_state[g_current_slot].is_active = 1;
-                            g_internal_touch_state[g_current_slot].tracking_id = value;
-                        }
-                        break;
-                    case ABS_MT_POSITION_X:
-                        g_internal_touch_state[g_current_slot].x = value;
-                        break;
-                    case ABS_MT_POSITION_Y:
-                        g_internal_touch_state[g_current_slot].y = value;
-                        break;
-                    case ABS_MT_PRESSURE:
-                        g_internal_touch_state[g_current_slot].pressure = value;
-                        break;
-                }
-                break;
-            case EV_SYN:
-                if (code == SYN_REPORT) {
-                    uint64_t write_idx = g_shared_mem->kernel_write_idx;
-                    uint64_t read_idx = g_shared_mem->user_read_idx;
-
-                    // Check if buffer is full
-                    if (write_idx - read_idx >= KERNEL_BUFFER_FRAMES) {
-                        // Buffer is full, user-space is not keeping up. Drop the frame.
-                        PRINT_DEBUG("[TCTRL] Kernel->User buffer overflow! Dropping frame.\n");
-                    } else {
-                        // Get the next frame slot in the ring buffer
-                        struct TouchFrame* frame = &g_shared_mem->kernel_frames[write_idx % KERNEL_BUFFER_FRAMES];
-                        
-                        // Directly copy the entire state of all slots.
-                        // This ensures the user-space gets a complete picture, including inactive slots.
-                        int active_touches = 0;
-                        int i;
-                        memcpy(frame->touches, g_internal_touch_state, sizeof(g_internal_touch_state));
-
-                        // Still calculate the active touch count for user-space convenience.
-                        for(i = 0; i < MAX_TOUCH_POINTS; ++i) {
-                            if (frame->touches[i].is_active) {
-                                active_touches++;
-                            }
-                        }
-                        frame->touch_count = active_touches;
-
-                        // Ensure all memory writes are complete before updating the index
-                        smp_wmb();
-
-                        // Publish the new frame by incrementing the write index
-                        g_shared_mem->kernel_write_idx++;
-                    }
-                }
-                break;
-        }
-        
-        spin_unlock_irqrestore(&g_touch_state_lock, flags);
-        return;
-    }
-
-    // Let other devices' events pass through
+    // By default, we let the event pass through.
     fargs->skip_origin = 0;
+
+    // We only apply our logic to the specific device we hooked.
+    if (dev == g_hooked_dev) {
+        
+        // Check if this is an absolute position event for the Y-axis.
+        if (type == EV_ABS && code == ABS_MT_POSITION_Y) {
+            
+            // Directly modify the event's value argument.
+            // The original input_event function will receive this modified value.
+            fargs->arg3 = fargs->arg3 + 200;
+            PRINT_DEBUG("[TCTRL_SYNC] Modified Y-pos from %d to %d\n", (int)fargs->arg3 - 200, (int)fargs->arg3);
+        }
+    }
+
+    // The hook function finishes, and the original input_event continues with our potentially modified arguments.
 }
+
 
 // --- Public API ---
 int touch_control_init(void *shared_mem_ptr) {
-    g_shared_mem = (struct SharedTouchMemory *)shared_mem_ptr;
-    reset_internal_state();
-    // Initialize ring buffer indices
-    g_shared_mem->kernel_write_idx = 0;
-    g_shared_mem->user_read_idx = 0;
-    PRINT_DEBUG("[TCTRL] Touch control initialized.\n");
+    // Not much to do here in the simplified version
+    PRINT_DEBUG("[TCTRL_SYNC] Touch control initialized (synchronous mode).\n");
     return 0;
 }
 
 void touch_control_exit(void) {
     touch_control_stop_hijack();
-    g_shared_mem = NULL;
-    PRINT_DEBUG("[TCTRL] Touch control exited.\n");
+    PRINT_DEBUG("[TCTRL_SYNC] Touch control exited (synchronous mode).\n");
 }
 
 int touch_control_start_hijack(const char *device_name) {
@@ -283,29 +76,20 @@ int touch_control_start_hijack(const char *device_name) {
         PRINT_DEBUG("[-] Failed to find address of input_event().\n");
         return -1;
     }
+
+    // We now use our new synchronous callback
     if (hook_wrap(g_input_event_addr, 4, hijacked_input_event_callback, NULL, NULL) != HOOK_NO_ERR) {
         PRINT_DEBUG("[-] Failed to wrap input_event().\n");
         return -1;
     }
 
-    // Start kernel thread
-    g_last_processed_user_seq = g_shared_mem->user_sequence;
-    g_injection_thread = kthread_run(injection_thread_func, NULL, "touch_injection_thread");
-    if (IS_ERR(g_injection_thread)) {
-        PRINT_DEBUG("[-] Failed to create injection thread.\n");
-        hook_unwrap(g_input_event_addr, hijacked_input_event_callback, NULL);
-        return -1;
-    }
-
-    PRINT_DEBUG("[TCTRL] Hijack started for device '%s'.\n", device_name);
+    // The kernel thread is no longer needed.
+    PRINT_DEBUG("[TCTRL_SYNC] Hijack started for device '%s' in synchronous mode.\n", device_name);
     return 0;
 }
 
 void touch_control_stop_hijack(void) {
-    if (g_injection_thread) {
-        kthread_stop(g_injection_thread);
-        g_injection_thread = NULL;
-    }
+    // The injection thread is no longer running, so no need to stop it.
     if (g_input_event_addr) {
         hook_unwrap(g_input_event_addr, hijacked_input_event_callback, NULL);
         g_input_event_addr = NULL;
@@ -314,11 +98,10 @@ void touch_control_stop_hijack(void) {
         input_put_device(g_hooked_dev);
         g_hooked_dev = NULL;
     }
-    reset_internal_state();
-    PRINT_DEBUG("[TCTRL] Hijack stopped.\n");
+    PRINT_DEBUG("[TCTRL_SYNC] Hijack stopped.\n");
 }
 
-// Helper to find input device by name using the dummy device traversal trick
+// Helper to find input device by name (unchanged)
 static struct input_dev *input_find_device(const char *name)
 {
     struct input_dev *dev = NULL, *dummy_dev, *dev_iter;

@@ -1,14 +1,11 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <string>
-#include <thread>
 #include <csignal>
 #include <iostream>
-#include <vector>
 #include <dirent.h>
 #include <fcntl.h>
 #include <linux/input.h>
-#include <time.h>
 
 #include "driver.hpp"
 
@@ -18,11 +15,11 @@ static std::string g_device_name;
 
 // --- Signal Handler ---
 void signal_handler(int signum) {
-    printf("\nCaught signal %d. Shutting down...\n", signum);
+    printf("\nCaught signal %d. Shutting down early...\n", signum);
     g_running = false;
 }
 
-// --- Helper to find touchscreen ---
+// --- Helper to find touchscreen (unchanged) ---
 #ifndef EVIOCGNAME
 #define EVIOCGNAME(len) _IOC(_IOC_READ, 'E', 0x06, len)
 #endif
@@ -64,92 +61,6 @@ bool find_touchscreen_device() {
     return false;
 }
 
-// --- Main Test Logic (v3) ---
-void run_touch_modification_test() {
-    printf("--- Running Simplified MMAP-based Touch Passthrough Test ---\n");
-    printf("--- Touches should be passed through without modification ---\n");
-}
-
-    if (!driver->hook_input_device(g_device_name.c_str())) {
-        printf("[-] Failed to hook device.\n");
-        return;
-    }
-
-    if (!driver->mmap_shared_memory()) {
-        printf("[-] Failed to map shared memory.\n");
-        driver->unhook_input_device();
-        return;
-    }
-
-    struct SharedTouchMemory* mem = driver->shared_mem;
-    mem->user_pid = getpid();
-    mem->polling_interval_ms = 1;
-    mem->user_read_idx = mem->kernel_write_idx;
-
-    // State tracking for user-space to detect UP events
-    KernelTouchPoint prev_touch_state[MAX_TOUCH_POINTS] = {0};
-
-    printf("[+] Hooked and mapped. Polling interval: %dms. Test will run for 5 seconds.\n", mem->polling_interval_ms);
-
-    time_t start_time = time(NULL);
-    while (g_running) {
-        if (time(NULL) - start_time >= 5) {
-            printf("\n[+] 5 second test duration reached. Stopping...\n");
-            g_running = false;
-            continue;
-        }
-        mem->last_user_heartbeat = time(NULL);
-
-        while (mem->user_read_idx < mem->kernel_write_idx) {
-            __sync_synchronize(); // Barrier before reading kernel data
-
-            const struct TouchFrame* frame = &mem->kernel_frames[mem->user_read_idx % KERNEL_BUFFER_FRAMES];
-            mem->user_command_count = 0;
-
-            // NEW LOGIC: Iterate all slots to compare current and previous state
-            for (int slot_idx = 0; slot_idx < MAX_TOUCH_POINTS; ++slot_idx) {
-                const KernelTouchPoint* current_pt = &frame->touches[slot_idx];
-                const KernelTouchPoint* prev_pt = &prev_touch_state[slot_idx];
-
-                if (current_pt->is_active) {
-                    // This slot is active. It's either a new touch or a move.
-                    // Send a MODIFY command.
-                    UserCommand* cmd = &mem->user_commands[mem->user_command_count++];
-                    cmd->action = ACTION_MODIFY;
-                    cmd->slot = current_pt->slot;
-                    cmd->new_data.tracking_id = current_pt->tracking_id;
-                    cmd->new_data.x = current_pt->x;
-                    cmd->new_data.y = current_pt->y; // The modification is removed for testing
-                    cmd->new_data.pressure = current_pt->pressure;
-
-                } else if (prev_pt->is_active) {
-                    // This slot is NOT active now, but WAS active before.
-                    // This is an explicit "UP" event.
-                    UserCommand* cmd = &mem->user_commands[mem->user_command_count++];
-                    cmd->action = ACTION_UP;
-                    cmd->slot = prev_pt->slot; // Use previous slot info
-                }
-            }
-            
-            // After generating all commands for this frame, update the previous state for the next iteration
-            memcpy(prev_touch_state, frame->touches, sizeof(frame->touches));
-
-            // If we generated any commands, publish them to the kernel
-            if (mem->user_command_count > 0) {
-                // printf("Processing Frame %lu: Sending %d commands (Down/Move/Up).\n", (unsigned long)mem->user_read_idx, mem->user_command_count);
-                __sync_synchronize(); // Barrier before publishing to kernel
-                mem->user_sequence++;
-            }
-
-            mem->user_read_idx++;
-        }
-
-        usleep(1000); // Sleep to prevent busy-waiting when there are no new frames
-    }
-
-    driver->unhook_input_device();
-    printf("[+] Unhooked device.\n");
-}
 
 int main() {
     signal(SIGINT, signal_handler);
@@ -165,8 +76,24 @@ int main() {
         return 1;
     }
 
-    run_touch_modification_test();
+    printf("\n--- Starting Synchronous In-Kernel Modification Test ---\n");
+    if (!driver->hook_input_device(g_device_name.c_str())) {
+        printf("[-] Failed to hook device.\n");
+        return 1;
+    }
 
-    printf("[+] Test finished.\n");
+    printf("[+] Hook active. Test will run for 15 seconds.\n");
+    printf("[+] Please test touch now. Y-coordinate should be shifted down by 200 pixels.\n");
+
+    for (int i = 0; i < 15 && g_running; ++i) {
+        sleep(1);
+        printf(".");
+        fflush(stdout);
+    }
+    printf("\n");
+
+    driver->unhook_input_device();
+    printf("[+] Unhooked device. Test finished.\n");
+
     return 0;
 }
