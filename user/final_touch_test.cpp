@@ -66,8 +66,9 @@ bool find_touchscreen_device() {
 
 // --- Main Test Logic (v3) ---
 void run_touch_modification_test() {
-    printf("--- Running MMAP-based Touch Modification Test (v3 - Explicit UP) ---\n");
-    printf("--- Touches will be shifted down by 200 pixels ---\n");
+    printf("--- Running Simplified MMAP-based Touch Passthrough Test ---\n");
+    printf("--- Touches should be passed through without modification ---\n");
+}
 
     if (!driver->hook_input_device(g_device_name.c_str())) {
         printf("[-] Failed to hook device.\n");
@@ -88,9 +89,15 @@ void run_touch_modification_test() {
     // State tracking for user-space to detect UP events
     KernelTouchPoint prev_touch_state[MAX_TOUCH_POINTS] = {0};
 
-    printf("[+] Hooked and mapped. Polling interval: %dms. Press Ctrl+C to stop.\n", mem->polling_interval_ms);
+    printf("[+] Hooked and mapped. Polling interval: %dms. Test will run for 5 seconds.\n", mem->polling_interval_ms);
 
+    time_t start_time = time(NULL);
     while (g_running) {
+        if (time(NULL) - start_time >= 5) {
+            printf("\n[+] 5 second test duration reached. Stopping...\n");
+            g_running = false;
+            continue;
+        }
         mem->last_user_heartbeat = time(NULL);
 
         while (mem->user_read_idx < mem->kernel_write_idx) {
@@ -112,7 +119,7 @@ void run_touch_modification_test() {
                     cmd->slot = current_pt->slot;
                     cmd->new_data.tracking_id = current_pt->tracking_id;
                     cmd->new_data.x = current_pt->x;
-                    cmd->new_data.y = current_pt->y + 200; // The modification
+                    cmd->new_data.y = current_pt->y; // The modification is removed for testing
                     cmd->new_data.pressure = current_pt->pressure;
 
                 } else if (prev_pt->is_active) {

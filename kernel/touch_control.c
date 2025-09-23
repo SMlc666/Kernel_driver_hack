@@ -75,6 +75,7 @@ static int injection_thread_func(void *data) {
 
 		// --- Command Processing Logic ---
         if (g_shared_mem->user_sequence > g_last_processed_user_seq) {
+            PRINT_DEBUG("[TCTRL] Detected new user sequence %llu (last was %llu). Processing commands.\n", g_shared_mem->user_sequence, g_last_processed_user_seq);
             smp_rmb(); // Read barrier
             process_user_commands();
             g_last_processed_user_seq = g_shared_mem->user_sequence;
@@ -97,18 +98,24 @@ static void process_user_commands(void) {
     int i;
     int count = g_shared_mem->user_command_count;
 
+    PRINT_DEBUG("[TCTRL] process_user_commands called with %d commands.\n", count);
+
     if (count > MAX_USER_COMMANDS) count = MAX_USER_COMMANDS;
 
     for (i = 0; i < count; ++i) {
         struct UserCommand *cmd = &g_shared_mem->user_commands[i];
 
-        if (cmd->slot < 0 || cmd->slot >= MAX_TOUCH_POINTS) continue;
+        if (cmd->slot < 0 || cmd->slot >= MAX_TOUCH_POINTS) {
+            PRINT_DEBUG("[TCTRL]   - Cmd %d: Invalid slot %d. Skipping.\n", i, cmd->slot);
+            continue;
+        }
 
         // Select the hardware slot we want to report events for.
         input_mt_slot(g_hooked_dev, cmd->slot);
 
         switch (cmd->action) {
             case ACTION_MODIFY:
+                PRINT_DEBUG("[TCTRL]   - Cmd %d: ACTION_MODIFY on slot %d (ID: %d, X: %d, Y: %d)\n", i, cmd->slot, cmd->new_data.tracking_id, cmd->new_data.x, cmd->new_data.y);
                 // For a new touch or a moving touch, report all properties.
                 input_report_abs(g_hooked_dev, ABS_MT_TRACKING_ID, cmd->new_data.tracking_id);
                 input_report_abs(g_hooked_dev, ABS_MT_POSITION_X, cmd->new_data.x);
@@ -117,11 +124,13 @@ static void process_user_commands(void) {
                 break;
             
             case ACTION_UP:
+                PRINT_DEBUG("[TCTRL]   - Cmd %d: ACTION_UP on slot %d\n", i, cmd->slot);
                 // For an "up" event, we only need to report the tracking ID as -1.
                 input_report_abs(g_hooked_dev, ABS_MT_TRACKING_ID, -1);
                 break;
 
             default:
+                PRINT_DEBUG("[TCTRL]   - Cmd %d: Unknown action %d. Ignoring.\n", i, cmd->action);
                 // Ignore other actions for now.
                 break;
         }
@@ -129,6 +138,7 @@ static void process_user_commands(void) {
 
     // After processing all commands for this frame, send a SYN_REPORT to finalize.
     input_sync(g_hooked_dev);
+    PRINT_DEBUG("[TCTRL] process_user_commands finished, input_sync called.\n");
 }
 
 
