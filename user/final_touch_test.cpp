@@ -66,70 +66,73 @@ bool find_touchscreen_device() {
 
 // --- Main Test Logic ---
 void run_touch_modification_test() {
-    printf("--- Running MMAP-based Touch Modification Test ---\n");
-    printf("--- Touches will be shifted down by 200 pixels ---\n");
+    printf("--- Running MMAP-based Touch Modification Test (v2) ---
+");
+    printf("--- Touches will be shifted down by 200 pixels ---
+");
 
-    // 1. Hook device
     if (!driver->hook_input_device(g_device_name.c_str())) {
         printf("[-] Failed to hook device.\n");
         return;
     }
 
-    // 2. Map shared memory
     if (!driver->mmap_shared_memory()) {
         printf("[-] Failed to map shared memory.\n");
         driver->unhook_input_device();
         return;
     }
 
-    // 3. Configure shared memory from user side
     struct SharedTouchMemory* mem = driver->shared_mem;
     mem->user_pid = getpid();
-    mem->polling_interval_ms = 1; // Set a 1ms polling rate for faster response
-    mem->user_read_idx = mem->kernel_write_idx; // Sync indices
+    mem->polling_interval_ms = 1;
+    mem->user_read_idx = mem->kernel_write_idx;
 
     printf("[+] Hooked and mapped. Polling interval: %dms. Press Ctrl+C to stop.\n", mem->polling_interval_ms);
 
     while (g_running) {
-        // Update heartbeat regardless of touch activity
         mem->last_user_heartbeat = time(NULL);
 
-        // Process all available frames from the kernel ring buffer
         while (mem->user_read_idx < mem->kernel_write_idx) {
-            __sync_synchronize(); // Memory barrier before reading from kernel
+            __sync_synchronize();
 
             const struct TouchFrame* frame = &mem->kernel_frames[mem->user_read_idx % KERNEL_BUFFER_FRAMES];
 
-            printf("--- Processing Frame (Idx: %lu) ---\n", (unsigned long)mem->user_read_idx);
-            mem->user_command_count = 0; // Clear previous commands
+            // Reset command count for the new set of commands
+            mem->user_command_count = 0;
 
-            for (int i = 0; i < frame->touch_count; ++i) {
-                const KernelTouchPoint* pt = &frame->touches[i];
-                printf("  Kernel Point %d: ID=%d, Active=%u, Pos=(%d, %d)\n", 
-                    i, pt->tracking_id, pt->is_active, pt->x, pt->y);
+            // NEW LOGIC: Iterate through all possible slots, not just active ones.
+            for (int slot_idx = 0; slot_idx < MAX_TOUCH_POINTS; ++slot_idx) {
+                const KernelTouchPoint* pt = &frame->touches[slot_idx];
 
-                // Prepare a command to modify this point
-                UserCommand* cmd = &mem->user_commands[mem->user_command_count++];
-                cmd->action = ACTION_MODIFY;
-                cmd->slot = pt->slot;
-                cmd->new_data.tracking_id = pt->tracking_id;
-                cmd->new_data.x = pt->x;
-                cmd->new_data.y = pt->y + 200; // The modification logic!
-                cmd->new_data.pressure = pt->pressure;
+                // Only generate commands for slots that are currently active.
+                if (pt->is_active) {
+                    // Optional: Print details for debugging
+                    // printf("  Slot %d: Active (ID: %d, Pos: %d,%d)\n", pt->slot, pt->tracking_id, pt->x, pt->y);
+
+                    UserCommand* cmd = &mem->user_commands[mem->user_command_count++];
+                    cmd->action = ACTION_MODIFY;
+                    cmd->slot = pt->slot;
+                    cmd->new_data.tracking_id = pt->tracking_id;
+                    cmd->new_data.x = pt->x;
+                    cmd->new_data.y = pt->y + 200; // The modification logic!
+                    cmd->new_data.pressure = pt->pressure;
+                }
             }
 
-            // Publish commands to kernel for this frame
-            __sync_synchronize(); // Memory barrier before publishing to kernel
+            // If there are any active touches, print a summary for the frame.
+            if (mem->user_command_count > 0) {
+                 printf("Processing Frame %lu: Found %d active touches. Sending commands.\n", (unsigned long)mem->user_read_idx, mem->user_command_count);
+            }
+
+            __sync_synchronize();
             mem->user_sequence++;
 
-            // Mark this frame as read by advancing the read index
             mem->user_read_idx++;
         }
 
-        usleep(1000); // Sleep 1ms to prevent busy-waiting
+        usleep(1000); 
     }
 
-    // Cleanup
     driver->unhook_input_device();
     printf("[+] Unhooked device.\n");
 }

@@ -212,12 +212,16 @@ static void hijacked_input_event_callback(hook_fargs4_t *fargs, void *udata) {
                         // Get the next frame slot in the ring buffer
                         struct TouchFrame* frame = &g_shared_mem->kernel_frames[write_idx % KERNEL_BUFFER_FRAMES];
                         
-                        // Copy the current touch state into the frame
+                        // Directly copy the entire state of all slots.
+                        // This ensures the user-space gets a complete picture, including inactive slots.
                         int active_touches = 0;
                         int i;
+                        memcpy(frame->touches, g_internal_touch_state, sizeof(g_internal_touch_state));
+
+                        // Still calculate the active touch count for user-space convenience.
                         for(i = 0; i < MAX_TOUCH_POINTS; ++i) {
-                            if(g_internal_touch_state[i].is_active) {
-                                frame->touches[active_touches++] = g_internal_touch_state[i];
+                            if (frame->touches[i].is_active) {
+                                active_touches++;
                             }
                         }
                         frame->touch_count = active_touches;
