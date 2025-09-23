@@ -341,7 +341,3 @@ static struct input_dev *input_find_device(const char *name)
 
     return dev;
 }
-y_dev);
-
-    return dev;
-}
