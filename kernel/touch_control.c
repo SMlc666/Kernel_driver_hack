@@ -5,7 +5,8 @@
 #include <linux/kallsyms.h>
 #include <linux/slab.h> // For input_allocate_device
 #include <linux/sched/signal.h> // For is_pid_alive
-#include <linux/spinlock.h> // <<< CHANGE: Added for spinlock
+#include <linux/spinlock.h>
+#include <linux/percpu.h> // For per-cpu variables
 
 #include "version_control.h"
 #include "inline_hook/p_hook.h"
@@ -13,13 +14,17 @@
 #include "touch_control.h"
 
 // --- Globals ---
-static DEFINE_SPINLOCK(g_touch_state_lock); // <<< CHANGE: Added spinlock to protect g_internal_touch_state
+static DEFINE_SPINLOCK(g_touch_state_lock);
 static struct SharedTouchMemory *g_shared_mem = NULL;
 static struct task_struct *g_injection_thread = NULL;
 static uint64_t g_last_processed_user_seq = 0;
 
 static struct input_dev *g_hooked_dev = NULL;
 static void *g_input_event_addr = NULL;
+
+// Use a per-cpu variable to prevent race conditions on SMP systems for the injection flag.
+// This is more robust than a simple global bool.
+static DEFINE_PER_CPU(bool, g_is_injecting);
 
 // Internal state for parsing multi-touch events
 static struct KernelTouchPoint g_internal_touch_state[MAX_TOUCH_POINTS];
@@ -87,7 +92,6 @@ static int injection_thread_func(void *data) {
 }
 
 // --- Core Logic ---
-// <<< CHANGE: Rewritten process_user_commands to remove race condition
 static void process_user_commands(void) {
     int i, slot;
     int count = g_shared_mem->user_command_count;
@@ -96,12 +100,15 @@ static void process_user_commands(void) {
 
     if (count > MAX_USER_COMMANDS) count = MAX_USER_COMMANDS;
 
+    // Set injection flag to prevent re-entrancy into the hook
+    this_cpu_write(g_is_injecting, true);
+    smp_wmb(); // Ensure flag is written before injecting
+
     // 1. Process all user commands for this frame, injecting modified/new points
     for (i = 0; i < count; ++i) {
         struct UserCommand *cmd = &g_shared_mem->user_commands[i];
         slot = cmd->slot;
 
-        // Directly use the slot from the command. No racy lookup needed.
         if (slot >= 0 && slot < MAX_TOUCH_POINTS && (cmd->action == ACTION_MODIFY || cmd->action == ACTION_PASS_THROUGH)) {
             input_mt_slot(g_hooked_dev, slot);
             input_report_abs(g_hooked_dev, ABS_MT_TRACKING_ID, cmd->new_data.tracking_id);
@@ -113,23 +120,36 @@ static void process_user_commands(void) {
     }
 
     // 2. Process touch-ups for points that are no longer in the command list.
-    // This part still reads g_internal_touch_state, so it needs locking.
+    // This part is critical for the deadlock. We must not call input_* functions while holding the lock.
+    // So, we first gather the slots to be released, then release the lock, then inject.
+    int slots_to_release[MAX_TOUCH_POINTS];
+    int release_count = 0;
+    
     spin_lock_irqsave(&g_touch_state_lock, flags);
     for (i = 0; i < MAX_TOUCH_POINTS; i++) {
         if (g_internal_touch_state[i].is_active && !active_slots_in_command[i]) {
-            input_mt_slot(g_hooked_dev, i);
-            input_report_abs(g_hooked_dev, ABS_MT_TRACKING_ID, -1); // Report touch up
+            if (release_count < MAX_TOUCH_POINTS) {
+                slots_to_release[release_count++] = i;
+            }
         }
     }
     spin_unlock_irqrestore(&g_touch_state_lock, flags);
 
+    // Now inject the touch-up events without holding the lock.
+    for (i = 0; i < release_count; i++) {
+        input_mt_slot(g_hooked_dev, slots_to_release[i]);
+        input_report_abs(g_hooked_dev, ABS_MT_TRACKING_ID, -1); // Report touch up
+    }
 
     // 3. Finalize the frame
     input_sync(g_hooked_dev);
+
+    // Clear injection flag
+    smp_wmb(); // Ensure injections are finished before clearing
+    this_cpu_write(g_is_injecting, false);
 }
 
 
-// <<< CHANGE: Added spinlock
 static void reset_internal_state(void) {
     int i;
     unsigned long flags;
@@ -143,7 +163,6 @@ static void reset_internal_state(void) {
     spin_unlock_irqrestore(&g_touch_state_lock, flags);
 }
 
-// <<< CHANGE: Added spinlock
 static void hijacked_input_event_callback(hook_fargs4_t *fargs, void *udata) {
     struct input_dev *dev = (struct input_dev *)fargs->arg0;
     unsigned int type = (unsigned int)fargs->arg1;
@@ -151,9 +170,15 @@ static void hijacked_input_event_callback(hook_fargs4_t *fargs, void *udata) {
     int value = (int)fargs->arg3;
     unsigned long flags;
 
-    // Always intercept events from the hooked device
+    // If this event is from our own injection thread, let it pass through without interception.
+    if (this_cpu_read(g_is_injecting)) {
+        fargs->skip_origin = 0;
+        return;
+    }
+
+    // Intercept events only from the hooked device
     if (dev == g_hooked_dev) {
-        fargs->skip_origin = 1;
+        fargs->skip_origin = 1; // Block original event
 
         // Lock before touching the shared internal state
         spin_lock_irqsave(&g_touch_state_lock, flags);
