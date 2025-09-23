@@ -130,9 +130,7 @@ static void process_user_commands(void) {
     // 3. Finalize the frame
     input_sync(g_hooked_dev);
 
-    // Clear injection flag
-    smp_wmb(); // Ensure injections are finished before clearing
-    this_cpu_write(g_is_injecting, false);
+    
 }
 
 
