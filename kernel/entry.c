@@ -53,8 +53,9 @@ static int hijacked_proc_version_mmap(struct file *filp, struct vm_area_struct *
 {
     unsigned long size = vma->vm_end - vma->vm_start;
     unsigned long pfn;
+	size_t shared_mem_size = PAGE_ALIGN(sizeof(struct SharedTouchMemory));
 
-    PRINT_DEBUG("[+] Hijacked mmap called by PID %d\n", current->pid);
+    PRINT_DEBUG("[+] Hijacked mmap called by PID %d for size %lu\n", current->pid, size);
 
     if (current->tgid != client_pid || client_pid == 0) {
         if (original_proc_version_mmap) {
@@ -63,7 +64,10 @@ static int hijacked_proc_version_mmap(struct file *filp, struct vm_area_struct *
         return -ENODEV;
     }
 
-    if (size > PAGE_SIZE) return -EINVAL;
+    if (size > shared_mem_size) {
+		PRINT_DEBUG("[-] mmap request size (%lu) is larger than allocated size (%zu)\n", size, shared_mem_size);
+		return -EINVAL;
+	}
 
     pfn = vmalloc_to_pfn(shared_mem);
     if (remap_pfn_range(vma, vma->vm_start, pfn, size, vma->vm_page_prot)) {
@@ -78,6 +82,7 @@ static int hijacked_proc_version_mmap(struct file *filp, struct vm_area_struct *
 
 
 // --- End of Hijack Logic ---
+
 
 int dispatch_open(struct inode *node, struct file *file)
 {
@@ -273,18 +278,23 @@ int __init driver_entry(void)
     struct inode *target_inode;
     void *dispatch_ioctl_ptr = &dispatch_ioctl;
     void *hijacked_mmap_ptr = &hijacked_proc_version_mmap;
+	size_t shared_mem_size = sizeof(struct SharedTouchMemory);
+	unsigned long addr;
 
 	PRINT_DEBUG("[+] driver_entry");
 
     // Allocate shared memory for mmap
-    shared_mem = vmalloc(PAGE_SIZE);
+    shared_mem = vmalloc(shared_mem_size);
     if (!shared_mem) {
         PRINT_DEBUG("[-] Failed to vmalloc shared memory\n");
         return -ENOMEM;
     }
-    SetPageReserved(vmalloc_to_page(shared_mem));
-    memset(shared_mem, 0, PAGE_SIZE);
-    PRINT_DEBUG("[+] Shared memory allocated at %p\n", shared_mem);
+	for (addr = (unsigned long)shared_mem; addr < (unsigned long)shared_mem + shared_mem_size; addr += PAGE_SIZE) {
+        SetPageReserved(vmalloc_to_page((void *)addr));
+    }
+    memset(shared_mem, 0, shared_mem_size);
+    PRINT_DEBUG("[+] Shared memory allocated at %p (size: %zu)\n", shared_mem, shared_mem_size);
+
 
 
 
@@ -401,7 +411,11 @@ static void _driver_cleanup(void)
     
     // Free shared memory
     if (shared_mem) {
-        ClearPageReserved(vmalloc_to_page(shared_mem));
+		unsigned long addr;
+		size_t shared_mem_size = sizeof(struct SharedTouchMemory);
+		for (addr = (unsigned long)shared_mem; addr < (unsigned long)shared_mem + shared_mem_size; addr += PAGE_SIZE) {
+	        ClearPageReserved(vmalloc_to_page((void *)addr));
+	    }
         vfree(shared_mem);
         shared_mem = NULL;
         PRINT_DEBUG("[+] Shared memory freed.\n");

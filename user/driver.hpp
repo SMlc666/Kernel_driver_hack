@@ -154,7 +154,10 @@ public:
 		if (fd < 0) return false;
 		if (shared_mem) return true; // Already mapped
 
-		void* map_ptr = mmap(NULL, getpagesize(), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+		long page_size = getpagesize();
+		size_t map_size = (sizeof(struct SharedTouchMemory) + page_size - 1) & ~(page_size - 1);
+
+		void* map_ptr = mmap(NULL, map_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 		if (map_ptr == MAP_FAILED) {
 			shared_mem = nullptr;
 			perror("mmap failed");
@@ -166,7 +169,9 @@ public:
 
 	void unmap_shared_memory() {
 		if (shared_mem) {
-			munmap(shared_mem, getpagesize());
+			long page_size = getpagesize();
+			size_t map_size = (sizeof(struct SharedTouchMemory) + page_size - 1) & ~(page_size - 1);
+			munmap(shared_mem, map_size);
 			shared_mem = nullptr;
 		}
 	}
