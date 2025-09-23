@@ -8,13 +8,13 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <linux/input.h>
+#include <time.h>
 
 #include "driver.hpp"
 
 // --- Globals ---
 static bool g_running = true;
 static std::string g_device_name;
-static uint64_t g_last_kernel_seq = 0;
 
 // --- Signal Handler ---
 void signal_handler(int signum) {
@@ -23,7 +23,6 @@ void signal_handler(int signum) {
 }
 
 // --- Helper to find touchscreen ---
-// (This is the same helper from touch_comprehensive_test.cpp)
 #ifndef EVIOCGNAME
 #define EVIOCGNAME(len) _IOC(_IOC_READ, 'E', 0x06, len)
 #endif
@@ -86,25 +85,26 @@ void run_touch_modification_test() {
     // 3. Configure shared memory from user side
     struct SharedTouchMemory* mem = driver->shared_mem;
     mem->user_pid = getpid();
-    mem->polling_interval_ms = 5; // Set a 5ms polling rate
-    g_last_kernel_seq = mem->kernel_sequence;
+    mem->polling_interval_ms = 1; // Set a 1ms polling rate for faster response
+    mem->user_read_idx = mem->kernel_write_idx; // Sync indices
 
     printf("[+] Hooked and mapped. Polling interval: %dms. Press Ctrl+C to stop.\n", mem->polling_interval_ms);
 
     while (g_running) {
-        // Update heartbeat
+        // Update heartbeat regardless of touch activity
         mem->last_user_heartbeat = time(NULL);
 
-        // Check for new data from kernel
-        if (mem->kernel_sequence > g_last_kernel_seq) {
-            __sync_synchronize(); // Memory barrier
-            g_last_kernel_seq = mem->kernel_sequence;
+        // Process all available frames from the kernel ring buffer
+        while (mem->user_read_idx < mem->kernel_write_idx) {
+            __sync_synchronize(); // Memory barrier before reading from kernel
 
-            printf("--- New Frame (Seq: %lu) ---\n", g_last_kernel_seq);
+            const struct TouchFrame* frame = &mem->kernel_frames[mem->user_read_idx % KERNEL_BUFFER_FRAMES];
+
+            printf("--- Processing Frame (Idx: %lu) ---\n", (unsigned long)mem->user_read_idx);
             mem->user_command_count = 0; // Clear previous commands
 
-            for (int i = 0; i < mem->kernel_touch_count; ++i) {
-                KernelTouchPoint* pt = &mem->kernel_touches[i];
+            for (int i = 0; i < frame->touch_count; ++i) {
+                const KernelTouchPoint* pt = &frame->touches[i];
                 printf("  Kernel Point %d: ID=%d, Active=%u, Pos=(%d, %d)\n", 
                     i, pt->tracking_id, pt->is_active, pt->x, pt->y);
 
@@ -118,9 +118,12 @@ void run_touch_modification_test() {
                 cmd->new_data.pressure = pt->pressure;
             }
 
-            // Publish commands to kernel
-            __sync_synchronize(); // Memory barrier
+            // Publish commands to kernel for this frame
+            __sync_synchronize(); // Memory barrier before publishing to kernel
             mem->user_sequence++;
+
+            // Mark this frame as read by advancing the read index
+            mem->user_read_idx++;
         }
 
         usleep(1000); // Sleep 1ms to prevent busy-waiting

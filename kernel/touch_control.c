@@ -207,17 +207,33 @@ static void hijacked_input_event_callback(hook_fargs4_t *fargs, void *udata) {
                 break;
             case EV_SYN:
                 if (code == SYN_REPORT) {
-                    // Frame finished, publish state to shared memory
-                    int active_touches = 0;
-                    int i;
-                    for(i = 0; i < MAX_TOUCH_POINTS; ++i) {
-                        if(g_internal_touch_state[i].is_active) {
-                            g_shared_mem->kernel_touches[active_touches++] = g_internal_touch_state[i];
+                    uint64_t write_idx = g_shared_mem->kernel_write_idx;
+                    uint64_t read_idx = g_shared_mem->user_read_idx;
+
+                    // Check if buffer is full
+                    if (write_idx - read_idx >= KERNEL_BUFFER_FRAMES) {
+                        // Buffer is full, user-space is not keeping up. Drop the frame.
+                        PRINT_DEBUG("[TCTRL] Kernel->User buffer overflow! Dropping frame.\n");
+                    } else {
+                        // Get the next frame slot in the ring buffer
+                        struct TouchFrame* frame = &g_shared_mem->kernel_frames[write_idx % KERNEL_BUFFER_FRAMES];
+                        
+                        // Copy the current touch state into the frame
+                        int active_touches = 0;
+                        int i;
+                        for(i = 0; i < MAX_TOUCH_POINTS; ++i) {
+                            if(g_internal_touch_state[i].is_active) {
+                                frame->touches[active_touches++] = g_internal_touch_state[i];
+                            }
                         }
+                        frame->touch_count = active_touches;
+
+                        // Ensure all memory writes are complete before updating the index
+                        smp_wmb();
+
+                        // Publish the new frame by incrementing the write index
+                        g_shared_mem->kernel_write_idx++;
                     }
-                    g_shared_mem->kernel_touch_count = active_touches;
-                    smp_wmb(); // Write barrier
-                    g_shared_mem->kernel_sequence++;
                 }
                 break;
         }
@@ -234,6 +250,9 @@ static void hijacked_input_event_callback(hook_fargs4_t *fargs, void *udata) {
 int touch_control_init(void *shared_mem_ptr) {
     g_shared_mem = (struct SharedTouchMemory *)shared_mem_ptr;
     reset_internal_state();
+    // Initialize ring buffer indices
+    g_shared_mem->kernel_write_idx = 0;
+    g_shared_mem->user_read_idx = 0;
     PRINT_DEBUG("[TCTRL] Touch control initialized.\n");
     return 0;
 }
