@@ -6,7 +6,6 @@
 #include <linux/slab.h> 
 #include <linux/sched/signal.h> 
 #include <linux/spinlock.h>
-#include <linux/percpu.h>
 
 #include "version_control.h"
 #include "inline_hook/p_hook.h"
@@ -17,12 +16,11 @@
 static DEFINE_SPINLOCK(g_touch_state_lock);
 static struct SharedTouchMemory *g_shared_mem = NULL;
 static struct task_struct *g_injection_thread = NULL;
+static pid_t g_injection_thread_pid = 0;
 static uint64_t g_last_processed_user_seq = 0;
 
 static struct input_dev *g_hooked_dev = NULL;
 static void *g_input_event_addr = NULL;
-
-static DEFINE_PER_CPU(bool, g_is_injecting);
 
 // Internal state for parsing raw physical touch events
 static struct KernelTouchPoint g_internal_touch_state[MAX_TOUCH_POINTS];
@@ -60,8 +58,8 @@ static int injection_thread_func(void *data) {
     uint32_t sleep_interval_ms;
 	unsigned long last_watchdog_check = jiffies;
 
-
-    PRINT_DEBUG("[TCTRL] Injection thread started.\n");
+    g_injection_thread_pid = current->pid;
+    PRINT_DEBUG("[TCTRL] Injection thread started with PID: %d.\n", g_injection_thread_pid);
 
     while (!kthread_should_stop()) {
         // --- Watchdog Logic ---
@@ -101,9 +99,7 @@ static void process_user_commands(void) {
 
     if (count > MAX_USER_COMMANDS) count = MAX_USER_COMMANDS;
 
-    // Set injection flag to prevent re-entrancy into the hook
-    this_cpu_write(g_is_injecting, true);
-    smp_wmb(); // Ensure flag is written before injecting
+    
 
     // 1. Process "down" and "move" events from user commands
     for (i = 0; i < count; ++i) {
@@ -166,7 +162,7 @@ static void hijacked_input_event_callback(hook_fargs4_t *fargs, void *udata) {
     unsigned long flags;
 
     // If this event is from our own injection thread, let it pass through without interception.
-    if (this_cpu_read(g_is_injecting)) {
+    if (g_injection_thread_pid != 0 && current->pid == g_injection_thread_pid) {
         fargs->skip_origin = 0;
         return;
     }
@@ -344,6 +340,10 @@ static struct input_dev *input_find_device(const char *name)
     rcu_read_unlock();
 
     input_unregister_device(dummy_dev);
+
+    return dev;
+}
+y_dev);
 
     return dev;
 }
