@@ -1,11 +1,14 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <string>
+#include <thread>
 #include <csignal>
 #include <iostream>
+#include <vector>
 #include <dirent.h>
 #include <fcntl.h>
 #include <linux/input.h>
+#include <time.h>
 
 #include "driver.hpp"
 
@@ -15,11 +18,11 @@ static std::string g_device_name;
 
 // --- Signal Handler ---
 void signal_handler(int signum) {
-    printf("\nCaught signal %d. Shutting down early...\n", signum);
+    printf("\nCaught signal %d. Shutting down...\n", signum);
     g_running = false;
 }
 
-// --- Helper to find touchscreen (unchanged) ---
+// --- Helper to find touchscreen ---
 #ifndef EVIOCGNAME
 #define EVIOCGNAME(len) _IOC(_IOC_READ, 'E', 0x06, len)
 #endif
@@ -61,6 +64,81 @@ bool find_touchscreen_device() {
     return false;
 }
 
+// --- Main Test Logic (Restored for Command Queue Test) ---
+void run_command_queue_test() {
+    printf("--- Running Command Queue Test (Synchronous Injection) ---\n");
+    printf("--- Touches should be passed through without modification ---\n");
+
+    if (!driver->hook_input_device(g_device_name.c_str())) {
+        printf("[-] Failed to hook device.\n");
+        return;
+    }
+
+    if (!driver->mmap_shared_memory()) {
+        printf("[-] Failed to map shared memory.\n");
+        driver->unhook_input_device();
+        return;
+    }
+
+    struct SharedTouchMemory* mem = driver->shared_mem;
+    mem->user_pid = getpid();
+    mem->polling_interval_ms = 8; // Not used by kernel, but set it anyway
+    mem->user_read_idx = mem->kernel_write_idx;
+
+    KernelTouchPoint prev_touch_state[MAX_TOUCH_POINTS] = {0};
+
+    printf("[+] Hooked and mapped. Test will run for 15 seconds.\n");
+
+    time_t start_time = time(NULL);
+    while (g_running) {
+        if (time(NULL) - start_time >= 15) {
+            printf("\n[+] 15 second test duration reached. Stopping...\n");
+            g_running = false;
+            continue;
+        }
+
+        while (mem->user_read_idx < mem->kernel_write_idx) {
+            __sync_synchronize(); // Barrier before reading kernel data
+
+            const struct TouchFrame* frame = &mem->kernel_frames[mem->user_read_idx % KERNEL_BUFFER_FRAMES];
+            mem->user_command_count = 0;
+
+            for (int slot_idx = 0; slot_idx < MAX_TOUCH_POINTS; ++slot_idx) {
+                const KernelTouchPoint* current_pt = &frame->touches[slot_idx];
+                const KernelTouchPoint* prev_pt = &prev_touch_state[slot_idx];
+
+                if (current_pt->is_active) {
+                    UserCommand* cmd = &mem->user_commands[mem->user_command_count++];
+                    cmd->action = ACTION_MODIFY;
+                    cmd->slot = current_pt->slot;
+                    cmd->new_data.tracking_id = current_pt->tracking_id;
+                    cmd->new_data.x = current_pt->x;
+                    cmd->new_data.y = current_pt->y; // Passthrough test
+                    cmd->new_data.pressure = current_pt->pressure;
+
+                } else if (prev_pt->is_active) {
+                    UserCommand* cmd = &mem->user_commands[mem->user_command_count++];
+                    cmd->action = ACTION_UP;
+                    cmd->slot = prev_pt->slot;
+                }
+            }
+            
+            memcpy(prev_touch_state, frame->touches, sizeof(frame->touches));
+
+            if (mem->user_command_count > 0) {
+                __sync_synchronize(); // Barrier before publishing to kernel
+                mem->user_sequence++;
+            }
+
+            mem->user_read_idx++;
+        }
+
+        usleep(8000); // Sleep for 8ms
+    }
+
+    driver->unhook_input_device();
+    printf("[+] Unhooked device.\n");
+}
 
 int main() {
     signal(SIGINT, signal_handler);
@@ -76,24 +154,8 @@ int main() {
         return 1;
     }
 
-    printf("\n--- Starting Synchronous In-Kernel Modification Test ---\n");
-    if (!driver->hook_input_device(g_device_name.c_str())) {
-        printf("[-] Failed to hook device.\n");
-        return 1;
-    }
+    run_command_queue_test();
 
-    printf("[+] Hook active. Test will run for 15 seconds.\n");
-    printf("[+] Please test touch now. Y-coordinate should be shifted down by 200 pixels.\n");
-
-    for (int i = 0; i < 15 && g_running; ++i) {
-        sleep(1);
-        printf(".");
-        fflush(stdout);
-    }
-    printf("\n");
-
-    driver->unhook_input_device();
-    printf("[+] Unhooked device. Test finished.\n");
-
+    printf("[+] Test finished.\n");
     return 0;
 }

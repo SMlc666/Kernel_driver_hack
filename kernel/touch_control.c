@@ -3,8 +3,8 @@
 #include <linux/input.h>
 #include <linux/input/mt.h>
 #include <linux/kallsyms.h>
-#include <linux/slab.h> 
-#include <linux/sched/signal.h> 
+#include <linux/slab.h>
+#include <linux/sched/signal.h>
 #include <linux/spinlock.h>
 
 #include "version_control.h"
@@ -13,83 +13,190 @@
 #include "touch_control.h"
 
 // --- Globals ---
-// Most globals are no longer needed for the synchronous test
+static DEFINE_SPINLOCK(g_touch_state_lock);
+static struct SharedTouchMemory *g_shared_mem = NULL;
+static uint64_t g_last_processed_user_seq = 0;
+
 static struct input_dev *g_hooked_dev = NULL;
 static void *g_input_event_addr = NULL;
 
+// Internal state for parsing raw physical touch events
+static struct KernelTouchPoint g_internal_touch_state[MAX_TOUCH_POINTS];
+static int g_current_slot = 0;
 
 // --- Forward Declarations ---
+static void process_user_commands(void);
 static void hijacked_input_event_callback(hook_fargs4_t *fargs, void *udata);
 static struct input_dev *input_find_device(const char *name);
 
+// --- KERNEL THREAD REMOVED FOR THIS TEST ---
 
-// --- Core Logic (New Synchronous Version) ---
+// --- Core Logic ---
+static void process_user_commands(void) {
+    int i;
+    // This function is now called synchronously from the hook.
+    // We check the sequence number to see if user-space has provided new commands.
+    if (g_shared_mem->user_sequence <= g_last_processed_user_seq) {
+        return; // No new commands to process.
+    }
+    
+    smp_rmb(); // Read barrier before accessing command data
+
+    int count = g_shared_mem->user_command_count;
+    PRINT_DEBUG("[TCTRL_SYNC_INJECT] Processing %d commands for sequence %llu.\n", count, g_shared_mem->user_sequence);
+
+    if (count > MAX_USER_COMMANDS) count = MAX_USER_COMMANDS;
+
+    for (i = 0; i < count; ++i) {
+        struct UserCommand *cmd = &g_shared_mem->user_commands[i];
+
+        if (cmd->slot < 0 || cmd->slot >= MAX_TOUCH_POINTS) continue;
+
+        input_mt_slot(g_hooked_dev, cmd->slot);
+
+        switch (cmd->action) {
+            case ACTION_MODIFY:
+                input_report_abs(g_hooked_dev, ABS_MT_TRACKING_ID, cmd->new_data.tracking_id);
+                input_report_abs(g_hooked_dev, ABS_MT_POSITION_X, cmd->new_data.x);
+                input_report_abs(g_hooked_dev, ABS_MT_POSITION_Y, cmd->new_data.y);
+                input_report_abs(g_hooked_dev, ABS_MT_PRESSURE, cmd->new_data.pressure);
+                break;
+            
+            case ACTION_UP:
+                input_report_abs(g_hooked_dev, ABS_MT_TRACKING_ID, -1);
+                break;
+
+            default:
+                break;
+        }
+    }
+
+    input_sync(g_hooked_dev);
+    g_last_processed_user_seq = g_shared_mem->user_sequence; // Mark commands as processed
+    PRINT_DEBUG("[TCTRL_SYNC_INJECT] Finished processing, input_sync called.\n");
+}
+
+
+static void reset_internal_state(void) {
+    int i;
+    unsigned long flags;
+    spin_lock_irqsave(&g_touch_state_lock, flags);
+    for(i = 0; i < MAX_TOUCH_POINTS; ++i) {
+        g_internal_touch_state[i].is_active = 0;
+        g_internal_touch_state[i].tracking_id = -1;
+        g_internal_touch_state[i].slot = i;
+    }
+    g_current_slot = 0;
+    spin_unlock_irqrestore(&g_touch_state_lock, flags);
+}
+
 static void hijacked_input_event_callback(hook_fargs4_t *fargs, void *udata) {
     struct input_dev *dev = (struct input_dev *)fargs->arg0;
     unsigned int type = (unsigned int)fargs->arg1;
     unsigned int code = (unsigned int)fargs->arg2;
-    // The original value is in fargs->arg3. We access it directly.
+    int value = (int)fargs->arg3;
+    unsigned long flags;
 
-    // By default, we let the event pass through.
-    fargs->skip_origin = 0;
-
-    // We only apply our logic to the specific device we hooked.
     if (dev == g_hooked_dev) {
-        
-        // Check if this is an absolute position event for the Y-axis.
-        if (type == EV_ABS && code == ABS_MT_POSITION_Y) {
-            
-            // Directly modify the event's value argument.
-            // The original input_event function will receive this modified value.
-            fargs->arg3 = fargs->arg3 + 200;
-            PRINT_DEBUG("[TCTRL_SYNC] Modified Y-pos from %d to %d\n", (int)fargs->arg3 - 200, (int)fargs->arg3);
+        // ALWAYS block the original event. We will replace it with our own injected event.
+        fargs->skip_origin = 1;
+
+        spin_lock_irqsave(&g_touch_state_lock, flags);
+
+        // Step 1: Parse the physical touch event and update our internal state.
+        switch(type) {
+            case EV_ABS:
+                switch(code) {
+                    case ABS_MT_SLOT:
+                        g_current_slot = value;
+                        if (g_current_slot >= MAX_TOUCH_POINTS) g_current_slot = 0;
+                        break;
+                    case ABS_MT_TRACKING_ID:
+                        if (value < 0) { g_internal_touch_state[g_current_slot].is_active = 0; } 
+                        else { 
+                            g_internal_touch_state[g_current_slot].is_active = 1;
+                            g_internal_touch_state[g_current_slot].tracking_id = value;
+                        }
+                        break;
+                    case ABS_MT_POSITION_X:
+                        g_internal_touch_state[g_current_slot].x = value;
+                        break;
+                    case ABS_MT_POSITION_Y:
+                        g_internal_touch_state[g_current_slot].y = value;
+                        break;
+                    case ABS_MT_PRESSURE:
+                        g_internal_touch_state[g_current_slot].pressure = value;
+                        break;
+                }
+                break;
+            case EV_SYN:
+                if (code == SYN_REPORT) {
+                    // A full physical touch frame has been received.
+                    
+                    // Step 2: Buffer this physical state for the user-space app to read.
+                    uint64_t write_idx = g_shared_mem->kernel_write_idx;
+                    if (write_idx - g_shared_mem->user_read_idx < KERNEL_BUFFER_FRAMES) {
+                        struct TouchFrame* frame = &g_shared_mem->kernel_frames[write_idx % KERNEL_BUFFER_FRAMES];
+                        memcpy(frame->touches, g_internal_touch_state, sizeof(g_internal_touch_state));
+                        smp_wmb();
+                        g_shared_mem->kernel_write_idx++;
+                    }
+
+                    // Step 3: Immediately process commands that user-space prepared from the *previous* frame.
+                    process_user_commands();
+                }
+                break;
         }
+        
+        spin_unlock_irqrestore(&g_touch_state_lock, flags);
+        return;
     }
 
-    // The hook function finishes, and the original input_event continues with our potentially modified arguments.
+    // Let events from other devices pass through.
+    fargs->skip_origin = 0;
 }
-
 
 // --- Public API ---
 int touch_control_init(void *shared_mem_ptr) {
-    // Not much to do here in the simplified version
-    PRINT_DEBUG("[TCTRL_SYNC] Touch control initialized (synchronous mode).\n");
+    g_shared_mem = (struct SharedTouchMemory *)shared_mem_ptr;
+    reset_internal_state();
+    g_shared_mem->kernel_write_idx = 0;
+    g_shared_mem->user_read_idx = 0;
+    PRINT_DEBUG("[TCTRL] Touch control initialized (Sync-Inject Mode).\n");
     return 0;
 }
 
 void touch_control_exit(void) {
     touch_control_stop_hijack();
-    PRINT_DEBUG("[TCTRL_SYNC] Touch control exited (synchronous mode).\n");
+    g_shared_mem = NULL;
+    PRINT_DEBUG("[TCTRL] Touch control exited.\n");
 }
 
 int touch_control_start_hijack(const char *device_name) {
-    // Find device by name
     g_hooked_dev = input_find_device(device_name);
     if (!g_hooked_dev) {
         PRINT_DEBUG("[-] Device '%s' not found.\n", device_name);
         return -1;
     }
 
-    // Hook input_event
     g_input_event_addr = (void *)kallsyms_lookup_name("input_event");
     if (!g_input_event_addr) {
         PRINT_DEBUG("[-] Failed to find address of input_event().\n");
         return -1;
     }
-
-    // We now use our new synchronous callback
     if (hook_wrap(g_input_event_addr, 4, hijacked_input_event_callback, NULL, NULL) != HOOK_NO_ERR) {
         PRINT_DEBUG("[-] Failed to wrap input_event().\n");
         return -1;
     }
 
-    // The kernel thread is no longer needed.
-    PRINT_DEBUG("[TCTRL_SYNC] Hijack started for device '%s' in synchronous mode.\n", device_name);
+    // Kernel thread is no longer used in this mode.
+    g_last_processed_user_seq = g_shared_mem->user_sequence;
+
+    PRINT_DEBUG("[TCTRL] Hijack started for device '%s' in Sync-Inject mode.\n", device_name);
     return 0;
 }
 
 void touch_control_stop_hijack(void) {
-    // The injection thread is no longer running, so no need to stop it.
     if (g_input_event_addr) {
         hook_unwrap(g_input_event_addr, hijacked_input_event_callback, NULL);
         g_input_event_addr = NULL;
@@ -98,7 +205,8 @@ void touch_control_stop_hijack(void) {
         input_put_device(g_hooked_dev);
         g_hooked_dev = NULL;
     }
-    PRINT_DEBUG("[TCTRL_SYNC] Hijack stopped.\n");
+    reset_internal_state();
+    PRINT_DEBUG("[TCTRL] Hijack stopped.\n");
 }
 
 // Helper to find input device by name (unchanged)
