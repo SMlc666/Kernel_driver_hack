@@ -5,6 +5,7 @@
 #include <linux/sched/signal.h>
 #include <linux/init_task.h>
 #include "../version_control.h"
+#include "../kallsyms_finder.h"
 
 void *hook_mem_buf = NULL;
 
