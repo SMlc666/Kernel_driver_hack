@@ -12,6 +12,9 @@
 #include "kallsyms_finder.h"
 #include "version_control.h"
 
+// Use kernel's standard symbols for text section
+extern char _stext[], _etext[];
+
 // Data structures to hold the found offsets and info
 struct kallsyms_info {
     unsigned long addresses_off;
@@ -221,25 +224,17 @@ static const char *get_symbol_name_and_type(struct kallsyms_info *info, unsigned
 
 unsigned long kallsyms_lookup_name_by_scan(const char *name) {
     unsigned long start_addr, end_addr;
-    struct mm_struct *mm = NULL;
     struct kallsyms_info info;
     unsigned long i;
     unsigned long name_offset = 0;
     char name_buf[128]; // KSYM_NAME_LEN
 
-    if (init_task.mm) mm = init_task.mm;
-    else if (init_task.active_mm) mm = init_task.active_mm;
+    start_addr = (unsigned long)_stext;
+    end_addr = (unsigned long)_etext;
 
-    if (mm && mm->start_code && mm->end_code) {
-        start_addr = mm->start_code;
-        end_addr = mm->end_code;
-    } else {
-        PRINT_DEBUG("[kallsyms_finder] Could not get kernel text range. Aborting scan.\n");
-        return 0;
-    }
-
-    PRINT_DEBUG("[kallsyms_finder] Scanning kernel text from 0x%lx to 0x%lx\n", start_addr, end_addr);
+    PRINT_DEBUG("[kallsyms_finder] Scanning kernel text from 0x%lx (_stext) to 0x%lx (_etext)\n", start_addr, end_addr);
     memset(&info, 0, sizeof(info));
+
 
     info.token_table_off = find_kallsyms_token_table(start_addr, end_addr);
     if (!info.token_table_off) return 0;
