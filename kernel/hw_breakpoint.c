@@ -92,8 +92,8 @@ static void record_hit_details(struct HWBP_HANDLE_INFO *info, struct pt_regs *re
     hit_item.regs_info.orig_x0 = regs->orig_x0;
     hit_item.regs_info.syscallno = regs->syscallno;
 
-    // Walk the stack
-    hit_item.stack_trace_size = walk_user_stack(regs, hit_item.stack_trace, MAX_STACK_FRAMES);
+    // Walk the stack (DISABLED: Unsafe from interrupt context)
+    hit_item.stack_trace_size = 0;
 
     if (info->hit_item_arr) {
 				if(cvector_length(info->hit_item_arr) < 1024) { // Limit buffered hits
