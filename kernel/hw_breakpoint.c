@@ -1,4 +1,4 @@
-#include <linux/mutex.h>
+#include <linux/spinlock.h>
 #include <linux/pid.h>
 #include <linux/sched/signal.h>
 #include <linux/slab.h> //kmalloc与kfree
@@ -13,7 +13,7 @@
 #include "process.h"
 
 // --- Globals ---
-static struct mutex g_hwbp_handle_info_mutex;
+static spinlock_t g_hwbp_handle_info_lock;
 static cvector g_hwbp_handle_info_arr = NULL;
 static atomic64_t g_hook_pc;
 
@@ -96,9 +96,9 @@ static void record_hit_details(struct HWBP_HANDLE_INFO *info, struct pt_regs *re
     hit_item.stack_trace_size = walk_user_stack(regs, hit_item.stack_trace, MAX_STACK_FRAMES);
 
     if (info->hit_item_arr) {
-			if(cvector_length(info->hit_item_arr) < 1024) { // Limit buffered hits
-				cvector_pushback(info->hit_item_arr, &hit_item);
-			}
+				if(cvector_length(info->hit_item_arr) < 1024) { // Limit buffered hits
+					cvector_pushback(info->hit_item_arr, &hit_item);
+				}
     }
 }
 
@@ -138,6 +138,7 @@ static bool arm64_recovery_bp_to_original(struct perf_event *bp, struct perf_eve
 static void hwbp_handler(struct perf_event *bp, struct perf_sample_data *data, struct pt_regs *regs) {
 	citerator iter;
 	uint64_t hook_pc;
+	unsigned long flags;
 
 	hook_pc = atomic64_read(&g_hook_pc);
 	if(hook_pc) {
@@ -145,7 +146,7 @@ static void hwbp_handler(struct perf_event *bp, struct perf_sample_data *data, s
 		return;
 	}
 
-	mutex_lock(&g_hwbp_handle_info_mutex);
+	spin_lock_irqsave(&g_hwbp_handle_info_lock, flags);
 	for (iter = cvector_begin(g_hwbp_handle_info_arr); iter != cvector_end(g_hwbp_handle_info_arr); iter = cvector_next(g_hwbp_handle_info_arr, iter)) {
 		struct HWBP_HANDLE_INFO * hwbp_handle_info = (struct HWBP_HANDLE_INFO *)iter;
 		if (hwbp_handle_info->sample_hbp != bp) {
@@ -175,7 +176,7 @@ static void hwbp_handler(struct perf_event *bp, struct perf_sample_data *data, s
 		toggle_bp_registers_directly(&hwbp_handle_info->original_attr, hwbp_handle_info->is_32bit_task, 0);
 #endif
 	}
-	mutex_unlock(&g_hwbp_handle_info_mutex);
+	spin_unlock_irqrestore(&g_hwbp_handle_info_lock, flags);
 }
 
 // --- Public API Implementation ---
@@ -183,7 +184,7 @@ static void hwbp_handler(struct perf_event *bp, struct perf_sample_data *data, s
 int khack_hw_breakpoint_init(void) {
     int ret = 0;
     atomic64_set(&g_hook_pc, 0);
-    mutex_init(&g_hwbp_handle_info_mutex);
+    spin_lock_init(&g_hwbp_handle_info_lock);
     g_hwbp_handle_info_arr = cvector_create(sizeof(struct HWBP_HANDLE_INFO));
     if (!g_hwbp_handle_info_arr) {
         return -ENOMEM;
@@ -195,7 +196,7 @@ int khack_hw_breakpoint_init(void) {
     }
 
 #ifdef CONFIG_ANTI_PTRACE_DETECTION_MODE
-    ret = anti_ptrace_init(&g_hwbp_handle_info_arr, &g_hwbp_handle_info_mutex);
+    ret = anti_ptrace_init(&g_hwbp_handle_info_arr, &g_hwbp_handle_info_lock);
     if (ret != 0) {
         PRINT_DEBUG("[-] Failed to init anti ptrace detection\n");
         // Not a fatal error, we can continue without it
@@ -211,7 +212,6 @@ void khack_hw_breakpoint_exit(void) {
     anti_ptrace_exit();
 #endif
     clean_all_hwbp();
-    mutex_destroy(&g_hwbp_handle_info_mutex);
     PRINT_DEBUG("[+] hw_breakpoint module exited.\n");
 }
 
@@ -227,6 +227,7 @@ long hwbp_install(pid_t pid, uint64_t addr, int len, int type, uint64_t* handle_
     struct task_struct *task;
     struct HWBP_HANDLE_INFO hwbp_handle_info = { 0 };
     int ret;
+	unsigned long flags;
 
     task = get_pid_task(find_get_pid(pid), PIDTYPE_PID);
     if (!task) {
@@ -265,9 +266,9 @@ long hwbp_install(pid_t pid, uint64_t addr, int len, int type, uint64_t* handle_
         return -ENOMEM;
     }
 
-    mutex_lock(&g_hwbp_handle_info_mutex);
+    spin_lock_irqsave(&g_hwbp_handle_info_lock, flags);
     cvector_pushback(g_hwbp_handle_info_arr, &hwbp_handle_info);
-    mutex_unlock(&g_hwbp_handle_info_mutex);
+    spin_unlock_irqrestore(&g_hwbp_handle_info_lock, flags);
 
     *handle_out = (uint64_t)hwbp_handle_info.sample_hbp;
     return 0;
@@ -277,10 +278,11 @@ long hwbp_uninstall(uint64_t handle) {
     struct perf_event * sample_hbp = (struct perf_event *)handle;
     citerator iter;
 	bool found = false;
+	unsigned long flags;
 
     if (!sample_hbp) return -EINVAL;
 
-	mutex_lock(&g_hwbp_handle_info_mutex);
+	spin_lock_irqsave(&g_hwbp_handle_info_lock, flags);
 	for (iter = cvector_begin(g_hwbp_handle_info_arr); iter != cvector_end(g_hwbp_handle_info_arr); iter = cvector_next(g_hwbp_handle_info_arr, iter)) {
 		struct HWBP_HANDLE_INFO * hwbp_handle_info = (struct HWBP_HANDLE_INFO *)iter;
 		if(hwbp_handle_info->sample_hbp == sample_hbp) {
@@ -293,7 +295,7 @@ long hwbp_uninstall(uint64_t handle) {
 			break;
 		}
 	}
-	mutex_unlock(&g_hwbp_handle_info_mutex);
+	spin_unlock_irqrestore(&g_hwbp_handle_info_lock, flags);
 
 	if(found) {
 		x_unregister_hw_breakpoint(sample_hbp);
@@ -318,40 +320,43 @@ static struct HWBP_HANDLE_INFO* find_hwbp_info(uint64_t handle) {
 long hwbp_suspend(uint64_t handle) {
     struct HWBP_HANDLE_INFO *info;
     int ret = -ENOENT;
-    mutex_lock(&g_hwbp_handle_info_mutex);
+	unsigned long flags;
+    spin_lock_irqsave(&g_hwbp_handle_info_lock, flags);
     info = find_hwbp_info(handle);
     if (info) {
         toggle_bp_registers_directly(&info->original_attr, info->is_32bit_task, 0);
         ret = 0;
     }
-    mutex_unlock(&g_hwbp_handle_info_mutex);
+    spin_unlock_irqrestore(&g_hwbp_handle_info_lock, flags);
     return ret;
 }
 
 long hwbp_resume(uint64_t handle) {
     struct HWBP_HANDLE_INFO *info;
     int ret = -ENOENT;
-    mutex_lock(&g_hwbp_handle_info_mutex);
+	unsigned long flags;
+    spin_lock_irqsave(&g_hwbp_handle_info_lock, flags);
     info = find_hwbp_info(handle);
     if (info) {
         toggle_bp_registers_directly(&info->original_attr, info->is_32bit_task, 1);
         ret = 0;
     }
-    mutex_unlock(&g_hwbp_handle_info_mutex);
+    spin_unlock_irqrestore(&g_hwbp_handle_info_lock, flags);
     return ret;
 }
 
 long hwbp_get_hit_count(uint64_t handle, uint64_t* total_count, uint64_t* arr_count) {
     struct HWBP_HANDLE_INFO *info;
     int ret = -ENOENT;
-    mutex_lock(&g_hwbp_handle_info_mutex);
+	unsigned long flags;
+    spin_lock_irqsave(&g_hwbp_handle_info_lock, flags);
     info = find_hwbp_info(handle);
     if (info) {
         *total_count = info->hit_total_count;
         *arr_count = info->hit_item_arr ? cvector_length(info->hit_item_arr) : 0;
         ret = 0;
     }
-    mutex_unlock(&g_hwbp_handle_info_mutex);
+    spin_unlock_irqrestore(&g_hwbp_handle_info_lock, flags);
     return ret;
 }
 
@@ -359,11 +364,12 @@ long hwbp_get_hit_detail(uint64_t handle, void __user *buf, size_t size) {
     struct HWBP_HANDLE_INFO *info;
     long count = 0;
     size_t bytes_to_copy;
+	unsigned long flags;
 
-    mutex_lock(&g_hwbp_handle_info_mutex);
+    spin_lock_irqsave(&g_hwbp_handle_info_lock, flags);
     info = find_hwbp_info(handle);
     if (!info || !info->hit_item_arr) {
-        mutex_unlock(&g_hwbp_handle_info_mutex);
+        spin_unlock_irqrestore(&g_hwbp_handle_info_lock, flags);
         return -ENOENT;
     }
 
@@ -372,7 +378,7 @@ long hwbp_get_hit_detail(uint64_t handle, void __user *buf, size_t size) {
 
     if (bytes_to_copy > 0) {
         if (copy_to_user(buf, cvector_begin(info->hit_item_arr), bytes_to_copy)) {
-            mutex_unlock(&g_hwbp_handle_info_mutex);
+            spin_unlock_irqrestore(&g_hwbp_handle_info_lock, flags);
             return -EFAULT;
         }
     }
@@ -381,7 +387,7 @@ long hwbp_get_hit_detail(uint64_t handle, void __user *buf, size_t size) {
     cvector_destroy(info->hit_item_arr);
     info->hit_item_arr = cvector_create(sizeof(struct HWBP_HIT_ITEM));
 
-    mutex_unlock(&g_hwbp_handle_info_mutex);
+    spin_unlock_irqrestore(&g_hwbp_handle_info_lock, flags);
     return bytes_to_copy / sizeof(struct HWBP_HIT_ITEM);
 }
 
@@ -392,12 +398,13 @@ long hwbp_set_redirect_pc(uint64_t pc) {
 
 static void clean_all_hwbp(void) {
 	citerator iter;
+	unsigned long flags;
 	cvector wait_unregister_bp_arr = cvector_create(sizeof(struct perf_event *));
 	if(!wait_unregister_bp_arr || !g_hwbp_handle_info_arr) {
 		return;
 	}
 
-	mutex_lock(&g_hwbp_handle_info_mutex);
+	spin_lock_irqsave(&g_hwbp_handle_info_lock, flags);
 	for (iter = cvector_begin(g_hwbp_handle_info_arr); iter != cvector_end(g_hwbp_handle_info_arr); iter = cvector_next(g_hwbp_handle_info_arr, iter)) {
 		struct HWBP_HANDLE_INFO * hwbp_handle_info = (struct HWBP_HANDLE_INFO *)iter;
 		if(hwbp_handle_info->sample_hbp) {
@@ -411,7 +418,7 @@ static void clean_all_hwbp(void) {
 	}
 	cvector_destroy(g_hwbp_handle_info_arr);
 	g_hwbp_handle_info_arr = NULL;
-	mutex_unlock(&g_hwbp_handle_info_mutex);
+	spin_unlock_irqrestore(&g_hwbp_handle_info_lock, flags);
 	
 	for (iter = cvector_begin(wait_unregister_bp_arr); iter != cvector_end(wait_unregister_bp_arr); iter = cvector_next(wait_unregister_bp_arr, iter)) {
 	  struct perf_event * bp = *(struct perf_event **)iter;

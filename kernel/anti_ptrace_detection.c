@@ -16,17 +16,18 @@
 
 // Globals to hold pointers passed from hw_breakpoint.c
 static cvector *g_p_hwbp_handle_info_arr = NULL;
-static struct mutex *g_p_hwbp_handle_info_mutex = NULL;
+static spinlock_t *g_p_hwbp_handle_info_lock = NULL;
 static void *g_arch_ptrace_addr = NULL;
 
 
 static bool is_my_hwbp_handle_addr(size_t addr) {
 	citerator iter;
 	bool found = false;
+	unsigned long flags;
 	if(addr == 0) {
 		return found;
 	}
-	mutex_lock(g_p_hwbp_handle_info_mutex);
+	spin_lock_irqsave(g_p_hwbp_handle_info_lock, flags);
 	for (iter = cvector_begin(*g_p_hwbp_handle_info_arr); iter != cvector_end(*g_p_hwbp_handle_info_arr); iter = cvector_next(*g_p_hwbp_handle_info_arr, iter)) {
 		struct HWBP_HANDLE_INFO * hwbp_handle_info = (struct HWBP_HANDLE_INFO *)iter;
 		if(hwbp_handle_info->original_attr.bp_addr == addr) {
@@ -34,7 +35,7 @@ static bool is_my_hwbp_handle_addr(size_t addr) {
 			break;
 		}
 	}
-	mutex_unlock(g_p_hwbp_handle_info_mutex);
+	spin_unlock_irqrestore(g_p_hwbp_handle_info_lock, flags);
 	return found;
 }
 
@@ -106,14 +107,14 @@ static void ptrace_after_callback(hook_fargs4_t *fargs, void *udata)
 }
 
 
-int anti_ptrace_init(cvector *p_hwbp_handle_info_arr, struct mutex *p_mutex)
+int anti_ptrace_init(cvector *p_hwbp_handle_info_arr, spinlock_t *p_lock)
 {
     hook_err_t err;
 
     g_p_hwbp_handle_info_arr = p_hwbp_handle_info_arr;
-    g_p_hwbp_handle_info_mutex = p_mutex;
+    g_p_hwbp_handle_info_lock = p_lock;
 
-    if (!g_p_hwbp_handle_info_arr || !g_p_hwbp_handle_info_mutex) {
+    if (!g_p_hwbp_handle_info_arr || !g_p_hwbp_handle_info_lock) {
         PRINT_DEBUG("[-] anti_ptrace: Invalid arguments.\n");
         return -EINVAL;
     }
