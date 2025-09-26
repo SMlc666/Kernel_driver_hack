@@ -45,7 +45,7 @@ static int walk_user_stack(struct pt_regs *regs, uint64_t *trace_buffer, int max
         uint64_t next_fp, return_addr;
 
         // Basic validation
-        if (fp < sp || fp & 0x7 || !access_ok((void __user *)fp, 16)) {
+        if (fp < sp || fp & 0x7 || !access_ok(VERIFY_READ, (void __user *)fp, 16)) {
             break;
         }
 
@@ -195,7 +195,7 @@ int khack_hw_breakpoint_init(void) {
     }
 
 #ifdef CONFIG_ANTI_PTRACE_DETECTION_MODE
-    ret = anti_ptrace_init(g_hwbp_handle_info_arr, &g_hwbp_handle_info_mutex);
+    ret = anti_ptrace_init(&g_hwbp_handle_info_arr, &g_hwbp_handle_info_mutex);
     if (ret != 0) {
         PRINT_DEBUG("[-] Failed to init anti ptrace detection\n");
         // Not a fatal error, we can continue without it
