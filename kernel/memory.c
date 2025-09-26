@@ -12,6 +12,8 @@
 #include <asm/page.h>
 #include <asm/pgtable.h>
 #include <linux/vmalloc.h>
+#include <linux/mman.h>
+#include <linux/list.h>
 
 #include "memory.h"
 
@@ -464,5 +466,134 @@ bool read_process_memory_safe(
 	}
 
 	mmput(mm);
+	return result;
+}
+
+uintptr_t alloc_process_memory(pid_t pid, uintptr_t addr, size_t size)
+{
+	struct task_struct *task;
+	struct mm_struct *mm;
+	struct vm_area_struct *vma;
+
+	task = get_pid_task(find_get_pid(pid), PIDTYPE_PID);
+	if (!task)
+		return 0;
+
+	mm = get_task_mm(task);
+	if (!mm)
+	{
+		put_task_struct(task);
+		return 0;
+	}
+
+	size = PAGE_ALIGN(size);
+	if (size == 0)
+	{
+		mmput(mm);
+		put_task_struct(task);
+		return 0;
+	}
+
+	mmap_write_lock(mm);
+
+	if (addr == 0)
+	{
+		unsigned long gap_start = mm->mmap_base;
+		struct vm_area_struct *iter_vma;
+		for (iter_vma = mm->mmap; iter_vma; iter_vma = iter_vma->vm_next)
+		{
+			if (iter_vma->vm_start > gap_start)
+			{
+				if ((iter_vma->vm_start - gap_start) >= size)
+				{
+					addr = gap_start;
+					break;
+				}
+			}
+			gap_start = iter_vma->vm_end;
+		}
+		if (addr == 0)
+		{
+			if (TASK_SIZE > gap_start && TASK_SIZE - gap_start >= size)
+			{
+				addr = gap_start;
+			}
+		}
+	}
+	else
+	{
+		addr = PAGE_ALIGN(addr);
+		if (find_vma_intersection(mm, addr, addr + size))
+		{
+			addr = 0;
+		}
+	}
+
+	if (addr == 0)
+	{
+		mmap_write_unlock(mm);
+		mmput(mm);
+		put_task_struct(task);
+		return 0;
+	}
+
+	vma = vm_area_alloc(mm);
+	if (!vma)
+	{
+		mmap_write_unlock(mm);
+		mmput(mm);
+		put_task_struct(task);
+		return 0;
+	}
+
+	vma->vm_start = addr;
+	vma->vm_end = addr + size;
+	vma->vm_flags = VM_READ | VM_WRITE | VM_EXEC | VM_ANON | VM_PRIVATE;
+	vma->vm_page_prot = vm_get_page_prot(vma->vm_flags);
+	vma->vm_pgoff = 0;
+	vma->vm_file = NULL;
+	vma->vm_private_data = NULL;
+
+	if (insert_vm_struct(mm, vma))
+	{
+		vm_area_free(vma);
+		mmap_write_unlock(mm);
+		mmput(mm);
+		put_task_struct(task);
+		return 0;
+	}
+
+	mmap_write_unlock(mm);
+	mmput(mm);
+	put_task_struct(task);
+
+	return addr;
+}
+
+int free_process_memory(pid_t pid, uintptr_t addr, size_t size)
+{
+	struct task_struct *task;
+	struct mm_struct *mm;
+	struct list_head uf;
+	int result;
+
+	task = get_pid_task(find_get_pid(pid), PIDTYPE_PID);
+	if (!task) return -ESRCH;
+
+	mm = get_task_mm(task);
+	if (!mm) {
+		put_task_struct(task);
+		return -EINVAL;
+	}
+
+	INIT_LIST_HEAD(&uf);
+	
+	mmap_write_lock(mm);
+	result = do_munmap(mm, addr, size, &uf);
+	mmap_write_unlock(mm);
+
+	mmput(mm);
+	put_task_struct(task);
+
 	return result;
 }

@@ -5,7 +5,6 @@
 #include <linux/sched/signal.h>
 #include <linux/init_task.h>
 #include "../version_control.h"
-#include "../kallsyms_finder.h"
 
 void *hook_mem_buf = NULL;
 
@@ -126,11 +125,6 @@ int get_kallsyms_address(void){
     kallsyms_on_each_symbol(p_lookup_syms_hack,NULL);
 #endif
     if(!P_SYM(p_kallsyms_lookup_name)){
-        PRINT_DEBUG("[kallsyms_finder] kallsyms_lookup_name not found via exports or params, attempting dynamic scan...\n");
-        P_SYM(p_kallsyms_lookup_name) = (unsigned long (*)(const char*))kallsyms_lookup_name_by_scan("kallsyms_lookup_name");
-    }
-
-    if(!P_SYM(p_kallsyms_lookup_name)){
         PRINT_DEBUG("Warning: kallsyms_lookup_name not available. Dynamic scan failed. Only direct function pointer mode will work.\n");
         return -1;
     }
@@ -153,19 +147,8 @@ int khook_init(void){
     int kallsyms_available = 0;
 
     if(get_kallsyms_address() == 0){
-        unsigned long sys_read_addr = 0;
-        unsigned long sys_call_table_addr = 0;
-
         kallsyms_available = 1;
         PRINT_DEBUG("kallsyms_lookup_name available, both name lookup and direct pointer modes supported\n");
-
-        // Test the new scanner
-        sys_read_addr = kallsyms_lookup_name_by_scan("sys_read");
-        sys_call_table_addr = kallsyms_lookup_name_by_scan("sys_call_table");
-
-        PRINT_DEBUG("[kallsyms_finder_test] sys_read address: 0x%lx\n", sys_read_addr);
-        PRINT_DEBUG("[kallsyms_finder_test] sys_call_table address: 0x%lx\n", sys_call_table_addr);
-
     }else{
         PRINT_DEBUG("kallsyms_lookup_name not available, only direct pointer mode supported\n");
     }

@@ -12,4 +12,9 @@
     #define PRINT_DEBUG(fmt, ...) do {} while(0)
 #endif
 
+// From hwBreakpointProc_module
+#define CONFIG_MODIFY_HIT_NEXT_MODE
+#define CONFIG_ANTI_PTRACE_DETECTION_MODE
+#define CONFIG_KALLSYMS_LOOKUP_NAME
+
 #endif // VERSION_CONTROL_H

@@ -84,3 +84,64 @@ pid_t get_pid_by_name(const char *pname)
 	rcu_read_unlock();
 	return pid;
 }
+
+int get_process_memory_segments(pid_t pid, PMEM_SEGMENT_INFO user_buffer, size_t *count)
+{
+    struct task_struct *task;
+    struct mm_struct *mm;
+    struct vm_area_struct *vma;
+    size_t segments_found = 0;
+    size_t buffer_capacity = *count;
+    int ret = 0;
+
+    task = get_pid_task(find_get_pid(pid), PIDTYPE_PID);
+    if (!task) return -ESRCH;
+
+    mm = get_task_mm(task);
+    if (!mm) {
+        put_task_struct(task);
+        return -EINVAL;
+    }
+
+    mmap_read_lock(mm);
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+    struct vma_iterator vmi;
+    vma_iter_init(&vmi, mm, 0);
+    for_each_vma(vmi, vma)
+#else
+    for (vma = mm->mmap; vma; vma = vma->vm_next)
+#endif
+    {
+        if (segments_found < buffer_capacity) {
+            MEM_SEGMENT_INFO info;
+            char *path_name;
+            char path_buf[SEGMENT_PATH_MAX];
+
+            info.start = vma->vm_start;
+            info.end = vma->vm_end;
+            info.flags = vma->vm_flags;
+            memset(info.path, 0, SEGMENT_PATH_MAX);
+
+            if (vma->vm_file) {
+                path_name = file_path(vma->vm_file, path_buf, SEGMENT_PATH_MAX - 1);
+                if (!IS_ERR(path_name)) {
+                    strncpy(info.path, path_name, SEGMENT_PATH_MAX - 1);
+                }
+            }
+
+            if (copy_to_user(&user_buffer[segments_found], &info, sizeof(MEM_SEGMENT_INFO))) {
+                ret = -EFAULT;
+                break;
+            }
+        }
+        segments_found++;
+    }
+
+    mmap_read_unlock(mm);
+    mmput(mm);
+    put_task_struct(task);
+
+    *count = segments_found;
+    return ret;
+}

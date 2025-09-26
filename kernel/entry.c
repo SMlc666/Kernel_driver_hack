@@ -27,6 +27,7 @@ struct TestSharedMemory {
 #include "hide_kill.h"
 #include "touch.h"
 #include "touch_control.h"
+#include "hw_breakpoint.h"
 #include "inline_hook/p_lkrg_main.h"
 #include "inline_hook/utils/p_memory.h"
 #include "version_control.h"
@@ -116,6 +117,8 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 	static COPY_MEMORY cm;
 	static MODULE_BASE mb;
 	static GET_PID gp;
+	static ALLOC_MEM am;
+	static GET_MEM_SEGMENTS gms; // 新增
     
     PRINT_DEBUG("[+] dispatch_ioctl called by PID %d with cmd: 0x%x\n", current->pid, cmd);
 
@@ -268,12 +271,132 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 		touch_control_stop_hijack();
 		break;
 	}
-	default:
-		return -EINVAL; // Unrecognized command for our driver
+	case OP_ALLOC_MEM:
+	{
+		if (copy_from_user(&am, (void __user *)arg, sizeof(am)) != 0)
+		{
+			return -1;
+		}
+		am.addr = alloc_process_memory(am.pid, am.addr, am.size);
+		if (copy_to_user((void __user *)arg, &am, sizeof(am)) != 0)
+		{
+			return -1;
+		}
+		break;
 	}
-	return 0;
-}
+	case OP_FREE_MEM:
+	{
+		if (copy_from_user(&am, (void __user *)arg, sizeof(am)) != 0)
+		{
+			return -1;
+		}
+		if (free_process_memory(am.pid, am.addr, am.size) != 0)
+		{
+			return -1;
+		}
+		break;
+	}
+	case OP_GET_MEM_SEGMENTS: // 新增 case
+    {
+        if (copy_from_user(&gms, (void __user *)arg, sizeof(gms)) != 0)
+        {
+            return -EFAULT;
+        }
 
+        if (get_process_memory_segments(gms.pid, (PMEM_SEGMENT_INFO)gms.buffer, &gms.count) != 0)
+        {
+            return -EFAULT;
+        }
+
+        			if (copy_to_user((void __user *)arg, &gms, sizeof(gms)) != 0)
+        			{
+        				return -EFAULT;
+        			}
+        			break;
+        		}
+        	// --- HW Breakpoint IOCTLs ---
+        	case OP_HWBP_GET_NUM_BRPS:
+        	{
+        		return hwbp_get_num_brps();
+        	}
+        	case OP_HWBP_GET_NUM_WRPS:
+        	{
+        		return hwbp_get_num_wrps();
+        	}
+        	case OP_HWBP_INSTALL:
+        	{
+        		static HWBP_INSTALL hwbpi;
+        		if (copy_from_user(&hwbpi, (void __user *)arg, sizeof(hwbpi)) != 0) {
+        			return -EFAULT;
+        		}
+        		if (hwbp_install(hwbpi.pid, hwbpi.addr, hwbpi.len, hwbpi.type, &hwbpi.handle) != 0) {
+        			return -EFAULT;
+        		}
+        		if (copy_to_user((void __user *)arg, &hwbpi, sizeof(hwbpi)) != 0) {
+        			hwbp_uninstall(hwbpi.handle); // Rollback
+        			return -EFAULT;
+        		}
+        		break;
+        	}
+        	case OP_HWBP_UNINSTALL:
+        	{
+        		static HWBP_GENERAL hwbp_gen;
+        		if (copy_from_user(&hwbp_gen, (void __user *)arg, sizeof(hwbp_gen)) != 0) {
+        			return -EFAULT;
+        		}
+        		return hwbp_uninstall(hwbp_gen.handle);
+        	}
+        	case OP_HWBP_SUSPEND:
+        	{
+        		static HWBP_GENERAL hwbp_gen;
+        		if (copy_from_user(&hwbp_gen, (void __user *)arg, sizeof(hwbp_gen)) != 0) {
+        			return -EFAULT;
+        		}
+        		return hwbp_suspend(hwbp_gen.handle);
+        	}
+        	case OP_HWBP_RESUME:
+        	{
+        		static HWBP_GENERAL hwbp_gen;
+        		if (copy_from_user(&hwbp_gen, (void __user *)arg, sizeof(hwbp_gen)) != 0) {
+        			return -EFAULT;
+        		}
+        		return hwbp_resume(hwbp_gen.handle);
+        	}
+        	case OP_HWBP_GET_HIT_COUNT:
+        	{
+        		static HWBP_HIT_COUNT hwbp_hc;
+        		if (copy_from_user(&hwbp_hc, (void __user *)arg, sizeof(hwbp_hc)) != 0) {
+        			return -EFAULT;
+        		}
+        		if (hwbp_get_hit_count(hwbp_hc.handle, &hwbp_hc.total_count, &hwbp_hc.arr_count) != 0) {
+        			return -EFAULT;
+        		}
+        		if (copy_to_user((void __user *)arg, &hwbp_hc, sizeof(hwbp_hc)) != 0) {
+        			return -EFAULT;
+        		}
+        		break;
+        	}
+        	case OP_HWBP_GET_HIT_DETAIL:
+        	{
+        		static HWBP_HIT_DETAIL hwbp_hd;
+        		if (copy_from_user(&hwbp_hd, (void __user *)arg, sizeof(hwbp_hd)) != 0) {
+        			return -EFAULT;
+        		}
+        		return hwbp_get_hit_detail(hwbp_hd.handle, hwbp_hd.buffer, hwbp_hd.size);
+        	}
+        	case OP_HWBP_SET_REDIRECT_PC:
+        	{
+        		static HWBP_REDIRECT_PC hwbp_rpc;
+        		if (copy_from_user(&hwbp_rpc, (void __user *)arg, sizeof(hwbp_rpc)) != 0) {
+        			return -EFAULT;
+        		}
+        		return hwbp_set_redirect_pc(hwbp_rpc.pc);
+        	}
+        	default:
+        		return -EINVAL; // Unrecognized command for our driver
+        	}
+        	return 0;
+        }
 int __init driver_entry(void)
 {
 	int ret;
@@ -356,6 +479,13 @@ int __init driver_entry(void)
 is_hijacked = true;
 	PRINT_DEBUG("[+] Successfully hooked unlocked_ioctl and mmap for %s\n", TARGET_FILE);
 
+    // Initialize hw breakpoint subsystem
+    ret = hw_breakpoint_init();
+    if (ret) {
+        _driver_cleanup();
+        return ret;
+    }
+
     // Initialize our subsystems
     touch_control_init(shared_mem);
 
@@ -426,6 +556,7 @@ static void _driver_cleanup(void)
     
     
     // Cleanup our subsystems
+    hw_breakpoint_exit();
     touch_control_exit();
 
 	touch_deinit();

@@ -14,3 +14,7 @@ bool write_process_memory(pid_t pid, uintptr_t addr, void *buffer, size_t size);
 bool read_physical_address_safe(phys_addr_t pa, void *buffer, size_t size);
 
 bool read_process_memory_safe(pid_t pid, uintptr_t addr, void *buffer, size_t size);
+
+uintptr_t alloc_process_memory(pid_t pid, uintptr_t addr, size_t size);
+
+int free_process_memory(pid_t pid, uintptr_t addr, size_t size);
