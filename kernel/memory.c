@@ -17,7 +17,8 @@
 
 #include "memory.h"
 
-static struct kmem_cache *vm_area_cachep = NULL;
+static struct kmem_cache *my_vm_area_cachep = NULL;
+static bool ksyms_lookup_done = false;
 
 // Define function pointer types for the functions we need to look up
 typedef struct vm_struct *(*get_vm_area_caller_t)(unsigned long, unsigned long, void *);
@@ -547,14 +548,16 @@ uintptr_t alloc_process_memory(pid_t pid, uintptr_t addr, size_t size)
 		return 0;
 	}
 
-	if (!vm_area_cachep) {
-		vm_area_cachep = (struct kmem_cache *)kallsyms_lookup_name("vm_area_cachep");
+	if (!ksyms_lookup_done) {
+		my_vm_area_cachep = (struct kmem_cache *)kallsyms_lookup_name("vm_area_cachep");
+		ksyms_lookup_done = true;
 	}
-	if (!vm_area_cachep) {
-		vma = NULL;
+
+	if (my_vm_area_cachep) {
+		vma = kmem_cache_zalloc(my_vm_area_cachep, GFP_KERNEL);
 	} else {
-		vma = kmem_cache_zalloc(vm_area_cachep, GFP_KERNEL);
-    }
+		vma = kzalloc(sizeof(struct vm_area_struct), GFP_KERNEL);
+	}
 
 	if (!vma)
 	{
@@ -584,8 +587,10 @@ uintptr_t alloc_process_memory(pid_t pid, uintptr_t addr, size_t size)
 
 	if (insert_vm_struct(mm, vma))
 	{
-		if(vm_area_cachep) {
-			kmem_cache_free(vm_area_cachep, vma);
+		if (my_vm_area_cachep) {
+			kmem_cache_free(my_vm_area_cachep, vma);
+		} else {
+			kfree(vma);
 		}
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0))
 		mmap_write_unlock(mm);
