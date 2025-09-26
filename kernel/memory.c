@@ -17,6 +17,8 @@
 
 #include "memory.h"
 
+static struct kmem_cache *vm_area_cachep = NULL;
+
 // Define function pointer types for the functions we need to look up
 typedef struct vm_struct *(*get_vm_area_caller_t)(unsigned long, unsigned long, void *);
 typedef int (*ioremap_page_range_t)(unsigned long, unsigned long, phys_addr_t, pgprot_t);
@@ -545,11 +547,15 @@ uintptr_t alloc_process_memory(pid_t pid, uintptr_t addr, size_t size)
 		return 0;
 	}
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0))
-	vma = vm_area_alloc(mm);
-#else
-	vma = vm_area_alloc();
-#endif
+	if (!vm_area_cachep) {
+		vm_area_cachep = (struct kmem_cache *)kallsyms_lookup_name("vm_area_cachep");
+	}
+	if (!vm_area_cachep) {
+		vma = NULL;
+	} else {
+		vma = kmem_cache_zalloc(vm_area_cachep, GFP_KERNEL);
+    }
+
 	if (!vma)
 	{
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0))
@@ -564,7 +570,13 @@ uintptr_t alloc_process_memory(pid_t pid, uintptr_t addr, size_t size)
 
 	vma->vm_start = addr;
 	vma->vm_end = addr + size;
-	vma->vm_flags = VM_READ | VM_WRITE | VM_EXEC | VM_ANON | VM_PRIVATE;
+	vma->vm_flags = VM_READ | VM_WRITE | VM_EXEC;
+#ifdef VM_ANON
+	vma->vm_flags |= VM_ANON;
+#endif
+#ifdef VM_PRIVATE
+	vma->vm_flags |= VM_PRIVATE;
+#endif
 	vma->vm_page_prot = vm_get_page_prot(vma->vm_flags);
 	vma->vm_pgoff = 0;
 	vma->vm_file = NULL;
@@ -572,7 +584,9 @@ uintptr_t alloc_process_memory(pid_t pid, uintptr_t addr, size_t size)
 
 	if (insert_vm_struct(mm, vma))
 	{
-		vm_area_free(vma);
+		if(vm_area_cachep) {
+			kmem_cache_free(vm_area_cachep, vma);
+		}
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0))
 		mmap_write_unlock(mm);
 #else
@@ -584,7 +598,7 @@ uintptr_t alloc_process_memory(pid_t pid, uintptr_t addr, size_t size)
 	}
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0))
-	mmap_write_unlock(mm);
+		mmap_write_unlock(mm);
 #else
 	up_write(&mm->mmap_sem);
 #endif
@@ -592,9 +606,7 @@ uintptr_t alloc_process_memory(pid_t pid, uintptr_t addr, size_t size)
 	put_task_struct(task);
 
 	return addr;
-}
-
-int free_process_memory(pid_t pid, uintptr_t addr, size_t size)
+}int free_process_memory(pid_t pid, uintptr_t addr, size_t size)
 {
 	struct task_struct *task;
 	struct mm_struct *mm;
