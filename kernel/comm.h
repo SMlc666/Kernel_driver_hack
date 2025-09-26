@@ -95,7 +95,7 @@ typedef struct _HWBP_INSTALL {
 } HWBP_INSTALL, *PHWBP_INSTALL;
 
 typedef struct _HWBP_GENERAL {
-	uintptr_t handle;
+	uint64_t handle;
 } HWBP_GENERAL, *PHWBP_GENERAL;
 
 typedef struct _HWBP_HIT_COUNT {
