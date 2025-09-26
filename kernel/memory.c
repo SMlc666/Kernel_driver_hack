@@ -18,6 +18,7 @@
 #include "memory.h"
 
 static struct kmem_cache *my_vm_area_cachep = NULL;
+static int (*insert_vm_struct_ptr)(struct mm_struct *mm, struct vm_area_struct *vma) = NULL;
 static bool ksyms_lookup_done = false;
 
 // Define function pointer types for the functions we need to look up
@@ -550,7 +551,20 @@ uintptr_t alloc_process_memory(pid_t pid, uintptr_t addr, size_t size)
 
 	if (!ksyms_lookup_done) {
 		my_vm_area_cachep = (struct kmem_cache *)kallsyms_lookup_name("vm_area_cachep");
+		insert_vm_struct_ptr = (void *)kallsyms_lookup_name("insert_vm_struct");
 		ksyms_lookup_done = true;
+	}
+
+	if (!insert_vm_struct_ptr)
+	{
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0))
+		mmap_write_unlock(mm);
+#else
+		up_write(&mm->mmap_sem);
+#endif
+		mmput(mm);
+		put_task_struct(task);
+		return 0;
 	}
 
 	if (my_vm_area_cachep) {
@@ -585,7 +599,7 @@ uintptr_t alloc_process_memory(pid_t pid, uintptr_t addr, size_t size)
 	vma->vm_file = NULL;
 	vma->vm_private_data = NULL;
 
-	if (insert_vm_struct(mm, vma))
+	if (insert_vm_struct_ptr(mm, vma))
 	{
 		if (my_vm_area_cachep) {
 			kmem_cache_free(my_vm_area_cachep, vma);
