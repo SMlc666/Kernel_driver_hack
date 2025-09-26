@@ -99,13 +99,13 @@ typedef struct _HWBP_GENERAL {
 } HWBP_GENERAL, *PHWBP_GENERAL;
 
 typedef struct _HWBP_HIT_COUNT {
-	uintptr_t handle;
+	uint64_t handle;
 	uint64_t total_count;
 	uint64_t arr_count;
 } HWBP_HIT_COUNT, *PHWBP_HIT_COUNT;
 
 typedef struct _HWBP_HIT_DETAIL {
-	uintptr_t handle;
+	uint64_t handle;
 	void* buffer;
 	size_t size;
 } HWBP_HIT_DETAIL, *PHWBP_HIT_DETAIL;
