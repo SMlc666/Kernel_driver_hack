@@ -76,7 +76,7 @@ static void ptrace_after_callback(hook_fargs4_t *fargs, void *udata)
         return;
     }
 
-    if (!access_ok((void __user *)iov.iov_base, iov.iov_len)) {
+    if (!access_ok(VERIFY_READ, (void __user *)iov.iov_base, iov.iov_len)) {
         PRINT_DEBUG("[-] anti_ptrace: User buffer is not accessible\n");
         return;
     }
@@ -91,9 +91,9 @@ static void ptrace_after_callback(hook_fargs4_t *fargs, void *udata)
     memcpy(&new_hw_state, &old_hw_state, sizeof(new_hw_state));
     memset(new_hw_state.dbg_regs, 0x00, sizeof(new_hw_state.dbg_regs));
 
-    for (i = 0; i < ARM_MAX_BRP_REGS; i++) { // ARM_MAX_BRP_REGS is usually 16
+    for (i = 0; i < (sizeof(old_hw_state.dbg_regs) / sizeof(old_hw_state.dbg_regs[0])); i++) { // ARM_MAX_BRP_REGS is usually 16
         if(!is_my_hwbp_handle_addr(old_hw_state.dbg_regs[i].addr)) {
-            if (y < ARM_MAX_BRP_REGS) {
+            if (y < (sizeof(new_hw_state.dbg_regs) / sizeof(new_hw_state.dbg_regs[0]))) {
                 memcpy(&new_hw_state.dbg_regs[y++], &old_hw_state.dbg_regs[i], sizeof(old_hw_state.dbg_regs[i]));
             }
         }
