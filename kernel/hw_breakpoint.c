@@ -170,7 +170,8 @@ static void hwbp_handler(struct perf_event *bp, struct perf_sample_data *data, s
 			}
 		} else {
 			if(!arm64_recovery_bp_to_original(bp, &hwbp_handle_info->original_attr, &hwbp_handle_info->next_instruction_attr)) {
-				toggle_bp_registers_directly(&hwbp_handle_info->next_instruction_attr, hwbp_handle_info->is_32bit_task, 0);
+				PRINT_DEBUG("[-] Failed to recover breakpoint, advancing PC to avoid hang.\n");
+				regs->pc += 4;
 			}
 		}
 #else
