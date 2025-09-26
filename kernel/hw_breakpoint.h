@@ -4,6 +4,7 @@
 #include <linux/perf_event.h>
 #include <linux/hw_breakpoint.h>
 #include "cvector.h"
+#include "version_control.h"
 
 #define MAX_STACK_FRAMES 16
 
