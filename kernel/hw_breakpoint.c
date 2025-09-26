@@ -139,8 +139,6 @@ static void hwbp_handler(struct perf_event *bp, struct perf_sample_data *data, s
 	citerator iter;
 	uint64_t hook_pc;
 
-	PRINT_DEBUG("[HWBP_HANDLER] HIT! pc=0x%llx, bp=%p\n", regs->pc, bp);
-
 	hook_pc = atomic64_read(&g_hook_pc);
 	if(hook_pc) {
 		regs->pc = hook_pc;
@@ -157,11 +155,25 @@ static void hwbp_handler(struct perf_event *bp, struct perf_sample_data *data, s
         hwbp_handle_info->hit_total_count++;
         record_hit_details(hwbp_handle_info, regs);
 
-        // SIMPLIFIED LOGIC FOR DEBUGGING: Just disable the breakpoint.
-        // We expect to get only 1 hit this way. If we get 0, the handler isn't being called.
-        // If we get 1, the handler is called, but the original re-arming logic was failing.
+#ifdef CONFIG_MODIFY_HIT_NEXT_MODE
+		if(hwbp_handle_info->next_instruction_attr.bp_addr != regs->pc) {
+			bool should_toggle = true;
+			if(!hwbp_handle_info->is_32bit_task) {
+				if(arm64_move_bp_to_next_instruction(bp, regs->pc + 4, &hwbp_handle_info->original_attr, &hwbp_handle_info->next_instruction_attr)) {
+					should_toggle = false;
+				}
+			}
+			if(should_toggle) {
+				toggle_bp_registers_directly(&hwbp_handle_info->original_attr, hwbp_handle_info->is_32bit_task, 0);
+			}
+		} else {
+			if(!arm64_recovery_bp_to_original(bp, &hwbp_handle_info->original_attr, &hwbp_handle_info->next_instruction_attr)) {
+				toggle_bp_registers_directly(&hwbp_handle_info->next_instruction_attr, hwbp_handle_info->is_32bit_task, 0);
+			}
+		}
+#else
 		toggle_bp_registers_directly(&hwbp_handle_info->original_attr, hwbp_handle_info->is_32bit_task, 0);
-		break; // Found and handled, no need to continue loop
+#endif
 	}
 	mutex_unlock(&g_hwbp_handle_info_mutex);
 }
@@ -224,6 +236,7 @@ long hwbp_install(pid_t pid, uint64_t addr, int len, int type, uint64_t* handle_
     hwbp_handle_info.task_id = pid;
     hwbp_handle_info.is_32bit_task = is_compat_thread(task_thread_info(task));
     
+    ptrace_breakpoint_init(&hwbp_handle_info.original_attr);
     hwbp_handle_info.original_attr.size = sizeof(struct perf_event_attr);
     hwbp_handle_info.original_attr.bp_addr = addr;
     hwbp_handle_info.original_attr.bp_len = len;
