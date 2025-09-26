@@ -35,7 +35,11 @@ static int walk_user_stack(struct pt_regs *regs, uint64_t *trace_buffer, int max
     fp = regs->regs[29];
     sp = regs->sp;
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0))
     mmap_read_lock(mm);
+#else
+    down_read(&mm->mmap_sem);
+#endif
 
     while (frame_count < max_frames) {
         uint64_t next_fp, return_addr;
@@ -61,7 +65,11 @@ static int walk_user_stack(struct pt_regs *regs, uint64_t *trace_buffer, int max
         fp = next_fp;
     }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0))
     mmap_read_unlock(mm);
+#else
+    up_read(&mm->mmap_sem);
+#endif
     return frame_count;
 }
 

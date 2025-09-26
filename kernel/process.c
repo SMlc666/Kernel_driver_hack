@@ -103,7 +103,11 @@ int get_process_memory_segments(pid_t pid, PMEM_SEGMENT_INFO user_buffer, size_t
         return -EINVAL;
     }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0))
     mmap_read_lock(mm);
+#else
+    down_read(&mm->mmap_sem);
+#endif
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
     struct vma_iterator vmi;
@@ -138,7 +142,11 @@ int get_process_memory_segments(pid_t pid, PMEM_SEGMENT_INFO user_buffer, size_t
         segments_found++;
     }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0))
     mmap_read_unlock(mm);
+#else
+    up_read(&mm->mmap_sem);
+#endif
     mmput(mm);
     put_task_struct(task);
 
