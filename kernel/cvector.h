@@ -43,8 +43,6 @@ extern "C" {
 }
 # endif
 
-#endif /* EOF file cvector.h */
-
 
  
 // #include "cvector.h"
@@ -359,3 +357,4 @@ void cv_print(const cvector cv)
 
 	return;  
 }
+#endif /* __CVECTOR_H__ */
