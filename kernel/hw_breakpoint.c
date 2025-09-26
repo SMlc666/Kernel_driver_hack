@@ -242,6 +242,9 @@ long hwbp_install(pid_t pid, uint64_t addr, int len, int type, uint64_t* handle_
     hwbp_handle_info.original_attr.exclude_kernel = 1;
     hwbp_handle_info.original_attr.bp_addr = addr;
     hwbp_handle_info.original_attr.bp_len = len;
+    if (type == 0) {
+        type = HW_BREAKPOINT_X;
+    }
     hwbp_handle_info.original_attr.bp_type = type;
     hwbp_handle_info.original_attr.disabled = 0;
 
