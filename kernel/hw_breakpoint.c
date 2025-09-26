@@ -180,7 +180,7 @@ static void hwbp_handler(struct perf_event *bp, struct perf_sample_data *data, s
 
 // --- Public API Implementation ---
 
-int hw_breakpoint_init(void) {
+int khack_hw_breakpoint_init(void) {
     int ret = 0;
     atomic64_set(&g_hook_pc, 0);
     mutex_init(&g_hwbp_handle_info_mutex);
@@ -206,7 +206,7 @@ int hw_breakpoint_init(void) {
     return 0;
 }
 
-void hw_breakpoint_exit(void) {
+void khack_hw_breakpoint_exit(void) {
 #ifdef CONFIG_ANTI_PTRACE_DETECTION_MODE
     anti_ptrace_exit();
 #endif

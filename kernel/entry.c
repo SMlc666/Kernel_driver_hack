@@ -480,7 +480,7 @@ is_hijacked = true;
 	PRINT_DEBUG("[+] Successfully hooked unlocked_ioctl and mmap for %s\n", TARGET_FILE);
 
     // Initialize hw breakpoint subsystem
-    ret = hw_breakpoint_init();
+    ret = khack_hw_breakpoint_init();
     if (ret) {
         _driver_cleanup();
         return ret;
@@ -556,7 +556,7 @@ static void _driver_cleanup(void)
     
     
     // Cleanup our subsystems
-    hw_breakpoint_exit();
+    khack_hw_breakpoint_exit();
     touch_control_exit();
 
 	touch_deinit();

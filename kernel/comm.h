@@ -91,7 +91,7 @@ typedef struct _HWBP_INSTALL {
 	uintptr_t addr;
 	int len;
 	int type;
-	uintptr_t handle; // out
+	uint64_t handle; // out
 } HWBP_INSTALL, *PHWBP_INSTALL;
 
 typedef struct _HWBP_GENERAL {

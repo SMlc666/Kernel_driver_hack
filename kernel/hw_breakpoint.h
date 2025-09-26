@@ -38,8 +38,8 @@ struct HWBP_HANDLE_INFO {
 	cvector hit_item_arr;
 };
 
-int hw_breakpoint_init(void);
-void hw_breakpoint_exit(void);
+int khack_hw_breakpoint_init(void);
+void khack_hw_breakpoint_exit(void);
 
 long hwbp_get_num_brps(void);
 long hwbp_get_num_wrps(void);
