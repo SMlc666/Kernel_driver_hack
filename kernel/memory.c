@@ -494,7 +494,11 @@ uintptr_t alloc_process_memory(pid_t pid, uintptr_t addr, size_t size)
 		return 0;
 	}
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0))
 	mmap_write_lock(mm);
+#else
+	down_write(&mm->mmap_sem);
+#endif
 
 	if (addr == 0)
 	{
@@ -531,16 +535,28 @@ uintptr_t alloc_process_memory(pid_t pid, uintptr_t addr, size_t size)
 
 	if (addr == 0)
 	{
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0))
 		mmap_write_unlock(mm);
+#else
+		up_write(&mm->mmap_sem);
+#endif
 		mmput(mm);
 		put_task_struct(task);
 		return 0;
 	}
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0))
 	vma = vm_area_alloc(mm);
+#else
+	vma = vm_area_alloc();
+#endif
 	if (!vma)
 	{
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0))
 		mmap_write_unlock(mm);
+#else
+		up_write(&mm->mmap_sem);
+#endif
 		mmput(mm);
 		put_task_struct(task);
 		return 0;
@@ -557,13 +573,21 @@ uintptr_t alloc_process_memory(pid_t pid, uintptr_t addr, size_t size)
 	if (insert_vm_struct(mm, vma))
 	{
 		vm_area_free(vma);
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0))
 		mmap_write_unlock(mm);
+#else
+		up_write(&mm->mmap_sem);
+#endif
 		mmput(mm);
 		put_task_struct(task);
 		return 0;
 	}
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0))
 	mmap_write_unlock(mm);
+#else
+	up_write(&mm->mmap_sem);
+#endif
 	mmput(mm);
 	put_task_struct(task);
 
@@ -588,9 +612,17 @@ int free_process_memory(pid_t pid, uintptr_t addr, size_t size)
 
 	INIT_LIST_HEAD(&uf);
 	
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0))
 	mmap_write_lock(mm);
+#else
+	down_write(&mm->mmap_sem);
+#endif
 	result = do_munmap(mm, addr, size, &uf);
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0))
 	mmap_write_unlock(mm);
+#else
+	up_write(&mm->mmap_sem);
+#endif
 
 	mmput(mm);
 	put_task_struct(task);
