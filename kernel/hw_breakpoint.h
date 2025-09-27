@@ -2,7 +2,7 @@
 #define HW_BREAKPOINT_H
 
 #include "comm.h"
-#include <linux/stdbool.h>
+#include <linux/types.h>
 
 int handle_set_hw_breakpoint(PHW_BREAKPOINT_CTL ctl, bool enable);
 
