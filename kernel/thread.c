@@ -26,7 +26,11 @@ int handle_thread_control(PTHREAD_CTL ctl)
         case THREAD_ACTION_SUSPEND:
             PRINT_DEBUG("[+] Stealth Suspend: Setting TID %d to TASK_UNINTERRUPTIBLE.\n", ctl->tid);
             // Directly manipulate the scheduler state. No signals involved.
-            set_task_state(task, TASK_UNINTERRUPTIBLE);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 0)
+            task->__state = TASK_UNINTERRUPTIBLE;
+#else
+            task->state = TASK_UNINTERRUPTIBLE;
+#endif
             break;
 
         case THREAD_ACTION_RESUME:
