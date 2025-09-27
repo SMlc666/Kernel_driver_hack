@@ -48,7 +48,6 @@ static void before_arch_ptrace(hook_fargs4_t *fargs, void *udata) {
 }
 
 static void after_arch_ptrace(hook_fargs4_t *fargs, void *udata) {
-    struct user_hwdebug_state old_hw_state;
     struct user_hwdebug_state new_hw_state;
     size_t copy_size;
     void __user *iov_base = (void __user *)fargs->local.data[0];
@@ -64,15 +63,11 @@ static void after_arch_ptrace(hook_fargs4_t *fargs, void *udata) {
     }
 
     copy_size = min(iov_len, sizeof(struct user_hwdebug_state));
-    if (copy_from_user(&old_hw_state, iov_base, copy_size) != 0) {
-        PRINT_DEBUG("[-] anti-ptrace: Failed to copy old_hw_state from user buffer\n");
-        return;
-    }
-
-    // Clear all breakpoint info, but keep the version
+    
+    // Zero out our local copy of the state
     memset(&new_hw_state, 0, sizeof(new_hw_state));
-    new_hw_state.dbgr_version = old_hw_state.dbgr_version;
 
+    // Copy the zeroed-out state to the user.
     if (copy_to_user(iov_base, &new_hw_state, copy_size) != 0) {
         PRINT_DEBUG("[-] anti-ptrace: Failed to copy modified new_hw_state back to user buffer\n");
     } else {
