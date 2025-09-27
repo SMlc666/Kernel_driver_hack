@@ -1,7 +1,8 @@
 #ifndef COMM_H
 #define COMM_H
 
-#include <linux/input.h> // For struct input_event
+// No longer need linux/input.h
+// #include <linux/input.h> // For struct input_event
 
 typedef struct _COPY_MEMORY
 {
@@ -47,23 +48,12 @@ enum OPERATIONS
 	OP_GET_PID = 0x808,
 	OP_READ_MEM_SAFE = 0x809,
 
-	// New control commands for touch
-	OP_HOOK_INPUT_DEVICE = 0x810,
-	OP_UNHOOK_INPUT_DEVICE = 0x811,
 	OP_ALLOC_MEM = 0x812,
 	OP_FREE_MEM = 0x813,
 	OP_GET_MEM_SEGMENTS = 0x814,
 
-	// New HWBP ops
-	OP_HWBP_GET_NUM_BRPS = 0x820,
-	OP_HWBP_GET_NUM_WRPS = 0x821,
-	OP_HWBP_INSTALL = 0x822,
-	OP_HWBP_UNINSTALL = 0x823,
-	OP_HWBP_GET_HIT_COUNT = 0x824,
-	OP_HWBP_GET_HIT_DETAIL = 0x825,
-	OP_HWBP_SET_REDIRECT_PC = 0x826,
-	OP_HWBP_SUSPEND = 0x827,
-	OP_HWBP_RESUME = 0x828,
+    // Anti-ptrace control
+    OP_ANTI_PTRACE_CTL = 0x830,
 };
 
 // 路径最大长度
@@ -86,71 +76,24 @@ typedef struct _GET_MEM_SEGMENTS
     size_t count;     // 输入: buffer能容纳的元素数量, 输出: 实际的内存段数量
 } GET_MEM_SEGMENTS, *PGET_MEM_SEGMENTS;
 
-typedef struct _HWBP_INSTALL {
-	pid_t pid;
-	uintptr_t addr;
-	int len;
-	int type;
-	uint64_t handle; // out
-} HWBP_INSTALL, *PHWBP_INSTALL;
-
-typedef struct _HWBP_GENERAL {
-	uint64_t handle;
-} HWBP_GENERAL, *PHWBP_GENERAL;
-
-typedef struct _HWBP_HIT_COUNT {
-	uint64_t handle;
-	uint64_t total_count;
-	uint64_t arr_count;
-} HWBP_HIT_COUNT, *PHWBP_HIT_COUNT;
-
-typedef struct _HWBP_HIT_DETAIL {
-	uint64_t handle;
-	void* buffer;
-	size_t size;
-} HWBP_HIT_DETAIL, *PHWBP_HIT_DETAIL;
-
-typedef struct _HWBP_REDIRECT_PC {
-	uint64_t pc;
-} HWBP_REDIRECT_PC, *PHWBP_REDIRECT_PC;
-
-// New struct for event batching
-#define MAX_EVENTS_PER_READ 64
-typedef struct _EVENT_PACKAGE {
-    struct input_event events[MAX_EVENTS_PER_READ];
-    unsigned int count;
-} EVENT_PACKAGE, *PEVENT_PACKAGE;
-
-// Used for OP_HOOK_INPUT_DEVICE_BY_NAME
-typedef struct _HOOK_INPUT_DEVICE_DATA
-{
-	char name[128];
-} HOOK_INPUT_DEVICE_DATA, *PHOOK_INPUT_DEVICE_DATA;
-
-#define MAX_TOUCH_POINTS 10
-
-typedef struct _TOUCH_POINT
-{
-    int id;
-    int x;
-    int y;
-    int size1;
-    int size2;
-    int size3;
-} TOUCH_POINT, *PTOUCH_POINT;
-
-typedef struct _TOUCH_DATA
-{
-    int point_count;
-    bool is_down; // overall touch state
-    TOUCH_POINT points[MAX_TOUCH_POINTS];
-} TOUCH_DATA, *PTOUCH_DATA;
-
 typedef struct _ALLOC_MEM
 {
 	pid_t pid;
 	uintptr_t addr; // in: desired addr (0 for auto), out: allocated addr
 	size_t size;
 } ALLOC_MEM, *PALLOC_MEM;
+
+// New struct for anti-ptrace control
+enum ANTI_PTRACE_ACTION
+{
+    ANTI_PTRACE_DISABLE = 0,
+    ANTI_PTRACE_ENABLE = 1,
+};
+
+typedef struct _ANTI_PTRACE_CTL
+{
+    int action; // see ANTI_PTRACE_ACTION
+} ANTI_PTRACE_CTL, *PANTI_PTRACE_CTL;
+
 
 #endif // COMM_H

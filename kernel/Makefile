@@ -3,7 +3,7 @@
 obj-m += my_driver.o
 
 # 2. 声明 my_driver.o 是由哪些源文件编译链接而成的。
-my_driver-objs := memory.o process.o hide_proc.o hide_kill.o entry.o touch.o touch_control.o hw_breakpoint.o anti_ptrace_detection.o cvector.o
+my_driver-objs := memory.o process.o hide_proc.o hide_kill.o entry.o anti_ptrace_detection.o cvector.o
 
 # Add inline hook files
 EXTRA_CFLAGS += -g -O0 -Wno-error=incompatible-pointer-types -Wno-error=unused-function

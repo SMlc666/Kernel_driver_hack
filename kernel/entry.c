@@ -12,26 +12,13 @@
 
 #include "comm.h"
 #include "memory.h"
-
-// --- Globals for mmap hijack ---
-static int (*original_proc_version_mmap)(struct file *, struct vm_area_struct *);
-static void *shared_mem = NULL; // Generic pointer for our shared memory
-
-// A simple struct for our test
-struct TestSharedMemory {
-    volatile uint64_t magic_value;
-};
-
 #include "process.h"
 #include "hide_proc.h"
 #include "hide_kill.h"
-#include "touch.h"
-#include "touch_control.h"
-#include "hw_breakpoint.h"
+#include "anti_ptrace_detection.h" // Added
 #include "inline_hook/p_lkrg_main.h"
 #include "inline_hook/utils/p_memory.h"
 #include "version_control.h"
-#include "touch_shared.h"
 
 // --- Start of Hijack Logic ---
 
@@ -50,43 +37,7 @@ static long (*original_ioctl)(struct file *, unsigned int, unsigned long) = NULL
 static struct file_operations *proc_version_fops = NULL;
 static bool is_hijacked = false;
 
-// --- mmap hijack implementation ---
-static int hijacked_proc_version_mmap(struct file *filp, struct vm_area_struct *vma)
-{
-    unsigned long size = vma->vm_end - vma->vm_start;
-    unsigned long offset;
-	size_t shared_mem_size = PAGE_ALIGN(sizeof(struct SharedTouchMemory));
-
-    PRINT_DEBUG("[+] Hijacked mmap called by PID %d for size %lu\n", current->pid, size);
-
-    if (current->tgid != client_pid || client_pid == 0) {
-        if (original_proc_version_mmap) {
-            return original_proc_version_mmap(filp, vma);
-        }
-        return -ENODEV;
-    }
-
-    if (size > shared_mem_size) {
-		PRINT_DEBUG("[-] mmap request size (%lu) is larger than allocated size (%zu)\n", size, shared_mem_size);
-		return -EINVAL;
-	}
-
-    for (offset = 0; offset < size; offset += PAGE_SIZE) {
-        unsigned long pfn = vmalloc_to_pfn((void *)((unsigned long)shared_mem + offset));
-        if (remap_pfn_range(vma, vma->vm_start + offset, pfn, PAGE_SIZE, vma->vm_page_prot)) {
-            PRINT_DEBUG("[-] remap_pfn_range failed for offset %lu in hijacked_mmap\n", offset);
-            return -EAGAIN;
-        }
-    }
-
-    vma->vm_flags |= VM_IO | VM_DONTEXPAND | VM_DONTDUMP;
-    PRINT_DEBUG("[+] Shared memory mapped successfully via hijack.\n");
-    return 0;
-}
-
-
 // --- End of Hijack Logic ---
-
 
 int dispatch_open(struct inode *node, struct file *file)
 {
@@ -118,7 +69,9 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 	static MODULE_BASE mb;
 	static GET_PID gp;
 	static ALLOC_MEM am;
-	static GET_MEM_SEGMENTS gms; // 新增
+	static GET_MEM_SEGMENTS gms;
+    static HIDE_PROC hp;
+    static ANTI_PTRACE_CTL apc;
     
     PRINT_DEBUG("[+] dispatch_ioctl called by PID %d with cmd: 0x%x\n", current->pid, cmd);
 
@@ -202,7 +155,6 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 	}
 	case OP_HIDE_PROC:
 	{
-		static HIDE_PROC hp;
 		if (copy_from_user(&hp, (void __user *)arg, sizeof(hp)) != 0)
 		{
 			return -1;
@@ -254,23 +206,6 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 		}
 		break;
 	}
-	// --- New Touch Control IOCTLs ---
-	case OP_HOOK_INPUT_DEVICE:
-	{
-		HOOK_INPUT_DEVICE_DATA hidd;
-		if (copy_from_user(&hidd, (void __user *)arg, sizeof(hidd)) != 0) {
-			return -EFAULT;
-		}
-		if (touch_control_start_hijack(hidd.name) != 0) {
-			return -EINVAL; // Hook failed
-		}
-		break;
-	}
-	case OP_UNHOOK_INPUT_DEVICE:
-	{
-		touch_control_stop_hijack();
-		break;
-	}
 	case OP_ALLOC_MEM:
 	{
 		if (copy_from_user(&am, (void __user *)arg, sizeof(am)) != 0)
@@ -296,7 +231,7 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 		}
 		break;
 	}
-	case OP_GET_MEM_SEGMENTS: // 新增 case
+	case OP_GET_MEM_SEGMENTS:
     {
         if (copy_from_user(&gms, (void __user *)arg, sizeof(gms)) != 0)
         {
@@ -308,121 +243,37 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
             return -EFAULT;
         }
 
-        			if (copy_to_user((void __user *)arg, &gms, sizeof(gms)) != 0)
-        			{
-        				return -EFAULT;
-        			}
-        			break;
-        		}
-        	// --- HW Breakpoint IOCTLs ---
-        	case OP_HWBP_GET_NUM_BRPS:
-        	{
-        		return hwbp_get_num_brps();
-        	}
-        	case OP_HWBP_GET_NUM_WRPS:
-        	{
-        		return hwbp_get_num_wrps();
-        	}
-        	case OP_HWBP_INSTALL:
-        	{
-        		static HWBP_INSTALL hwbpi;
-        		if (copy_from_user(&hwbpi, (void __user *)arg, sizeof(hwbpi)) != 0) {
-        			return -EFAULT;
-        		}
-        		if (hwbp_install(hwbpi.pid, hwbpi.addr, hwbpi.len, hwbpi.type, &hwbpi.handle) != 0) {
-        			return -EFAULT;
-        		}
-        		if (copy_to_user((void __user *)arg, &hwbpi, sizeof(hwbpi)) != 0) {
-        			hwbp_uninstall(hwbpi.handle); // Rollback
-        			return -EFAULT;
-        		}
-        		break;
-        	}
-        	case OP_HWBP_UNINSTALL:
-        	{
-        		static HWBP_GENERAL hwbp_gen;
-        		if (copy_from_user(&hwbp_gen, (void __user *)arg, sizeof(hwbp_gen)) != 0) {
-        			return -EFAULT;
-        		}
-        		return hwbp_uninstall(hwbp_gen.handle);
-        	}
-        	case OP_HWBP_SUSPEND:
-        	{
-        		static HWBP_GENERAL hwbp_gen;
-        		if (copy_from_user(&hwbp_gen, (void __user *)arg, sizeof(hwbp_gen)) != 0) {
-        			return -EFAULT;
-        		}
-        		return hwbp_suspend(hwbp_gen.handle);
-        	}
-        	case OP_HWBP_RESUME:
-        	{
-        		static HWBP_GENERAL hwbp_gen;
-        		if (copy_from_user(&hwbp_gen, (void __user *)arg, sizeof(hwbp_gen)) != 0) {
-        			return -EFAULT;
-        		}
-        		return hwbp_resume(hwbp_gen.handle);
-        	}
-        	case OP_HWBP_GET_HIT_COUNT:
-        	{
-        		static HWBP_HIT_COUNT hwbp_hc;
-        		if (copy_from_user(&hwbp_hc, (void __user *)arg, sizeof(hwbp_hc)) != 0) {
-        			return -EFAULT;
-        		}
-        		if (hwbp_get_hit_count(hwbp_hc.handle, &hwbp_hc.total_count, &hwbp_hc.arr_count) != 0) {
-        			return -EFAULT;
-        		}
-        		if (copy_to_user((void __user *)arg, &hwbp_hc, sizeof(hwbp_hc)) != 0) {
-        			return -EFAULT;
-        		}
-        		break;
-        	}
-        	case OP_HWBP_GET_HIT_DETAIL:
-        	{
-        		static HWBP_HIT_DETAIL hwbp_hd;
-        		if (copy_from_user(&hwbp_hd, (void __user *)arg, sizeof(hwbp_hd)) != 0) {
-        			return -EFAULT;
-        		}
-        		return hwbp_get_hit_detail(hwbp_hd.handle, hwbp_hd.buffer, hwbp_hd.size);
-        	}
-        	case OP_HWBP_SET_REDIRECT_PC:
-        	{
-        		static HWBP_REDIRECT_PC hwbp_rpc;
-        		if (copy_from_user(&hwbp_rpc, (void __user *)arg, sizeof(hwbp_rpc)) != 0) {
-        			return -EFAULT;
-        		}
-        		return hwbp_set_redirect_pc(hwbp_rpc.pc);
-        	}
-        	default:
-        		return -EINVAL; // Unrecognized command for our driver
-        	}
-        	return 0;
+		if (copy_to_user((void __user *)arg, &gms, sizeof(gms)) != 0)
+		{
+			return -EFAULT;
+		}
+		break;
+	}
+    case OP_ANTI_PTRACE_CTL:
+    {
+        if (copy_from_user(&apc, (void __user *)arg, sizeof(apc)) != 0)
+        {
+            return -EFAULT;
         }
+        if (apc.action == ANTI_PTRACE_ENABLE) {
+            start_anti_ptrace_detection();
+        } else {
+            stop_anti_ptrace_detection();
+        }
+        break;
+    }
+	default:
+		return -EINVAL; // Unrecognized command for our driver
+	}
+	return 0;
+}
+
 int __init driver_entry(void)
 {
 	int ret;
 	struct file *target_file;
     struct inode *target_inode;
     void *dispatch_ioctl_ptr = &dispatch_ioctl;
-    void *hijacked_mmap_ptr = &hijacked_proc_version_mmap;
-	size_t shared_mem_size = sizeof(struct SharedTouchMemory);
-	unsigned long addr;
-
-	PRINT_DEBUG("[+] driver_entry");
-
-    // Allocate shared memory for mmap
-    shared_mem = vmalloc(shared_mem_size);
-    if (!shared_mem) {
-        PRINT_DEBUG("[-] Failed to vmalloc shared memory\n");
-        return -ENOMEM;
-    }
-	for (addr = (unsigned long)shared_mem; addr < (unsigned long)shared_mem + shared_mem_size; addr += PAGE_SIZE) {
-        SetPageReserved(vmalloc_to_page((void *)addr));
-    }
-    memset(shared_mem, 0, shared_mem_size);
-    PRINT_DEBUG("[+] Shared memory allocated at %p (size: %zu)\n", shared_mem, shared_mem_size);
-
-
-
 
 	PRINT_DEBUG("[+] driver_entry");
 
@@ -460,34 +311,15 @@ int __init driver_entry(void)
 	}
 
     original_ioctl = proc_version_fops->unlocked_ioctl;
-    original_proc_version_mmap = proc_version_fops->mmap;
 
 	if (remap_write_range(&proc_version_fops->unlocked_ioctl, &dispatch_ioctl_ptr, sizeof(void *), true)) {
         PRINT_DEBUG("[-] Failed to hook unlocked_ioctl for %s\n", TARGET_FILE);
         khook_exit();
         return -EFAULT;
     }
-
-	if (remap_write_range(&proc_version_fops->mmap, &hijacked_mmap_ptr, sizeof(void *), true)) {
-        PRINT_DEBUG("[-] Failed to hook mmap for %s\n", TARGET_FILE);
-        // Restore ioctl on failure
-        remap_write_range(&proc_version_fops->unlocked_ioctl, &original_ioctl, sizeof(void *), true);
-        khook_exit();
-        return -EFAULT;
-    }
 	
-is_hijacked = true;
-	PRINT_DEBUG("[+] Successfully hooked unlocked_ioctl and mmap for %s\n", TARGET_FILE);
-
-    // Initialize hw breakpoint subsystem
-    ret = khack_hw_breakpoint_init();
-    if (ret) {
-        _driver_cleanup();
-        return ret;
-    }
-
-    // Initialize our subsystems
-    touch_control_init(shared_mem);
+    is_hijacked = true;
+	PRINT_DEBUG("[+] Successfully hooked unlocked_ioctl for %s\n", TARGET_FILE);
 
 	ret = hide_proc_init();
 	if (ret)
@@ -526,14 +358,6 @@ static void _driver_cleanup(void)
 		PRINT_DEBUG("[+] Restoring original operations for %s\n", TARGET_FILE);
 		
 		if (proc_version_fops) {
-            // Restore mmap first
-            if (remap_write_range(&proc_version_fops->mmap, &original_proc_version_mmap, sizeof(void *), true)) {
-                PRINT_DEBUG("[-] Failed to restore mmap for %s\n", TARGET_FILE);
-            } else {
-                PRINT_DEBUG("[+] Successfully restored mmap.\n");
-            }
-
-            // Then restore ioctl
             if (remap_write_range(&proc_version_fops->unlocked_ioctl, &original_ioctl_ptr, sizeof(void *), true)) {
                 PRINT_DEBUG("[-] Failed to restore unlocked_ioctl for %s\n", TARGET_FILE);
             } else {
@@ -542,24 +366,8 @@ static void _driver_cleanup(void)
         }
 	}
     
-    // Free shared memory
-    if (shared_mem) {
-		unsigned long addr;
-		size_t shared_mem_size = sizeof(struct SharedTouchMemory);
-		for (addr = (unsigned long)shared_mem; addr < (unsigned long)shared_mem + shared_mem_size; addr += PAGE_SIZE) {
-	        ClearPageReserved(vmalloc_to_page((void *)addr));
-	    }
-        vfree(shared_mem);
-        shared_mem = NULL;
-        PRINT_DEBUG("[+] Shared memory freed.\n");
-    }
-    
-    
     // Cleanup our subsystems
-    khack_hw_breakpoint_exit();
-    touch_control_exit();
-
-	touch_deinit();
+    stop_anti_ptrace_detection(); // Ensure it's off on unload
 	hide_kill_exit();
 	hide_proc_exit();
 	khook_exit();

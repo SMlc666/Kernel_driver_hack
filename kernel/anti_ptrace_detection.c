@@ -8,8 +8,6 @@
 #include "anti_ptrace_detection.h"
 #include "inline_hook/p_lkrg_main.h"
 #include "inline_hook/p_hook.h"
-#include "hw_breakpoint.h"
-#include "api_proxy.h"
 
 #ifdef CONFIG_ANTI_PTRACE_DETECTION_MODE
 
@@ -22,29 +20,6 @@ static void *g_arch_ptrace_addr = NULL;
 // Forward declarations
 static void before_arch_ptrace(hook_fargs4_t *fargs, void *udata);
 static void after_arch_ptrace(hook_fargs4_t *fargs, void *udata);
-
-static bool is_my_hwbp_handle_addr(size_t addr) {
-    citerator iter;
-    bool found = false;
-    unsigned long flags;
-    cvector *vec = hwbp_get_vector();
-    spinlock_t *lock = hwbp_get_mutex();
-
-    if(addr == 0 || !vec || !lock) {
-        return found;
-    }
-
-    spin_lock_irqsave(lock, flags);
-    for (iter = cvector_begin(*vec); iter != cvector_end(*vec); iter = cvector_next(*vec, iter)) {
-        struct HWBP_HANDLE_INFO *hwbp_handle_info = (struct HWBP_HANDLE_INFO *)iter;
-        if(hwbp_handle_info->original_attr.bp_addr == addr) {
-            found = true;
-            break;
-        }
-    }
-    spin_unlock_irqrestore(lock, flags);
-    return found;
-}
 
 static void before_arch_ptrace(hook_fargs4_t *fargs, void *udata) {
     long request = (long)fargs->arg1;
@@ -76,7 +51,6 @@ static void after_arch_ptrace(hook_fargs4_t *fargs, void *udata) {
     struct user_hwdebug_state old_hw_state;
     struct user_hwdebug_state new_hw_state;
     size_t copy_size;
-    int i = 0, y = 0;
     void __user *iov_base = (void __user *)fargs->local.data[0];
     size_t iov_len = fargs->local.data[1];
 
@@ -95,23 +69,23 @@ static void after_arch_ptrace(hook_fargs4_t *fargs, void *udata) {
         return;
     }
 
-    memcpy(&new_hw_state, &old_hw_state, sizeof(new_hw_state));
-    memset(new_hw_state.dbg_regs, 0x00, sizeof(new_hw_state.dbg_regs));
-
-    for (i = 0; i < 16; i++) {
-        if(!is_my_hwbp_handle_addr(old_hw_state.dbg_regs[i].addr)) {
-            memcpy(&new_hw_state.dbg_regs[y++], &old_hw_state.dbg_regs[i], sizeof(old_hw_state.dbg_regs[i]));
-        }
-    }
+    // Clear all breakpoint info, but keep the version
+    memset(&new_hw_state, 0, sizeof(new_hw_state));
+    new_hw_state.dbgr_version = old_hw_state.dbgr_version;
 
     if (copy_to_user(iov_base, &new_hw_state, copy_size) != 0) {
         PRINT_DEBUG("[-] anti-ptrace: Failed to copy modified new_hw_state back to user buffer\n");
     } else {
-        PRINT_DEBUG("[+] anti-ptrace: Successfully hid hw breakpoints from ptrace.\n");
+        PRINT_DEBUG("[+] anti-ptrace: Successfully hid all hw breakpoints from ptrace.\n");
     }
 }
 
 int start_anti_ptrace_detection(void) {
+    if (g_arch_ptrace_addr) {
+        PRINT_DEBUG("[+] anti-ptrace: Already running.\n");
+        return 0;
+    }
+
     if (P_SYM(p_kallsyms_lookup_name) == NULL) {
         PRINT_DEBUG("[-] anti-ptrace: kallsyms_lookup_name not available.\n");
         return -1;

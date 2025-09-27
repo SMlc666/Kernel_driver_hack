@@ -7,12 +7,15 @@
 
 void print_menu()
 {
-	printf("\n=== Process Hiding Menu ===\n");
+	printf("\n=== Kernel Driver Test Menu ===\n");
 	printf("1. Hide process by PID\n");
 	printf("2. Unhide process by PID\n");
 	printf("3. Clear all hidden processes\n");
 	printf("4. Test memory read/write\n");
-	printf("5. Exit\n");
+    printf("5. Get PID by name\n");
+    printf("6. Enable anti-ptrace\n");
+    printf("7. Disable anti-ptrace\n");
+	printf("8. Exit\n");
 	printf("Choice: ");
 }
 
@@ -41,8 +44,7 @@ int main(int argc, char const *argv[])
 		return 1;
 	}
 
-	printf("[+] Process Hiding Demo\n");
-
+	printf("[+] Kernel Driver Test Client\n");
 	printf("[+] Driver device: %s\n", DEVICE_NAME);
 
 	while (1)
@@ -110,7 +112,7 @@ int main(int argc, char const *argv[])
 			pid_t pid = get_name_pid(process_name);
 			if (pid > 0)
 			{
-				driver->initialize(pid);
+				driver->set_target_pid(pid);
 				printf("Enter module name (e.g., libunity.so): ");
 				char module_name[256];
 				scanf("%s", module_name);
@@ -150,7 +152,23 @@ int main(int argc, char const *argv[])
 			break;
 		}
 
-		case 6:
+        case 6:
+            if (driver->set_anti_ptrace(true)) {
+                printf("[+] Anti-ptrace enabled.\n");
+            } else {
+                printf("[-] Failed to enable anti-ptrace.\n");
+            }
+            break;
+
+        case 7:
+            if (driver->set_anti_ptrace(false)) {
+                printf("[+] Anti-ptrace disabled.\n");
+            } else {
+                printf("[-] Failed to disable anti-ptrace.\n");
+            }
+            break;
+
+		case 8:
 			printf("[+] Exiting...\n");
 			driver->clear_hidden_processes();
 			return 0;
