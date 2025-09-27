@@ -259,7 +259,9 @@ int hwbp_install(pid_t pid, uintptr_t addr, int len, int type, uint64_t *handle)
     hwbp_handle_info.task_id = pid;
     hwbp_handle_info.is_32bit_task = is_compat_thread(task_thread_info(task));
 
-    ptrace_breakpoint_init(&hwbp_handle_info.original_attr);
+    hwbp_handle_info.original_attr.size = sizeof(struct perf_event_attr);
+    hwbp_handle_info.original_attr.type = PERF_TYPE_BREAKPOINT;
+    hwbp_handle_info.original_attr.pinned = 1;
     hwbp_handle_info.original_attr.bp_addr = addr;
     hwbp_handle_info.original_attr.bp_len = len;
     hwbp_handle_info.original_attr.bp_type = type;
