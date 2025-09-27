@@ -3,8 +3,22 @@
 #include <linux/sched/signal.h>
 #include <linux/sched/task.h> // For set_task_state and wake_up_process
 #include <linux/uaccess.h>
+#include <linux/pid_namespace.h> // For task_active_pid_ns
 #include "thread.h"
 #include "version_control.h"
+
+// The function find_task_by_vpid is not exported in all kernel versions.
+// We re-implement it here using exported functions.
+static struct task_struct *khack_find_task_by_pid_ns(pid_t nr, struct pid_namespace *ns)
+{
+    RCU_LOCKDEP_WARN(!rcu_read_lock_held(), "khack_find_task_by_pid_ns() needs rcu_read_lock() protection");
+    return pid_task(find_pid_ns(nr, ns), PIDTYPE_PID);
+}
+
+static struct task_struct *khack_find_task_by_vpid(pid_t vnr)
+{
+    return khack_find_task_by_pid_ns(vnr, task_active_pid_ns(current));
+}
 
 // The one and only implementation for thread control, using the stealthiest methods.
 int handle_thread_control(PTHREAD_CTL ctl)
@@ -13,7 +27,7 @@ int handle_thread_control(PTHREAD_CTL ctl)
     int ret = 0;
 
     rcu_read_lock();
-    task = find_task_by_vpid(ctl->tid);
+    task = khack_find_task_by_vpid(ctl->tid);
     if (task) {
         get_task_struct(task); // Pin the task struct
     }
@@ -70,7 +84,7 @@ int handle_enum_threads(PENUM_THREADS et)
     PTHREAD_INFO user_buffer = (PTHREAD_INFO)et->buffer; // This is a user-space pointer
 
     rcu_read_lock();
-    process_leader = find_task_by_vpid(et->pid);
+    process_leader = khack_find_task_by_vpid(et->pid);
     if (!process_leader) {
         rcu_read_unlock();
         return -ESRCH;
