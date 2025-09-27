@@ -30,7 +30,7 @@ struct mutex *hwbp_get_mutex(void) {
 }
 
 cvector *hwbp_get_vector(void) {
-    return g_hwbp_handle_info_arr;
+    return &g_hwbp_handle_info_arr;
 }
 
 static void record_hit_details(struct HWBP_HANDLE_INFO *info, struct pt_regs *regs) {
