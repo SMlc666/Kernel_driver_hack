@@ -2,6 +2,29 @@
 #include <linux/types.h>
 #include <linux/errno.h>
 #include <linux/sched.h>
+#include <asm/sysreg.h>
+#include <asm/cpufeature.h>
+
+/*
+ * This function is declared in <asm/cpufeature.h> but not exported for
+ * modules, causing a link error. We provide our own implementation here
+ * to satisfy the linker.
+ */
+u64 read_sanitised_ftr_reg(u32 id)
+{
+	u64 val;
+
+	switch (id) {
+	case SYS_ID_AA64DFR0_EL1:
+		val = read_sysreg(id_aa64dfr0_el1);
+		break;
+	default:
+		pr_warn("read_sanitised_ftr_reg: unhandled reg ID %d\n", id);
+		return 0;
+	}
+
+	return val;
+}
 #include <linux/sched/signal.h>
 #include <linux/pid.h>
 #include <linux/mutex.h>
