@@ -1,5 +1,5 @@
-# ifndef __ARM64_REGISTER_HELPER_H__
-# define __ARM64_REGISTER_HELPER_H__
+#ifndef __ARM64_REGISTER_HELPER_H__
+#define __ARM64_REGISTER_HELPER_H__
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/uaccess.h>
@@ -51,20 +51,6 @@
 	WRITE_WB_REG_CASE(OFF, 13, REG, VAL);	\
 	WRITE_WB_REG_CASE(OFF, 14, REG, VAL);	\
 	WRITE_WB_REG_CASE(OFF, 15, REG, VAL)
-
-static inline u64 read_id_aa64dfr0_el1(void) {
-    u64 val;
-    asm volatile("mrs %0, id_aa64dfr0_el1" : "=r" (val));
-    return val;
-}
-
-static inline int get_num_brps(void) {
-	return ((read_id_aa64dfr0_el1() >> 12) & 0xf) + 1;
-}
-
-static inline int get_num_wrps(void) {
-	return ((read_id_aa64dfr0_el1() >> 20) & 0xf) + 1;
-}
 
 static uint64_t read_wb_reg(int reg, int n)
 {
@@ -131,12 +117,12 @@ static bool toggle_bp_registers_directly(const struct perf_event_attr * attr, bo
 	case HW_BREAKPOINT_RW:
 		ctrl_reg = AARCH64_DBG_REG_WCR;
 		val_reg = AARCH64_DBG_REG_WVR;
-		max_slots = getCpuNumWrps();
+		max_slots = get_num_wrps();
 		break;
 	case HW_BREAKPOINT_X:
 		ctrl_reg = AARCH64_DBG_REG_BCR;
 		val_reg = AARCH64_DBG_REG_BVR;
-		max_slots = getCpuNumBrps();
+		max_slots = get_num_brps();
 		break;
 	default:
 		return false;
@@ -163,4 +149,3 @@ static bool toggle_bp_registers_directly(const struct perf_event_attr * attr, bo
 	return true;
 }
 #endif
-
