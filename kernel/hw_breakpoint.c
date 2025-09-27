@@ -268,7 +268,6 @@ int hwbp_install(pid_t pid, uintptr_t addr, int len, int type, uint64_t *handle)
     hwbp_handle_info.original_attr.bp_len = len;
     hwbp_handle_info.original_attr.bp_type = type;
     hwbp_handle_info.original_attr.disabled = 0;
-    hwbp_handle_info.original_attr.sample_period = 1;
 
     hwbp_handle_info.sample_hbp = x_register_user_hw_breakpoint(&hwbp_handle_info.original_attr, hwbp_handler, NULL, task);
 
