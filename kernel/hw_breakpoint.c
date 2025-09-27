@@ -155,22 +155,25 @@ static void hwbp_handler(struct perf_event *bp, struct perf_sample_data *data, s
         
 #ifdef CONFIG_MODIFY_HIT_NEXT_MODE
 		if(hwbp_handle_info->next_instruction_attr.bp_addr != regs->pc) {
-			// first hit
-			bool should_toggle = true;
+			// This is the first hit (on the actual target address)
 			hwbp_handle_info->hit_total_count++;
 			record_hit_details(hwbp_handle_info, regs);
+
+			bool should_advance_pc = true;
 			if(!hwbp_handle_info->is_32bit_task) {
 				if(arm64_move_bp_to_next_instruction(bp, regs->pc + 4, &hwbp_handle_info->original_attr, &hwbp_handle_info->next_instruction_attr)) {
-					should_toggle = false;
+					should_advance_pc = false;
 				}
 			}
-			if(should_toggle) {
-				toggle_bp_registers_directly(&hwbp_handle_info->original_attr, hwbp_handle_info->is_32bit_task, 0);
+			if(should_advance_pc) {
+				PRINT_DEBUG("[-] Failed to move breakpoint, advancing PC to avoid hang.\n");
+				regs->pc += 4;
 			}
 		} else {
-			// second hit
+			// This is the second hit (on the temporary address pc+4)
 			if(!arm64_recovery_bp_to_original(bp, &hwbp_handle_info->original_attr, &hwbp_handle_info->next_instruction_attr)) {
-				toggle_bp_registers_directly(&hwbp_handle_info->next_instruction_attr, hwbp_handle_info->is_32bit_task, 0);
+				PRINT_DEBUG("[-] Failed to recover breakpoint, advancing PC to avoid hang.\n");
+				regs->pc += 4;
 			}
 		}
 #else
