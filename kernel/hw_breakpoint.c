@@ -83,7 +83,7 @@ static void record_hit_details(struct HWBP_HANDLE_INFO *info, struct pt_regs *re
 }
 
 static void hwbp_hit_user_info_callback(struct perf_event *bp,
-	sTruct perf_sample_data *data,
+	struct perf_sample_data *data,
 	struct pt_regs *regs, struct HWBP_HANDLE_INFO * hwbp_handle_info) {
 	hwbp_handle_info->hit_total_count++;
 	record_hit_details(hwbp_handle_info, regs);
