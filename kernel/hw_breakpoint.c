@@ -14,6 +14,11 @@
 #include "api_proxy.h"
 #include "anti_ptrace_detection.h"
 #include "process.h"
+#include <linux/kallsyms.h>
+
+// Function pointer for the unexported read_sanitised_ftr_reg
+typedef u64 (*read_sanitised_ftr_reg_t)(u32 id);
+read_sanitised_ftr_reg_t read_sanitised_ftr_reg_ptr;
 
 // --- Globals ---
 static atomic64_t g_redirect_pc;
@@ -146,6 +151,12 @@ static void hwbp_handler(struct perf_event *bp, struct perf_sample_data *data, s
 // --- Public API Implementation ---
 
 int khack_hw_breakpoint_init(void) {
+    read_sanitised_ftr_reg_ptr = (read_sanitised_ftr_reg_t)kallsyms_lookup_name("read_sanitised_ftr_reg");
+    if (!read_sanitised_ftr_reg_ptr) {
+        PRINT_DEBUG("[-] Failed to resolve read_sanitised_ftr_reg via kallsyms\n");
+        return -ENOENT;
+    }
+
     if (hwbp_resolve_api_symbols() != 0) {
         PRINT_DEBUG("[-] Failed to resolve HWBP API symbols.\n");
         return -1;
