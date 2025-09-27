@@ -77,6 +77,15 @@ static int set_breakpoint_on_cpu(void *info)
             return -EINVAL;
     }
 
+    // Enable debug exceptions in MDSCR_EL1
+    if (ctl->action) {
+        u64 mdscr;
+        asm volatile("mrs %0, mdscr_el1" : "=r"(mdscr));
+        mdscr |= (1 << 15);  // MDE: Monitor Debug Events
+        mdscr |= (1 << 13);  // KDE: Kernel Debug Enable
+        asm volatile("msr mdscr_el1, %0" : : "r"(mdscr));
+    }
+
     // Ensure the instruction pipeline is aware of the change
     asm volatile("isb");
 
