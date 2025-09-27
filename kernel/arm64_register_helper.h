@@ -102,7 +102,7 @@ static uint64_t calc_hw_addr(const struct perf_event_attr* attr, bool is_32bit_t
 		else
 			alignment_mask = 0x3;
 	} else {
-		if (attr->type == HW_BREAKPOINT_X)
+		if (attr->bp_type == HW_BREAKPOINT_X)
 			alignment_mask = 0x3;
 		else
 			alignment_mask = 0x7;
