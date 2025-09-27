@@ -250,6 +250,7 @@ int hwbp_install(pid_t pid, uintptr_t addr, int len, int type, uint64_t *handle)
     struct HWBP_HANDLE_INFO hwbp_handle_info = {0};
     int ret = 0;
 
+    PRINT_DEBUG("hwbp_install: pid=%d, addr=0x%lx, len=%d, type=%d\n", pid, (unsigned long)addr, len, type);
     task = get_pid_task(find_get_pid(pid), PIDTYPE_PID);
     if (!task) {
         PRINT_DEBUG("[-] hwbp_install: Could not find task for PID %d\n", pid);
