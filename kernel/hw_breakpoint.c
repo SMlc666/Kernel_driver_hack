@@ -45,7 +45,7 @@ static int set_breakpoint_on_cpu(void *info)
         bcr_val |= (1 << 0);       // E: Enable breakpoint
         bcr_val |= (0b01 << 1);    // PMC: EL0
         bcr_val |= (0b0000 << 20);  // BT: Unlinked address match
-        bcr_val |= (0b0010 << 5);  // BAS: Byte address select - bits [7:5]
+        bcr_val |= (0b1111 << 5);  // BAS: All 4 bytes for instruction breakpoint
 
         // For instruction breakpoints, length must be 0 (aligned to instruction boundary)
         // Address should be aligned to 4 bytes
