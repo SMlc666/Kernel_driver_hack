@@ -5,6 +5,29 @@
 #include <linux/uaccess.h>
 #include <linux/kernel.h>
 #include <linux/hw_breakpoint.h>
+#include <asm/sysreg.h>
+
+/*
+ * The kernel's get_num_brps/wrps are inline functions that call
+ * the unexported read_sanitised_ftr_reg(), causing link errors in
+ * modules. We define a local version of read_sanitised_ftr_reg() here
+ * to resolve the symbol. It only handles the cases needed by this module.
+ */
+static u64 read_sanitised_ftr_reg(u32 id)
+{
+	u64 val;
+
+	switch (id) {
+	case SYS_ID_AA64DFR0_EL1:
+		val = read_sysreg(id_aa64dfr0_el1);
+		break;
+	default:
+		WARN_ON_ONCE(1);
+		return 0;
+	}
+
+	return val;
+}
 
 #define READ_WB_REG_CASE(OFF, N, REG, VAL)	\
 	case (OFF + N):				\
