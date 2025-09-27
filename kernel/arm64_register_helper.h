@@ -52,12 +52,18 @@
 	WRITE_WB_REG_CASE(OFF, 14, REG, VAL);	\
 	WRITE_WB_REG_CASE(OFF, 15, REG, VAL)
 
-static int getCpuNumBrps(void) {
-	return ((read_cpuid(ID_AA64DFR0_EL1) >> 12) & 0xf) + 1;
+static inline u64 read_id_aa64dfr0_el1(void) {
+    u64 val;
+    asm volatile("mrs %0, id_aa64dfr0_el1" : "=r" (val));
+    return val;
 }
 
-static int getCpuNumWrps(void) {
-	return ((read_cpuid(ID_AA64DFR0_EL1) >> 20) & 0xf) + 1;
+static inline int get_num_brps(void) {
+	return ((read_id_aa64dfr0_el1() >> 12) & 0xf) + 1;
+}
+
+static inline int get_num_wrps(void) {
+	return ((read_id_aa64dfr0_el1() >> 20) & 0xf) + 1;
 }
 
 static uint64_t read_wb_reg(int reg, int n)
