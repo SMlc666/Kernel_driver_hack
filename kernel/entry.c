@@ -16,6 +16,7 @@
 #include "hide_proc.h"
 #include "hide_kill.h"
 #include "anti_ptrace_detection.h" // Added
+#include "thread.h"
 #include "inline_hook/p_lkrg_main.h"
 #include "inline_hook/utils/p_memory.h"
 #include "version_control.h"
@@ -72,6 +73,9 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 	static GET_MEM_SEGMENTS gms;
     static HIDE_PROC hp;
     static ANTI_PTRACE_CTL apc;
+    static GET_ALL_PROCS gap;
+    static ENUM_THREADS et;
+    static THREAD_CTL tc;
     
     PRINT_DEBUG("[+] dispatch_ioctl called by PID %d with cmd: 0x%x\n", current->pid, cmd);
 
@@ -249,6 +253,22 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 		}
 		break;
 	}
+	case OP_GET_ALL_PROCS:
+	{
+		if (copy_from_user(&gap, (void __user *)arg, sizeof(gap)) != 0)
+		{
+			return -EFAULT;
+		}
+		if (get_all_processes((PPROCESS_INFO)gap.buffer, &gap.count) != 0)
+		{
+			return -EFAULT;
+		}
+		if (copy_to_user((void __user *)arg, &gap, sizeof(gap)) != 0)
+		{
+			return -EFAULT;
+		}
+		break;
+	}
     case OP_ANTI_PTRACE_CTL:
     {
         if (copy_from_user(&apc, (void __user *)arg, sizeof(apc)) != 0)
@@ -259,6 +279,34 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
             start_anti_ptrace_detection();
         } else {
             stop_anti_ptrace_detection();
+        }
+        break;
+    }
+    case OP_ENUM_THREADS:
+    {
+        if (copy_from_user(&et, (void __user *)arg, sizeof(et)) != 0)
+        {
+            return -EFAULT;
+        }
+        if (handle_enum_threads(&et) != 0)
+        {
+            return -EFAULT;
+        }
+        if (copy_to_user((void __user *)arg, &et, sizeof(et)) != 0)
+        {
+            return -EFAULT;
+        }
+        break;
+    }
+    case OP_THREAD_CTL:
+    {
+        if (copy_from_user(&tc, (void __user *)arg, sizeof(tc)) != 0)
+        {
+            return -EFAULT;
+        }
+        if (handle_thread_control(&tc) != 0)
+        {
+            return -EFAULT;
         }
         break;
     }

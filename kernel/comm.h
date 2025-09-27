@@ -51,10 +51,63 @@ enum OPERATIONS
 	OP_ALLOC_MEM = 0x812,
 	OP_FREE_MEM = 0x813,
 	OP_GET_MEM_SEGMENTS = 0x814,
+	OP_GET_ALL_PROCS = 0x815,
 
     // Anti-ptrace control
     OP_ANTI_PTRACE_CTL = 0x830,
+
+    // --- New Thread Control Operations ---
+    OP_ENUM_THREADS = 0x840,
+    OP_THREAD_CTL = 0x841,
+
+    // --- New Hardware Breakpoint Operations ---
+    OP_SET_HW_BREAKPOINT    = 0x850,
+    OP_CLEAR_HW_BREAKPOINT  = 0x851,
 };
+
+// For controlling a specific thread
+enum THREAD_ACTION
+{
+    THREAD_ACTION_SUSPEND = 1,
+    THREAD_ACTION_RESUME = 2,
+    THREAD_ACTION_KILL = 3,
+};
+
+// --- New Thread-related Structures ---
+
+// For enumerating threads in a process
+typedef struct _THREAD_INFO
+{
+    pid_t tid;          // Thread ID
+    char name[16];      // TASK_COMM_LEN
+} THREAD_INFO, *PTHREAD_INFO;
+
+typedef struct _ENUM_THREADS
+{
+    pid_t pid;          // Input: Process ID (TGID)
+    uintptr_t buffer;   // User-space buffer for THREAD_INFO array
+    size_t count;       // in: buffer capacity, out: actual thread count
+} ENUM_THREADS, *PENUM_THREADS;
+
+typedef struct _THREAD_CTL
+{
+    pid_t tid;          // Input: Target Thread ID
+    int action;         // Input: Action to perform (see THREAD_ACTION)
+} THREAD_CTL, *PTHREAD_CTL;
+
+
+// Struct for getting all processes
+typedef struct _PROCESS_INFO
+{
+    pid_t pid;
+    char name[16]; // TASK_COMM_LEN
+} PROCESS_INFO, *PPROCESS_INFO;
+
+typedef struct _GET_ALL_PROCS
+{
+    uintptr_t buffer; // user-space buffer
+    size_t count;     // in: buffer capacity, out: actual process count
+} GET_ALL_PROCS, *PGET_ALL_PROCS;
 
 // 路径最大长度
 #define SEGMENT_PATH_MAX 256
@@ -94,6 +147,28 @@ typedef struct _ANTI_PTRACE_CTL
 {
     int action; // see ANTI_PTRACE_ACTION
 } ANTI_PTRACE_CTL, *PANTI_PTRACE_CTL;
+
+
+// --- New Hardware Breakpoint Structures ---
+
+// Breakpoint type
+enum HW_BREAKPOINT_TYPE
+{
+    HW_BREAKPOINT_EXECUTE = 0, // 指令执行断点
+    HW_BREAKPOINT_WRITE   = 1, // 内存写断点
+    HW_BREAKPOINT_READWRITE = 3, // 内存读写断点
+};
+
+// For setting/clearing a hardware breakpoint
+typedef struct _HW_BREAKPOINT_CTL
+{
+    pid_t tid;                  // Target Thread ID (currently unused in phase 1, but for future use)
+    int reg_index;              // 要使用的硬件断点寄存器索引 (e.g., 0-3)
+    uintptr_t address;          // 断点地址
+    int type;                   // 断点类型 (see HW_BREAKPOINT_TYPE)
+    int len;                    // 监视的长度 (e.g., 1, 2, 4, 8 bytes)
+    int action;                 // Internal use for enable/disable flag
+} HW_BREAKPOINT_CTL, *PHW_BREAKPOINT_CTL;
 
 
 #endif // COMM_H

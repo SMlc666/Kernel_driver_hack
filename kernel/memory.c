@@ -629,7 +629,6 @@ uintptr_t alloc_process_memory(pid_t pid, uintptr_t addr, size_t size)
 {
 	struct task_struct *task;
 	struct mm_struct *mm;
-	struct list_head uf;
 	int result;
 
 	task = get_pid_task(find_get_pid(pid), PIDTYPE_PID);
@@ -641,14 +640,13 @@ uintptr_t alloc_process_memory(pid_t pid, uintptr_t addr, size_t size)
 		return -EINVAL;
 	}
 
-	INIT_LIST_HEAD(&uf);
 	
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0))
 	mmap_write_lock(mm);
 #else
 	down_write(&mm->mmap_sem);
 #endif
-	result = do_munmap(mm, addr, size, &uf);
+	result = do_munmap(mm, addr, size, NULL);
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0))
 	mmap_write_unlock(mm);
 #else

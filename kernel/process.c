@@ -153,3 +153,35 @@ int get_process_memory_segments(pid_t pid, PMEM_SEGMENT_INFO user_buffer, size_t
     *count = segments_found;
     return ret;
 }
+
+int get_all_processes(PPROCESS_INFO user_buffer, size_t *count)
+{
+    struct task_struct *p;
+    size_t procs_found = 0;
+    size_t buffer_capacity = *count;
+    int ret = 0;
+
+    rcu_read_lock();
+    for_each_process(p)
+    {
+        if (procs_found < buffer_capacity) {
+            PROCESS_INFO info;
+            info.pid = p->pid;
+            strncpy(info.name, p->comm, sizeof(info.name) - 1);
+            info.name[sizeof(info.name) - 1] = '\0';
+
+            if (copy_to_user(&user_buffer[procs_found], &info, sizeof(PROCESS_INFO))) {
+                ret = -EFAULT;
+                break;
+            }
+        }
+        procs_found++;
+    }
+    rcu_read_unlock();
+
+    if (ret == 0) {
+        *count = procs_found;
+    }
+    
+    return ret;
+}

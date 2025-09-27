@@ -13,6 +13,7 @@ private:
 	int fd;
 	pid_t pid;
 
+public: // Make these accessible to users of the class
 	typedef struct _COPY_MEMORY
 	{
 		pid_t pid;
@@ -79,6 +80,21 @@ private:
         int action; // see ANTI_PTRACE_ACTION
     } ANTI_PTRACE_CTL, *PANTI_PTRACE_CTL;
 
+	// New structs for getting all processes
+	static constexpr int PROCESS_NAME_MAX = 16;
+
+	typedef struct _PROCESS_INFO
+	{
+		pid_t pid;
+		char name[PROCESS_NAME_MAX];
+	} PROCESS_INFO, *PPROCESS_INFO;
+
+	typedef struct _GET_ALL_PROCS
+	{
+		uintptr_t buffer;
+		size_t count;
+	} GET_ALL_PROCS, *PGET_ALL_PROCS;
+
 
 	enum HIDE_ACTION
 	{
@@ -99,8 +115,36 @@ private:
 		OP_ALLOC_MEM = 0x812,
 		OP_FREE_MEM = 0x813,
 		OP_GET_MEM_SEGMENTS = 0x814,
+		OP_GET_ALL_PROCS = 0x815,
         OP_ANTI_PTRACE_CTL = 0x830,
+
+		// New Thread Ops
+		OP_ENUM_THREADS = 0x840,
+    	OP_THREAD_CTL = 0x841,
 	};
+
+	enum THREAD_ACTION
+	{
+		THREAD_ACTION_SUSPEND = 1,
+		THREAD_ACTION_RESUME = 2,
+		THREAD_ACTION_KILL = 3,
+	};
+
+	typedef struct _THREAD_INFO {
+        pid_t tid;
+        char name[PROCESS_NAME_MAX];
+    } THREAD_INFO, *PTHREAD_INFO;
+
+    typedef struct _ENUM_THREADS {
+        pid_t pid;
+        uintptr_t buffer;
+        size_t count;
+    } ENUM_THREADS, *PENUM_THREADS;
+
+    typedef struct _THREAD_CTL {
+        pid_t tid;
+        int action;
+    } THREAD_CTL, *PTHREAD_CTL;
 
 public:
 	c_driver()
@@ -230,6 +274,39 @@ public:
 		return true;
 	}
 
+	bool get_all_processes(std::vector<PROCESS_INFO>& processes)
+	{
+		if (fd < 0) return false;
+
+		size_t capacity = 256; // Start with a reasonable capacity
+		processes.resize(capacity);
+
+		GET_ALL_PROCS gap;
+		gap.buffer = (uintptr_t)processes.data();
+		gap.count = capacity;
+
+		if (ioctl(fd, OP_GET_ALL_PROCS, &gap) != 0) {
+			processes.clear();
+			return false;
+		}
+
+		if (gap.count > capacity) {
+			capacity = gap.count;
+			processes.resize(capacity);
+			gap.buffer = (uintptr_t)processes.data();
+			gap.count = capacity;
+
+			if (ioctl(fd, OP_GET_ALL_PROCS, &gap) != 0) {
+				processes.clear();
+				return false;
+			}
+		}
+
+		processes.resize(gap.count);
+
+		return true;
+	}
+
     // --- Process Hiding ---
     bool hide_process(pid_t pid) {
         if (fd < 0) return false;
@@ -256,8 +333,59 @@ public:
         return ioctl(fd, OP_ANTI_PTRACE_CTL, &ctl) == 0;
     }
 
+    // --- Thread Control ---
+    bool suspend_thread(pid_t tid) {
+        if (fd < 0) return false;
+        THREAD_CTL ctl = {tid, THREAD_ACTION_SUSPEND};
+        return ioctl(fd, OP_THREAD_CTL, &ctl) == 0;
+    }
+
+    bool resume_thread(pid_t tid) {
+        if (fd < 0) return false;
+        THREAD_CTL ctl = {tid, THREAD_ACTION_RESUME};
+        return ioctl(fd, OP_THREAD_CTL, &ctl) == 0;
+    }
+
+    bool kill_thread(pid_t tid) {
+        if (fd < 0) return false;
+        THREAD_CTL ctl = {tid, THREAD_ACTION_KILL};
+        return ioctl(fd, OP_THREAD_CTL, &ctl) == 0;
+    }
+
+    bool get_all_threads(pid_t pid, std::vector<THREAD_INFO>& threads) {
+        if (fd < 0) return false;
+
+        size_t capacity = 32; // Start with a reasonable capacity
+		threads.resize(capacity);
+
+		ENUM_THREADS et;
+		et.pid = pid;
+		et.buffer = (uintptr_t)threads.data();
+		et.count = capacity;
+
+		if (ioctl(fd, OP_ENUM_THREADS, &et) != 0) {
+			threads.clear();
+			return false;
+		}
+
+		if (et.count > capacity) {
+			capacity = et.count;
+			threads.resize(capacity);
+			et.buffer = (uintptr_t)threads.data();
+			et.count = capacity;
+
+			if (ioctl(fd, OP_ENUM_THREADS, &et) != 0) {
+				threads.clear();
+				return false;
+			}
+		}
+
+		threads.resize(et.count);
+		return true;
+    }
+
     template <typename T>
-	tT read(uintptr_t addr)
+	T read(uintptr_t addr)
 	{
 		T buffer;
 		read(addr, &buffer, sizeof(T));
