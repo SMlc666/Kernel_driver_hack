@@ -1,3 +1,4 @@
+#include <linux/version.h>
 #include <linux/sched.h>
 #include <linux/sched/signal.h>
 #include <linux/sched/task.h> // For set_task_state and wake_up_process
