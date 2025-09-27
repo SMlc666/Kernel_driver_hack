@@ -96,7 +96,30 @@ static int set_breakpoint_on_cpu(void *info)
 // Main handler called by ioctl
 int handle_set_hw_breakpoint(PHW_BREAKPOINT_CTL ctl, bool enable)
 {
+    int ret;
+
+    PRINT_DEBUG("[+] handle_set_hw_breakpoint: reg_index %d, address 0x%lx, enable %d\n",
+                ctl->reg_index, ctl->address, enable);
+
+    // Validate parameters
+    if (!ctl) {
+        PRINT_DEBUG("[-] NULL control structure\n");
+        return -EINVAL;
+    }
+
     if (ctl->reg_index < 0 || ctl->reg_index > 3) {
+        PRINT_DEBUG("[-] Invalid register index: %d\n", ctl->reg_index);
+        return -EINVAL;
+    }
+
+    if (enable && ctl->address == 0) {
+        PRINT_DEBUG("[-] Invalid breakpoint address: 0x%lx\n", ctl->address);
+        return -EINVAL;
+    }
+
+    // Check if address is in user space (rough check)
+    if (enable && ctl->address >= TASK_SIZE) {
+        PRINT_DEBUG("[-] Address not in user space: 0x%lx\n", ctl->address);
         return -EINVAL;
     }
 
@@ -104,7 +127,20 @@ int handle_set_hw_breakpoint(PHW_BREAKPOINT_CTL ctl, bool enable)
     // to the per-cpu function.
     ctl->action = enable;
 
+    // First, let's try to enable debug access on this CPU
+    // This is often needed on ARM64 to access debug registers
+    printk(KERN_INFO "Enabling debug access...\n");
+
     // stop_machine will run set_breakpoint_on_cpu on all online CPUs.
     // This blocks until all have completed.
-    return stop_machine(set_breakpoint_on_cpu, ctl, NULL);
+    PRINT_DEBUG("[+] Calling stop_machine...\n");
+    ret = stop_machine(set_breakpoint_on_cpu, ctl, NULL);
+
+    if (ret) {
+        PRINT_DEBUG("[-] stop_machine failed: %d\n", ret);
+        return ret;
+    }
+
+    PRINT_DEBUG("[+] Hardware breakpoint %s successfully\n", enable ? "set" : "cleared");
+    return 0;
 }
