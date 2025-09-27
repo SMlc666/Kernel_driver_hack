@@ -126,49 +126,10 @@ static void hwbp_hit_user_info_callback(struct perf_event *bp,
 // --- Main Breakpoint Handler ---
 
 static void hwbp_handler(struct perf_event *bp, struct perf_sample_data *data, struct pt_regs *regs) {
-	citerator iter;
-	uint64_t redirect_pc;
-	PRINT_DEBUG("[HWBP] HIT! bp:%px, pc:%px, id:%d\n", bp, (void*)regs->pc, bp->id);
-
-	redirect_pc = atomic64_read(&g_redirect_pc);
-	if(redirect_pc) {
-		regs->pc = redirect_pc;
-		return;
-	}
-
-	mutex_lock(&g_hwbp_handle_info_mutex);
-	for (iter = cvector_begin(g_hwbp_handle_info_arr); iter != cvector_end(g_hwbp_handle_info_arr); iter = cvector_next(g_hwbp_handle_info_arr, iter)) {
-		struct HWBP_HANDLE_INFO *hwbp_handle_info = (struct HWBP_HANDLE_INFO *)iter;
-		if (hwbp_handle_info->sample_hbp != bp) {
-			continue;
-		}
-
-#ifdef CONFIG_MODIFY_HIT_NEXT_MODE
-		if(hwbp_handle_info->next_instruction_attr.bp_addr != regs->pc) {
-			// First hit at the original address
-			bool should_toggle = true;
-			hwbp_hit_user_info_callback(bp, data, regs, hwbp_handle_info);
-			if(!hwbp_handle_info->is_32bit_task) {
-				if(arm64_move_bp_to_next_instruction(bp, regs->pc + 4, &hwbp_handle_info->original_attr, &hwbp_handle_info->next_instruction_attr)) {
-					should_toggle = false;
-				}
-			}
-			if(should_toggle) {
-				toggle_bp_registers_directly(&hwbp_handle_info->original_attr, hwbp_handle_info->is_32bit_task, 0);
-			}
-		} else {
-			// Second hit at the next instruction address
-			if(!arm64_recovery_bp_to_original(bp, &hwbp_handle_info->original_attr, &hwbp_handle_info->next_instruction_attr)) {
-				toggle_bp_registers_directly(&hwbp_handle_info->next_instruction_attr, hwbp_handle_info->is_32bit_task, 0);
-			}
-		}
-#else
-		hwbp_hit_user_info_callback(bp, data, regs, hwbp_handle_info);
-		toggle_bp_registers_directly(&hwbp_handle_info->original_attr, hwbp_handle_info->is_32bit_task, 0);
-#endif
-		break; // Found our handle, no need to continue loop
-	}
-	mutex_unlock(&g_hwbp_handle_info_mutex);
+	PRINT_DEBUG("[HWBP] HIT! bp:%px, pc:%px. Handler called and will return immediately.\n", bp, (void*)regs->pc);
+	// The handler now does nothing else. If the app no longer freezes,
+	// the problem is in the code that was removed. If it still freezes,
+	// the problem is deeper in the kernel's perf_event subsystem.
 }
 
 // --- Public API Implementation ---
