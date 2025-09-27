@@ -88,7 +88,7 @@ static bool arm64_recovery_bp_to_original(struct perf_event *bp, struct perf_eve
 #endif
 
 static void hwbp_hit_user_info_callback(struct perf_event *bp,
-	sctruct perf_sample_data *data,
+	struct perf_sample_data *data,
 	struct pt_regs *regs, struct HWBP_HANDLE_INFO * hwbp_handle_info) {
 	hwbp_handle_info->hit_total_count++;
 	record_hit_details(hwbp_handle_info, regs);
