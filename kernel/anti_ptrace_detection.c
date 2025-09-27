@@ -26,14 +26,15 @@ static void after_arch_ptrace(hook_fargs4_t *fargs, void *udata);
 static bool is_my_hwbp_handle_addr(size_t addr) {
     citerator iter;
     bool found = false;
+    unsigned long flags;
     cvector *vec = hwbp_get_vector();
-    struct mutex *mtx = hwbp_get_mutex();
+    spinlock_t *lock = hwbp_get_mutex();
 
-    if(addr == 0 || !vec || !mtx) {
+    if(addr == 0 || !vec || !lock) {
         return found;
     }
 
-    mutex_lock(mtx);
+    spin_lock_irqsave(lock, flags);
     for (iter = cvector_begin(*vec); iter != cvector_end(*vec); iter = cvector_next(*vec, iter)) {
         struct HWBP_HANDLE_INFO *hwbp_handle_info = (struct HWBP_HANDLE_INFO *)iter;
         if(hwbp_handle_info->original_attr.bp_addr == addr) {
@@ -41,7 +42,7 @@ static bool is_my_hwbp_handle_addr(size_t addr) {
             break;
         }
     }
-    mutex_unlock(mtx);
+    spin_unlock_irqrestore(lock, flags);
     return found;
 }
 

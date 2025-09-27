@@ -66,7 +66,7 @@ int hwbp_get_hit_detail(uint64_t handle, void __user *buffer, size_t size);
 int hwbp_set_redirect_pc(uint64_t pc);
 
 // For anti-ptrace module
-struct mutex *hwbp_get_mutex(void);
+spinlock_t *hwbp_get_mutex(void);
 cvector *hwbp_get_vector(void);
 
 
