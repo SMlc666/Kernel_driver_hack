@@ -58,7 +58,7 @@ int main() {
     std::cout << "[+] Setting breakpoint at address: 0x" << std::hex << target_addr << std::dec << std::endl;
 
     // Install an execution breakpoint of length 4 bytes
-    uintptr_t handle = driver->install_hw_breakpoint(target_addr, 4, 0); // Type 0 for execution
+    uintptr_t handle = driver->install_hw_breakpoint(target_addr, 4, 4); // Type 4 for HW_BREAKPOINT_X (execution)
     if (handle == 0) {
         std::cerr << "[-] Failed to install hardware breakpoint.\n";
         return 1;

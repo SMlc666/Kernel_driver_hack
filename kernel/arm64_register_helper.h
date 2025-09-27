@@ -112,11 +112,10 @@ static uint64_t calc_hw_addr(const struct perf_event_attr* attr, bool is_32bit_t
 	return hw_addr;
 }
 
-static bool toggle_bp_registers_directly(const struct perf_event_attr * attr, bool is_32bit_task, int enable) {
-	int i, max_slots, val_reg, ctrl_reg, cur_slot;
+static bool toggle_bp_registers_directly(int slot, const struct perf_event_attr * attr, int enable) {
+	int max_slots, ctrl_reg;
     u32 ctrl;
-	uint64_t hw_addr = calc_hw_addr(attr, is_32bit_task);
-	if(!attr) {
+	if(!attr || slot < 0) {
 		return false;
 	}
 
@@ -126,36 +125,26 @@ static bool toggle_bp_registers_directly(const struct perf_event_attr * attr, bo
 	case HW_BREAKPOINT_W:
 	case HW_BREAKPOINT_RW:
 		ctrl_reg = AARCH64_DBG_REG_WCR;
-		val_reg = AARCH64_DBG_REG_WVR;
 		max_slots = get_num_wrps();
 		break;
 	case HW_BREAKPOINT_X:
 		ctrl_reg = AARCH64_DBG_REG_BCR;
-		val_reg = AARCH64_DBG_REG_BVR;
 		max_slots = get_num_brps();
 		break;
 	default:
 		return false;
 	}
-	cur_slot = -1;
 
-    for (i = 0; i < max_slots; ++i) {
-		uint64_t addr = read_wb_reg(val_reg, i);
-        if(addr == hw_addr) {
-			cur_slot = i;
-			break;
-		}
+    if (slot >= max_slots) {
+        return false;
     }
-	if(cur_slot == -1) {
-		return false;
-	} 
 
-    ctrl = read_wb_reg(ctrl_reg, cur_slot);
+    ctrl = read_wb_reg(ctrl_reg, slot);
 	if (enable)
 		ctrl |= 0x1;
 	else
 		ctrl &= ~0x1;
-	write_wb_reg(ctrl_reg, cur_slot, ctrl);
+	write_wb_reg(ctrl_reg, slot, ctrl);
 	return true;
 }
 #endif
