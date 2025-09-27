@@ -38,6 +38,7 @@ static inline int hwbp_resolve_api_symbols(void) {
     }
     #endif
     
+    PRINT_DEBUG("[+] HWBP API symbols resolved successfully.\n");
     return 0;
 }
 

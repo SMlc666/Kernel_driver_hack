@@ -1,147 +1,143 @@
-#include <linux/kprobes.h> // for pt_regs
-#include <linux/ptrace.h>
+#include <linux/types.h>
+#include <linux/errno.h>
+#include <linux/kernel.h>
 #include <linux/version.h>
-#include <linux/uio.h> // for iovec
+#include <linux/hw_breakpoint.h>
 #include <linux/uaccess.h>
 
 #include "anti_ptrace_detection.h"
-#include "hw_breakpoint.h" // For HWBP_HANDLE_INFO
-#include "inline_hook/p_hook.h"
 #include "inline_hook/p_lkrg_main.h"
-#include "version_control.h"
+#include "inline_hook/p_hook.h"
+#include "hw_breakpoint.h"
+#include "api_proxy.h"
+
+#ifdef CONFIG_ANTI_PTRACE_DETECTION_MODE
 
 #define PTRACE_GETREGSET   0x4204
-#define NT_ARM_HW_BREAK 0x402
-#define NT_ARM_HW_WATCH 0x403
+#define NT_ARM_HW_BREAK	0x402
+#define NT_ARM_HW_WATCH	0x403
 
-// Globals to hold pointers passed from hw_breakpoint.c
-static cvector *g_p_hwbp_handle_info_arr = NULL;
-static spinlock_t *g_p_hwbp_handle_info_lock = NULL;
 static void *g_arch_ptrace_addr = NULL;
 
+// Forward declarations
+static void before_arch_ptrace(hook_fargs4_t *fargs, void *udata);
+static void after_arch_ptrace(hook_fargs4_t *fargs, void *udata);
 
 static bool is_my_hwbp_handle_addr(size_t addr) {
-	citerator iter;
-	bool found = false;
-	unsigned long flags;
-	if(addr == 0) {
-		return found;
-	}
-	spin_lock_irqsave(g_p_hwbp_handle_info_lock, flags);
-	for (iter = cvector_begin(*g_p_hwbp_handle_info_arr); iter != cvector_end(*g_p_hwbp_handle_info_arr); iter = cvector_next(*g_p_hwbp_handle_info_arr, iter)) {
-		struct HWBP_HANDLE_INFO * hwbp_handle_info = (struct HWBP_HANDLE_INFO *)iter;
-		if(hwbp_handle_info->original_attr.bp_addr == addr) {
-			found = true;
-			break;
-		}
-	}
-	spin_unlock_irqrestore(g_p_hwbp_handle_info_lock, flags);
-	return found;
+    citerator iter;
+    bool found = false;
+    cvector *vec = hwbp_get_vector();
+    struct mutex *mtx = hwbp_get_mutex();
+
+    if(addr == 0 || !vec || !mtx) {
+        return found;
+    }
+
+    mutex_lock(mtx);
+    for (iter = cvector_begin(*vec); iter != cvector_end(*vec); iter = cvector_next(*vec, iter)) {
+        struct HWBP_HANDLE_INFO *hwbp_handle_info = (struct HWBP_HANDLE_INFO *)iter;
+        if(hwbp_handle_info->original_attr.bp_addr == addr) {
+            found = true;
+            break;
+        }
+    }
+    mutex_unlock(mtx);
+    return found;
 }
 
-static void ptrace_before_callback(hook_fargs4_t *fargs, void *udata)
-{
+static void before_arch_ptrace(hook_fargs4_t *fargs, void *udata) {
     long request = (long)fargs->arg1;
     unsigned long addr = (unsigned long)fargs->arg2;
-    unsigned long data = (unsigned long)fargs->arg3;
+
+    // Clear local data to ensure it's clean for this run
+    fargs->local.data[0] = 0;
+    fargs->local.data[1] = 0;
 
     if (request == PTRACE_GETREGSET && (addr == NT_ARM_HW_WATCH || addr == NT_ARM_HW_BREAK)) {
-        if(data) {
-            // Store the user iovec pointer for the 'after' callback
-            fargs->local.data[0] = data;
+        unsigned long iov_user_ptr = fargs->arg3;
+        struct iovec iov;
+
+        if(!iov_user_ptr) {
+            return;
         }
+        if (copy_from_user(&iov, (struct iovec __user *)iov_user_ptr, sizeof(struct iovec)) != 0) {
+            PRINT_DEBUG("[-] anti-ptrace: Failed to copy iovec from user space\n");
+            return;
+        }
+        
+        // Store iov_base and iov_len in the local data to pass to the 'after' hook
+        fargs->local.data[0] = (uintptr_t)iov.iov_base;
+        fargs->local.data[1] = iov.iov_len;
     }
 }
 
-static void ptrace_after_callback(hook_fargs4_t *fargs, void *udata)
-{
-    struct iovec iov;
+static void after_arch_ptrace(hook_fargs4_t *fargs, void *udata) {
     struct user_hwdebug_state old_hw_state;
     struct user_hwdebug_state new_hw_state;
     size_t copy_size;
     int i = 0, y = 0;
-    unsigned long iov_user_ptr = fargs->local.data[0];
+    void __user *iov_base = (void __user *)fargs->local.data[0];
+    size_t iov_len = fargs->local.data[1];
 
-    // Check if we stored the iovec pointer in the 'before' callback
-    if (!iov_user_ptr) {
+    if (!iov_base || !iov_len) {
         return;
     }
 
-    // We are in the return path of a PTRACE_GETREGSET for HW breakpoints
-    if (copy_from_user(&iov, (struct iovec __user *)iov_user_ptr, sizeof(struct iovec)) != 0) {
-        PRINT_DEBUG("[-] anti_ptrace: Failed to copy iovec from user space\n");
+    if (!access_ok(iov_base, iov_len)) {
+        PRINT_DEBUG("[-] anti-ptrace: User buffer is not accessible\n");
         return;
     }
 
-    if (!iov.iov_base || !iov.iov_len) {
+    copy_size = min(iov_len, sizeof(struct user_hwdebug_state));
+    if (copy_from_user(&old_hw_state, iov_base, copy_size) != 0) {
+        PRINT_DEBUG("[-] anti-ptrace: Failed to copy old_hw_state from user buffer\n");
         return;
     }
 
-    if (!access_ok(VERIFY_READ, (void __user *)iov.iov_base, iov.iov_len)) {
-        PRINT_DEBUG("[-] anti_ptrace: User buffer is not accessible\n");
-        return;
-    }
-
-    copy_size = min(iov.iov_len, sizeof(struct user_hwdebug_state));
-    if (copy_from_user(&old_hw_state, (void __user *)iov.iov_base, copy_size) != 0) {
-        PRINT_DEBUG("[-] anti_ptrace: Failed to copy old_hw_state from user buffer\n");
-        return;
-    }
-
-    // Clear our breakpoints from the state
     memcpy(&new_hw_state, &old_hw_state, sizeof(new_hw_state));
     memset(new_hw_state.dbg_regs, 0x00, sizeof(new_hw_state.dbg_regs));
 
-    for (i = 0; i < (sizeof(old_hw_state.dbg_regs) / sizeof(old_hw_state.dbg_regs[0])); i++) { // ARM_MAX_BRP_REGS is usually 16
+    for (i = 0; i < ARM64_MAX_BRP_REGS; i++) {
         if(!is_my_hwbp_handle_addr(old_hw_state.dbg_regs[i].addr)) {
-            if (y < (sizeof(new_hw_state.dbg_regs) / sizeof(new_hw_state.dbg_regs[0]))) {
-                memcpy(&new_hw_state.dbg_regs[y++], &old_hw_state.dbg_regs[i], sizeof(old_hw_state.dbg_regs[i]));
-            }
+            memcpy(&new_hw_state.dbg_regs[y++], &old_hw_state.dbg_regs[i], sizeof(old_hw_state.dbg_regs[i]));
         }
     }
 
-    // Copy the modified (cleaned) state back to the user-space buffer
-    if (copy_to_user((void __user *)iov.iov_base, &new_hw_state, copy_size) != 0) {
-        PRINT_DEBUG("[-] anti_ptrace: Failed to copy modified new_hw_state back to user buffer\n");
+    if (copy_to_user(iov_base, &new_hw_state, copy_size) != 0) {
+        PRINT_DEBUG("[-] anti-ptrace: Failed to copy modified new_hw_state back to user buffer\n");
+    } else {
+        PRINT_DEBUG("[+] anti-ptrace: Successfully hid hw breakpoints from ptrace.\n");
     }
 }
 
-
-int anti_ptrace_init(cvector *p_hwbp_handle_info_arr, spinlock_t *p_lock)
-{
-    hook_err_t err;
-
-    g_p_hwbp_handle_info_arr = p_hwbp_handle_info_arr;
-    g_p_hwbp_handle_info_lock = p_lock;
-
-    if (!g_p_hwbp_handle_info_arr || !g_p_hwbp_handle_info_lock) {
-        PRINT_DEBUG("[-] anti_ptrace: Invalid arguments.\n");
-        return -EINVAL;
+int start_anti_ptrace_detection(void) {
+    if (P_SYM(p_kallsyms_lookup_name) == NULL) {
+        PRINT_DEBUG("[-] anti-ptrace: kallsyms_lookup_name not available.\n");
+        return -1;
     }
 
     g_arch_ptrace_addr = (void *)P_SYM(p_kallsyms_lookup_name)("arch_ptrace");
     if (!g_arch_ptrace_addr) {
-        PRINT_DEBUG("[-] anti_ptrace: Failed to find arch_ptrace address.\n");
-        return -ENOENT;
+        PRINT_DEBUG("[-] anti-ptrace: Failed to find address of arch_ptrace.\n");
+        return -1;
     }
 
-    // arch_ptrace has 4 arguments
-    err = hook_wrap4(g_arch_ptrace_addr, ptrace_before_callback, ptrace_after_callback, NULL);
-    if (err != HOOK_NO_ERR) {
-        PRINT_DEBUG("[-] anti_ptrace: Failed to wrap arch_ptrace, error %d\n", err);
+    if (hook_wrap(g_arch_ptrace_addr, 4, before_arch_ptrace, after_arch_ptrace, NULL) != HOOK_NO_ERR) {
+        PRINT_DEBUG("[-] anti-ptrace: Failed to wrap arch_ptrace().\n");
         g_arch_ptrace_addr = NULL;
-        return -EFAULT;
+        return -1;
     }
 
-    PRINT_DEBUG("[+] anti_ptrace: Successfully hooked arch_ptrace.\n");
+    PRINT_DEBUG("[+] anti-ptrace: arch_ptrace() hooked successfully.\n");
     return 0;
 }
 
-void anti_ptrace_exit(void)
-{
+void stop_anti_ptrace_detection(void) {
     if (g_arch_ptrace_addr) {
-        hook_unwrap(g_arch_ptrace_addr, ptrace_before_callback, ptrace_after_callback);
+        hook_unwrap(g_arch_ptrace_addr, before_arch_ptrace, after_arch_ptrace);
         g_arch_ptrace_addr = NULL;
-        PRINT_DEBUG("[+] anti_ptrace: Unhooked arch_ptrace.\n");
+        PRINT_DEBUG("[+] anti-ptrace: arch_ptrace() unhooked.\n");
     }
 }
+
+#endif // CONFIG_ANTI_PTRACE_DETECTION_MODE

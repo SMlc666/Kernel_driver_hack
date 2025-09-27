@@ -1,62 +1,64 @@
-# ifndef __ARM64_REGISTER_HELPER_H__
-# define __ARM64_REGISTER_HELPER_H__
-#include <linux/module.h>
+#ifndef __ARM64_REGISTER_HELPER_H__
+#define __ARM64_REGISTER_HELPER_H__
+
 #include <linux/types.h>
 #include <linux/uaccess.h>
-#include <linux/kernel.h>
+#include <linux/kernel.h> 
 #include <linux/hw_breakpoint.h>
+#include <asm/debug-monitors.h>
+#include <asm/cputype.h>
 
-#define READ_WB_REG_CASE(OFF, N, REG, VAL) \
-	case (OFF + N): \
-		AARCH64_DBG_READ(N, REG, VAL); \
+#define READ_WB_REG_CASE(OFF, N, REG, VAL)	\
+	case (OFF + N):\		
+		AARCH64_DBG_READ(N, REG, VAL);\		
 		break
 
-#define WRITE_WB_REG_CASE(OFF, N, REG, VAL) \
-	case (OFF + N): \
-		AARCH64_DBG_WRITE(N, REG, VAL); \
+#define WRITE_WB_REG_CASE(OFF, N, REG, VAL)	\
+	case (OFF + N):\		
+		AARCH64_DBG_WRITE(N, REG, VAL);\		
 		break
 
-#define GEN_READ_WB_REG_CASES(OFF, REG, VAL) \
-	READ_WB_REG_CASE(OFF,  0, REG, VAL); \
-	READ_WB_REG_CASE(OFF,  1, REG, VAL); \
-	READ_WB_REG_CASE(OFF,  2, REG, VAL); \
-	READ_WB_REG_CASE(OFF,  3, REG, VAL); \
-	READ_WB_REG_CASE(OFF,  4, REG, VAL); \
-	READ_WB_REG_CASE(OFF,  5, REG, VAL); \
-	READ_WB_REG_CASE(OFF,  6, REG, VAL); \
-	READ_WB_REG_CASE(OFF,  7, REG, VAL); \
-	READ_WB_REG_CASE(OFF,  8, REG, VAL); \
-	READ_WB_REG_CASE(OFF,  9, REG, VAL); \
-	READ_WB_REG_CASE(OFF, 10, REG, VAL); \
-	READ_WB_REG_CASE(OFF, 11, REG, VAL); \
-	READ_WB_REG_CASE(OFF, 12, REG, VAL); \
-	READ_WB_REG_CASE(OFF, 13, REG, VAL); \
-	READ_WB_REG_CASE(OFF, 14, REG, VAL); \
-	READ_WB_REG_CASE(OFF, 15, REG, VAL)
+#define GEN_READ_WB_REG_CASES(OFF, REG, VAL)	\
+	READ_WB_REG_CASE(OFF,  0, REG, VAL);\		
+		READ_WB_REG_CASE(OFF,  1, REG, VAL);\		
+		READ_WB_REG_CASE(OFF,  2, REG, VAL);\		
+		READ_WB_REG_CASE(OFF,  3, REG, VAL);\		
+		READ_WB_REG_CASE(OFF,  4, REG, VAL);\		
+		READ_WB_REG_CASE(OFF,  5, REG, VAL);\		
+		READ_WB_REG_CASE(OFF,  6, REG, VAL);\		
+		READ_WB_REG_CASE(OFF,  7, REG, VAL);\		
+		READ_WB_REG_CASE(OFF,  8, REG, VAL);\		
+		READ_WB_REG_CASE(OFF,  9, REG, VAL);\		
+		READ_WB_REG_CASE(OFF, 10, REG, VAL);\		
+		READ_WB_REG_CASE(OFF, 11, REG, VAL);\		
+		READ_WB_REG_CASE(OFF, 12, REG, VAL);\		
+		READ_WB_REG_CASE(OFF, 13, REG, VAL);\		
+		READ_WB_REG_CASE(OFF, 14, REG, VAL);\		
+		READ_WB_REG_CASE(OFF, 15, REG, VAL)
 
-#define GEN_WRITE_WB_REG_CASES(OFF, REG, VAL) \
-	WRITE_WB_REG_CASE(OFF,  0, REG, VAL); \
-	WRITE_WB_REG_CASE(OFF,  1, REG, VAL); \
-	WRITE_WB_REG_CASE(OFF,  2, REG, VAL); \
-	WRITE_WB_REG_CASE(OFF,  3, REG, VAL); \
-	WRITE_WB_REG_CASE(OFF,  4, REG, VAL); \
-	WRITE_WB_REG_CASE(OFF,  5, REG, VAL); \
-	WRITE_WB_REG_CASE(OFF,  6, REG, VAL); \
-	WRITE_WB_REG_CASE(OFF,  7, REG, VAL); \
-	WRITE_WB_REG_CASE(OFF,  8, REG, VAL); \
-	WRITE_WB_REG_CASE(OFF,  9, REG, VAL); \
-	WRITE_WB_REG_CASE(OFF, 10, REG, VAL); \
-	WRITE_WB_REG_CASE(OFF, 11, REG, VAL); \
-	WRITE_WB_REG_CASE(OFF, 12, REG, VAL); \
-	WRITE_WB_REG_CASE(OFF, 13, REG, VAL); \
-	WRITE_WB_REG_CASE(OFF, 14, REG, VAL); \
-	WRITE_WB_REG_CASE(OFF, 15, REG, VAL)
+#define GEN_WRITE_WB_REG_CASES(OFF, REG, VAL)	\
+	WRITE_WB_REG_CASE(OFF,  0, REG, VAL);\		
+		WRITE_WB_REG_CASE(OFF,  1, REG, VAL);\		
+		WRITE_WB_REG_CASE(OFF,  2, REG, VAL);\		
+		WRITE_WB_REG_CASE(OFF,  3, REG, VAL);\		
+		WRITE_WB_REG_CASE(OFF,  4, REG, VAL);\		
+		WRITE_WB_REG_CASE(OFF,  5, REG, VAL);\		
+		WRITE_WB_REG_CASE(OFF,  6, REG, VAL);\		
+		WRITE_WB_REG_CASE(OFF,  7, REG, VAL);\		
+		WRITE_WB_REG_CASE(OFF,  8, REG, VAL);\		
+		WRITE_WB_REG_CASE(OFF,  9, REG, VAL);\		
+		WRITE_WB_REG_CASE(OFF, 10, REG, VAL);\		
+		WRITE_WB_REG_CASE(OFF, 11, REG, VAL);\		
+		WRITE_WB_REG_CASE(OFF, 12, REG, VAL);\		
+		WRITE_WB_REG_CASE(OFF, 13, REG, VAL);\		
+		WRITE_WB_REG_CASE(OFF, 14, REG, VAL);\		
+		WRITE_WB_REG_CASE(OFF, 15, REG_VAL)
 
-static inline int getCpuNumBrps(void) {
+static inline int get_num_brps(void) {
 	return ((read_cpuid(ID_AA64DFR0_EL1) >> 12) & 0xf) + 1;
 }
 
-static inline int getCpuNumWrps(void) {
+static inline int get_num_wrps(void) {
 	return ((read_cpuid(ID_AA64DFR0_EL1) >> 20) & 0xf) + 1;
 }
 
@@ -126,12 +128,12 @@ static inline bool toggle_bp_registers_directly(const struct perf_event_attr * a
 	case HW_BREAKPOINT_RW:
 		ctrl_reg = AARCH64_DBG_REG_WCR;
 		val_reg = AARCH64_DBG_REG_WVR;
-		max_slots = getCpuNumWrps();
+		max_slots = get_num_wrps();
 		break;
 	case HW_BREAKPOINT_X:
 		ctrl_reg = AARCH64_DBG_REG_BCR;
 		val_reg = AARCH64_DBG_REG_BVR;
-		max_slots = getCpuNumBrps();
+		max_slots = get_num_brps();
 		break;
 	default:
 		return false;

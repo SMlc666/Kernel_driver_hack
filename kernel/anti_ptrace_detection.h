@@ -1,13 +1,19 @@
 #ifndef ANTI_PTRACE_DETECTION_H
 #define ANTI_PTRACE_DETECTION_H
 
-#include "cvector.h"
-#include <linux/spinlock.h>
+#include "version_control.h"
 
-// Forward declare to avoid circular dependency
-struct HWBP_HANDLE_INFO;
+#ifdef CONFIG_ANTI_PTRACE_DETECTION_MODE
 
-int anti_ptrace_init(cvector *p_hwbp_handle_info_arr, spinlock_t *p_lock);
-void anti_ptrace_exit(void);
+int start_anti_ptrace_detection(void);
+void stop_anti_ptrace_detection(void);
+
+#else
+
+// If the mode is disabled, define the functions as empty inlines
+static inline int start_anti_ptrace_detection(void) { return 0; }
+static inline void stop_anti_ptrace_detection(void) { }
+
+#endif
 
 #endif // ANTI_PTRACE_DETECTION_H
