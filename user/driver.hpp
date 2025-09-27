@@ -121,6 +121,10 @@ public: // Make these accessible to users of the class
 		// New Thread Ops
 		OP_ENUM_THREADS = 0x840,
     	OP_THREAD_CTL = 0x841,
+
+		// New Hardware Breakpoint Ops
+    	OP_SET_HW_BREAKPOINT = 0x850,
+    	OP_CLEAR_HW_BREAKPOINT = 0x851,
 	};
 
 	enum THREAD_ACTION
@@ -145,6 +149,25 @@ public: // Make these accessible to users of the class
         pid_t tid;
         int action;
     } THREAD_CTL, *PTHREAD_CTL;
+
+    // Hardware Breakpoint Types
+    enum HW_BREAKPOINT_TYPE
+    {
+        HW_BREAKPOINT_EXECUTE = 0,
+        HW_BREAKPOINT_WRITE = 1,
+        HW_BREAKPOINT_READWRITE = 3,
+    };
+
+    // Hardware Breakpoint Control Structure
+    typedef struct _HW_BREAKPOINT_CTL
+    {
+        pid_t tid;
+        int reg_index;
+        uintptr_t address;
+        int type;
+        int len;
+        int action;
+    } HW_BREAKPOINT_CTL, *PHW_BREAKPOINT_CTL;
 
 public:
 	c_driver()
@@ -382,6 +405,19 @@ public:
 
 		threads.resize(et.count);
 		return true;
+    }
+
+    // --- Hardware Breakpoint Control ---
+    bool set_hw_breakpoint(int reg_index, uintptr_t address, int type = HW_BREAKPOINT_EXECUTE, int len = 1) {
+        if (fd < 0) return false;
+        HW_BREAKPOINT_CTL ctl = {0, reg_index, address, type, len, 0};
+        return ioctl(fd, OP_SET_HW_BREAKPOINT, &ctl) == 0;
+    }
+
+    bool clear_hw_breakpoint(int reg_index) {
+        if (fd < 0) return false;
+        HW_BREAKPOINT_CTL ctl = {0, reg_index, 0, 0, 0, 0};
+        return ioctl(fd, OP_CLEAR_HW_BREAKPOINT, &ctl) == 0;
     }
 
     template <typename T>

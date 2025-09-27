@@ -17,6 +17,7 @@
 #include "hide_kill.h"
 #include "anti_ptrace_detection.h" // Added
 #include "thread.h"
+#include "hw_breakpoint.h"
 #include "inline_hook/p_lkrg_main.h"
 #include "inline_hook/utils/p_memory.h"
 #include "version_control.h"
@@ -76,6 +77,7 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     static GET_ALL_PROCS gap;
     static ENUM_THREADS et;
     static THREAD_CTL tc;
+    static HW_BREAKPOINT_CTL hbc;
     
     PRINT_DEBUG("[+] dispatch_ioctl called by PID %d with cmd: 0x%x\n", current->pid, cmd);
 
@@ -305,6 +307,30 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
             return -EFAULT;
         }
         if (handle_thread_control(&tc) != 0)
+        {
+            return -EFAULT;
+        }
+        break;
+    }
+    case OP_SET_HW_BREAKPOINT:
+    {
+        if (copy_from_user(&hbc, (void __user *)arg, sizeof(hbc)) != 0)
+        {
+            return -EFAULT;
+        }
+        if (handle_set_hw_breakpoint(&hbc, true) != 0)
+        {
+            return -EFAULT;
+        }
+        break;
+    }
+    case OP_CLEAR_HW_BREAKPOINT:
+    {
+        if (copy_from_user(&hbc, (void __user *)arg, sizeof(hbc)) != 0)
+        {
+            return -EFAULT;
+        }
+        if (handle_set_hw_breakpoint(&hbc, false) != 0)
         {
             return -EFAULT;
         }
