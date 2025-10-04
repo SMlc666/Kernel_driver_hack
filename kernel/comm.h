@@ -48,8 +48,6 @@ enum OPERATIONS
 	OP_GET_PID = 0x808,
 	OP_READ_MEM_SAFE = 0x809,
 
-	OP_ALLOC_MEM = 0x812,
-	OP_FREE_MEM = 0x813,
 	OP_GET_MEM_SEGMENTS = 0x814,
 	OP_GET_ALL_PROCS = 0x815,
 
@@ -60,9 +58,8 @@ enum OPERATIONS
     OP_ENUM_THREADS = 0x840,
     OP_THREAD_CTL = 0x841,
 
-    // --- New Hardware Breakpoint Operations ---
-    OP_SET_HW_BREAKPOINT    = 0x850,
-    OP_CLEAR_HW_BREAKPOINT  = 0x851,
+    // --- New Single-Step Operations ---
+    OP_SINGLE_STEP_CTL = 0x850,
 };
 
 // For controlling a specific thread
@@ -72,6 +69,22 @@ enum THREAD_ACTION
     THREAD_ACTION_RESUME = 2,
     THREAD_ACTION_KILL = 3,
 };
+
+// --- New Single-Step-related Structures ---
+enum STEP_ACTION
+{
+    STEP_ACTION_START = 1,
+    STEP_ACTION_STOP = 2,
+    STEP_ACTION_STEP = 3,
+    STEP_ACTION_GET_INFO = 4,
+};
+
+typedef struct _SINGLE_STEP_CTL
+{
+    pid_t tid;
+    int action;
+    uintptr_t regs_buffer;
+} SINGLE_STEP_CTL, *PSINGLE_STEP_CTL;
 
 // --- New Thread-related Structures ---
 
@@ -129,13 +142,6 @@ typedef struct _GET_MEM_SEGMENTS
     size_t count;     // 输入: buffer能容纳的元素数量, 输出: 实际的内存段数量
 } GET_MEM_SEGMENTS, *PGET_MEM_SEGMENTS;
 
-typedef struct _ALLOC_MEM
-{
-	pid_t pid;
-	uintptr_t addr; // in: desired addr (0 for auto), out: allocated addr
-	size_t size;
-} ALLOC_MEM, *PALLOC_MEM;
-
 // New struct for anti-ptrace control
 enum ANTI_PTRACE_ACTION
 {
@@ -147,28 +153,6 @@ typedef struct _ANTI_PTRACE_CTL
 {
     int action; // see ANTI_PTRACE_ACTION
 } ANTI_PTRACE_CTL, *PANTI_PTRACE_CTL;
-
-
-// --- New Hardware Breakpoint Structures ---
-
-// Breakpoint type
-enum HW_BREAKPOINT_TYPE
-{
-    HW_BREAKPOINT_EXECUTE = 0, // 指令执行断点
-    HW_BREAKPOINT_WRITE   = 1, // 内存写断点
-    HW_BREAKPOINT_READWRITE = 3, // 内存读写断点
-};
-
-// For setting/clearing a hardware breakpoint
-typedef struct _HW_BREAKPOINT_CTL
-{
-    pid_t tid;                  // Target Thread ID (currently unused in phase 1, but for future use)
-    int reg_index;              // 要使用的硬件断点寄存器索引 (e.g., 0-3)
-    uintptr_t address;          // 断点地址
-    int type;                   // 断点类型 (see HW_BREAKPOINT_TYPE)
-    int len;                    // 监视的长度 (e.g., 1, 2, 4, 8 bytes)
-    int action;                 // Internal use for enable/disable flag
-} HW_BREAKPOINT_CTL, *PHW_BREAKPOINT_CTL;
 
 
 #endif // COMM_H

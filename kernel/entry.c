@@ -17,7 +17,7 @@
 #include "hide_kill.h"
 #include "anti_ptrace_detection.h" // Added
 #include "thread.h"
-#include "hw_breakpoint.h"
+#include "single_step.h"
 #include "inline_hook/p_lkrg_main.h"
 #include "inline_hook/utils/p_memory.h"
 #include "version_control.h"
@@ -70,14 +70,13 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 	static COPY_MEMORY cm;
 	static MODULE_BASE mb;
 	static GET_PID gp;
-	static ALLOC_MEM am;
 	static GET_MEM_SEGMENTS gms;
     static HIDE_PROC hp;
     static ANTI_PTRACE_CTL apc;
     static GET_ALL_PROCS gap;
     static ENUM_THREADS et;
     static THREAD_CTL tc;
-    static HW_BREAKPOINT_CTL hbc;
+    static SINGLE_STEP_CTL ssc;
     
     PRINT_DEBUG("[+] dispatch_ioctl called by PID %d with cmd: 0x%x\n", current->pid, cmd);
 
@@ -212,31 +211,6 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 		}
 		break;
 	}
-	case OP_ALLOC_MEM:
-	{
-		if (copy_from_user(&am, (void __user *)arg, sizeof(am)) != 0)
-		{
-			return -1;
-		}
-		am.addr = alloc_process_memory(am.pid, am.addr, am.size);
-		if (copy_to_user((void __user *)arg, &am, sizeof(am)) != 0)
-		{
-			return -1;
-		}
-		break;
-	}
-	case OP_FREE_MEM:
-	{
-		if (copy_from_user(&am, (void __user *)arg, sizeof(am)) != 0)
-		{
-			return -1;
-		}
-		if (free_process_memory(am.pid, am.addr, am.size) != 0)
-		{
-			return -1;
-		}
-		break;
-	}
 	case OP_GET_MEM_SEGMENTS:
     {
         if (copy_from_user(&gms, (void __user *)arg, sizeof(gms)) != 0)
@@ -312,27 +286,22 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
         }
         break;
     }
-    case OP_SET_HW_BREAKPOINT:
+    case OP_SINGLE_STEP_CTL:
     {
-        if (copy_from_user(&hbc, (void __user *)arg, sizeof(hbc)) != 0)
+        if (copy_from_user(&ssc, (void __user *)arg, sizeof(ssc)) != 0)
         {
             return -EFAULT;
         }
-        if (handle_set_hw_breakpoint(&hbc, true) != 0)
+        if (handle_single_step_control(&ssc) != 0)
         {
             return -EFAULT;
         }
-        break;
-    }
-    case OP_CLEAR_HW_BREAKPOINT:
-    {
-        if (copy_from_user(&hbc, (void __user *)arg, sizeof(hbc)) != 0)
-        {
-            return -EFAULT;
-        }
-        if (handle_set_hw_breakpoint(&hbc, false) != 0)
-        {
-            return -EFAULT;
+        // GET_INFO action needs to write back register info
+        if (ssc.action == STEP_ACTION_GET_INFO) {
+             if (copy_to_user((void __user *)arg, &ssc, sizeof(ssc)) != 0)
+             {
+                 return -EFAULT;
+             }
         }
         break;
     }
@@ -409,6 +378,13 @@ int __init driver_entry(void)
 		return ret;
 	}
 
+	ret = single_step_init();
+	if (ret)
+	{
+		_driver_cleanup();
+		return ret;
+	}
+
 	mutex_lock(&module_mutex);
 	list_del_init(&THIS_MODULE->list);
 	mutex_unlock(&module_mutex);
@@ -442,6 +418,7 @@ static void _driver_cleanup(void)
     
     // Cleanup our subsystems
     stop_anti_ptrace_detection(); // Ensure it's off on unload
+    single_step_exit();
 	hide_kill_exit();
 	hide_proc_exit();
 	khook_exit();

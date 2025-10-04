@@ -41,13 +41,6 @@ public: // Make these accessible to users of the class
 		pid_t pid;
 	} GET_PID, *PGET_PID;
 
-	typedef struct _ALLOC_MEM
-	{
-		pid_t pid;
-		uintptr_t addr; // in: desired addr (0 for auto), out: allocated addr
-		size_t size;
-	} ALLOC_MEM, *PALLOC_MEM;
-
 	// 路径最大长度
 	static constexpr int SEGMENT_PATH_MAX = 256;
 
@@ -112,8 +105,6 @@ public: // Make these accessible to users of the class
 		OP_HIDE_PROC = 0x804,
 		OP_GET_PID = 0x808,
 		OP_READ_MEM_SAFE = 0x809,
-		OP_ALLOC_MEM = 0x812,
-		OP_FREE_MEM = 0x813,
 		OP_GET_MEM_SEGMENTS = 0x814,
 		OP_GET_ALL_PROCS = 0x815,
         OP_ANTI_PTRACE_CTL = 0x830,
@@ -121,11 +112,39 @@ public: // Make these accessible to users of the class
 		// New Thread Ops
 		OP_ENUM_THREADS = 0x840,
     	OP_THREAD_CTL = 0x841,
-
-		// New Hardware Breakpoint Ops
-    	OP_SET_HW_BREAKPOINT = 0x850,
-    	OP_CLEAR_HW_BREAKPOINT = 0x851,
+		OP_SINGLE_STEP_CTL = 0x850,
 	};
+
+	enum THREAD_ACTION
+	{
+		THREAD_ACTION_SUSPEND = 1,
+		THREAD_ACTION_RESUME = 2,
+		THREAD_ACTION_KILL = 3,
+	};
+
+	// For single stepping
+	enum STEP_ACTION
+	{
+		STEP_ACTION_START = 1,
+		STEP_ACTION_STOP = 2,
+		STEP_ACTION_STEP = 3,
+		STEP_ACTION_GET_INFO = 4,
+	};
+
+	// User-space equivalent of ARM64 pt_regs
+    typedef struct _user_pt_regs {
+        uint64_t regs[31];
+        uint64_t sp;
+        uint64_t pc;
+        uint64_t pstate;
+    } user_pt_regs, *puser_pt_regs;
+
+	typedef struct _SINGLE_STEP_CTL
+    {
+        pid_t tid;
+        int action;
+        uintptr_t regs_buffer; // Pointer to user_pt_regs
+    } SINGLE_STEP_CTL, *PSINGLE_STEP_CTL;
 
 	enum THREAD_ACTION
 	{
@@ -149,25 +168,6 @@ public: // Make these accessible to users of the class
         pid_t tid;
         int action;
     } THREAD_CTL, *PTHREAD_CTL;
-
-    // Hardware Breakpoint Types
-    enum HW_BREAKPOINT_TYPE
-    {
-        HW_BREAKPOINT_EXECUTE = 0,
-        HW_BREAKPOINT_WRITE = 1,
-        HW_BREAKPOINT_READWRITE = 3,
-    };
-
-    // Hardware Breakpoint Control Structure
-    typedef struct _HW_BREAKPOINT_CTL
-    {
-        pid_t tid;
-        int reg_index;
-        uintptr_t address;
-        int type;
-        int len;
-        int action;
-    } HW_BREAKPOINT_CTL, *PHW_BREAKPOINT_CTL;
 
 public:
 	c_driver()
@@ -247,21 +247,6 @@ public:
         if (ioctl(fd, OP_GET_PID, &gp) != 0) return 0;
         return gp.pid;
     }
-
-	uintptr_t alloc_memory(size_t size, uintptr_t addr = 0)
-	{
-		if (fd < 0) return 0;
-		ALLOC_MEM am = {this->pid, addr, size};
-		if (ioctl(fd, OP_ALLOC_MEM, &am) != 0) return 0;
-		return am.addr;
-	}
-
-	bool free_memory(uintptr_t addr, size_t size)
-	{
-		if (fd < 0) return false;
-		ALLOC_MEM am = {this->pid, addr, size};
-		return ioctl(fd, OP_FREE_MEM, &am) == 0;
-	}
 
 	bool get_memory_segments(std::vector<MEM_SEGMENT_INFO>& segments)
 	{
@@ -407,17 +392,29 @@ public:
 		return true;
     }
 
-    // --- Hardware Breakpoint Control ---
-    bool set_hw_breakpoint(int reg_index, uintptr_t address, int type = HW_BREAKPOINT_EXECUTE, int len = 1) {
+    // --- Single-Step Control ---
+    bool start_single_step(pid_t tid) {
         if (fd < 0) return false;
-        HW_BREAKPOINT_CTL ctl = {0, reg_index, address, type, len, 0};
-        return ioctl(fd, OP_SET_HW_BREAKPOINT, &ctl) == 0;
+        SINGLE_STEP_CTL ctl = {tid, STEP_ACTION_START, 0};
+        return ioctl(fd, OP_SINGLE_STEP_CTL, &ctl) == 0;
     }
 
-    bool clear_hw_breakpoint(int reg_index) {
+    bool stop_single_step(pid_t tid) {
         if (fd < 0) return false;
-        HW_BREAKPOINT_CTL ctl = {0, reg_index, 0, 0, 0, 0};
-        return ioctl(fd, OP_CLEAR_HW_BREAKPOINT, &ctl) == 0;
+        SINGLE_STEP_CTL ctl = {tid, STEP_ACTION_STOP, 0};
+        return ioctl(fd, OP_SINGLE_STEP_CTL, &ctl) == 0;
+    }
+
+    bool step(pid_t tid) {
+        if (fd < 0) return false;
+        SINGLE_STEP_CTL ctl = {tid, STEP_ACTION_STEP, 0};
+        return ioctl(fd, OP_SINGLE_STEP_CTL, &ctl) == 0;
+    }
+
+    bool get_step_info(pid_t tid, user_pt_regs& regs) {
+        if (fd < 0) return false;
+        SINGLE_STEP_CTL ctl = {tid, STEP_ACTION_GET_INFO, (uintptr_t)&regs};
+        return ioctl(fd, OP_SINGLE_STEP_CTL, &ctl) == 0;
     }
 
     template <typename T>
