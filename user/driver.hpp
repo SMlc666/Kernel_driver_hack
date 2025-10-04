@@ -396,6 +396,16 @@ public:
     bool stop_single_step(pid_t tid) {
         if (fd < 0) return false;
         SINGLE_STEP_CTL ctl = {tid, STEP_ACTION_STOP, 0};
+
+        // Debug: print raw bytes being sent
+        unsigned char *bytes = (unsigned char *)&ctl;
+        printf("[DEBUG] stop_single_step sending %zu bytes: ", sizeof(ctl));
+        for (size_t i = 0; i < sizeof(ctl); i++) {
+            printf("%02x ", bytes[i]);
+        }
+        printf("\n");
+        printf("[DEBUG] tid=%d, action=%d\n", ctl.tid, ctl.action);
+
         return ioctl(fd, OP_SINGLE_STEP_CTL, &ctl) == 0;
     }
 
@@ -414,6 +424,16 @@ public:
     bool step_and_wait(pid_t tid, user_pt_regs& regs) {
         if (fd < 0) return false;
         SINGLE_STEP_CTL ctl = {tid, STEP_ACTION_STEP_AND_WAIT, (uintptr_t)&regs};
+
+        // Debug: print raw bytes being sent
+        unsigned char *bytes = (unsigned char *)&ctl;
+        printf("[DEBUG] step_and_wait sending %zu bytes: ", sizeof(ctl));
+        for (size_t i = 0; i < sizeof(ctl); i++) {
+            printf("%02x ", bytes[i]);
+        }
+        printf("\n");
+        printf("[DEBUG] tid=%d, action=%d, regs_buffer=0x%lx\n", ctl.tid, ctl.action, ctl.regs_buffer);
+
         return ioctl(fd, OP_SINGLE_STEP_CTL, &ctl) == 0;
     }
 
