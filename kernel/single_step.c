@@ -74,7 +74,12 @@ int handle_single_step_control(PSINGLE_STEP_CTL ctl)
 {
     struct task_struct *task;
 
+    PRINT_DEBUG("[single_step] action=%d, ctl->tid=%d, g_target_tid=%d\n",
+                ctl->action, ctl->tid, g_target_tid);
+
     if (ctl->action != STEP_ACTION_START && ctl->tid != g_target_tid) {
+        PRINT_DEBUG("[single_step] ERROR: tid mismatch! ctl->tid=%d != g_target_tid=%d\n",
+                    ctl->tid, g_target_tid);
         return -EINVAL;
     }
 
@@ -110,6 +115,28 @@ int handle_single_step_control(PSINGLE_STEP_CTL ctl)
             
             _user_enable_single_step(g_target_task);
             wake_up_process(g_target_task);
+            break;
+
+        case STEP_ACTION_STEP_AND_WAIT:
+            if (!g_target_task) return -EINVAL;
+            PRINT_DEBUG("[single_step] Stepping and waiting on TID %d.\n", g_target_tid);
+
+            // Atomically enable step and wake the process
+            _user_enable_single_step(g_target_task);
+            wake_up_process(g_target_task);
+
+            // Now, wait for the step to complete
+            if (wait_event_interruptible(g_step_wait_queue, g_step_completed)) {
+                return -ERESTARTSYS; // Interrupted by a signal
+            }
+            
+            if (g_last_regs) {
+                if (copy_to_user((void __user *)ctl->regs_buffer, g_last_regs, sizeof(struct pt_regs))) {
+                    g_step_completed = false;
+                    return -EFAULT;
+                }
+            }
+            g_step_completed = false;
             break;
 
         case STEP_ACTION_GET_INFO:
