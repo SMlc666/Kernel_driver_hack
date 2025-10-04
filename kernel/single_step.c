@@ -20,6 +20,10 @@ static struct pt_regs *g_last_regs = NULL;
 static DECLARE_WAIT_QUEUE_HEAD(g_step_wait_queue);
 static bool g_step_completed = false;
 
+// --- Function Pointers for non-exported symbols ---
+static void (*_user_enable_single_step)(struct task_struct *task);
+static void (*_user_disable_single_step)(struct task_struct *task);
+
 // --- Helper to find task ---
 static struct task_struct *find_task_by_tid(pid_t tid)
 {
@@ -46,7 +50,7 @@ static void before_do_debug_exception(hook_fargs3_t *fargs, void *udata)
         fargs->ret = 0; // We must provide a return value for the skipped function
 
         // 2. Disable single-stepping to prevent immediate re-entry
-        user_disable_single_step(current_task);
+        _user_disable_single_step(current_task);
         
         // 3. Save the register state
         g_last_regs = regs;
@@ -83,16 +87,14 @@ int handle_single_step_control(PSINGLE_STEP_CTL ctl)
 
             g_target_tid = ctl->tid;
             g_target_task = task;
-            PRINT_DEBUG("[single_step] Starting on TID %d.\n", g_target_tid);
-            
-            user_enable_single_step(g_target_task);
+            _user_enable_single_step(g_target_task);
             break;
 
         case STEP_ACTION_STOP:
             if (!g_target_task) return -EINVAL;
             PRINT_DEBUG("[single_step] Stopping on TID %d.\n", g_target_tid);
             
-            user_disable_single_step(g_target_task);
+            _user_disable_single_step(g_target_task);
             
             wake_up_process(g_target_task);
             
@@ -106,7 +108,7 @@ int handle_single_step_control(PSINGLE_STEP_CTL ctl)
             if (!g_target_task) return -EINVAL;
             PRINT_DEBUG("[single_step] Stepping TID %d.\n", g_target_tid);
             
-            user_enable_single_step(g_target_task);
+            _user_enable_single_step(g_target_task);
             wake_up_process(g_target_task);
             break;
 
@@ -134,6 +136,18 @@ int handle_single_step_control(PSINGLE_STEP_CTL ctl)
 // --- Init and Exit ---
 int single_step_init(void)
 {
+    _user_enable_single_step = (void (*)(struct task_struct *))kallsyms_lookup_name("user_enable_single_step");
+    if (!_user_enable_single_step) {
+        PRINT_DEBUG("[-] single_step: Failed to find user_enable_single_step.\n");
+        return -1;
+    }
+
+    _user_disable_single_step = (void (*)(struct task_struct *))kallsyms_lookup_name("user_disable_single_step");
+    if (!_user_disable_single_step) {
+        PRINT_DEBUG("[-] single_step: Failed to find user_disable_single_step.\n");
+        return -1;
+    }
+
     void *addr = (void *)kallsyms_lookup_name("do_debug_exception");
     if (!addr) {
         PRINT_DEBUG("[-] single_step: Failed to find do_debug_exception.\n");
@@ -157,7 +171,7 @@ void single_step_exit(void)
         PRINT_DEBUG("[+] single_step: do_debug_exception() unwrapped.\n");
     }
     if (g_target_task) {
-        user_disable_single_step(g_target_task);
+        _user_disable_single_step(g_target_task);
         wake_up_process(g_target_task);
         put_task_struct(g_target_task);
         g_target_tid = 0;
