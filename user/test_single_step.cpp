@@ -78,16 +78,10 @@ int main(int argc, char* argv[]) {
     for (int i = 0; i < num_steps; i++) {
         printf("\n--- Step %d ---\n", i + 1);
 
-        if (!driver->step(target_tid)) {
-            printf("[-] Step failed\n");
+        // Use the new atomic step-and-wait operation
+        if (!driver->step_and_wait(target_tid, regs)) {
+            printf("[-] Step-and-wait failed\n");
             break;
-        }
-        printf("[+] Step executed\n");
-
-        // Get register state after step
-        if (!driver->get_step_info(target_tid, regs)) {
-            printf("[-] Failed to get register state\n");
-            continue;
         }
 
         printf("[+] PC after step: 0x%016lx\n", regs.pc);

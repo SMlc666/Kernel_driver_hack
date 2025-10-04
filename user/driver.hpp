@@ -129,6 +129,7 @@ public: // Make these accessible to users of the class
 		STEP_ACTION_STOP = 2,
 		STEP_ACTION_STEP = 3,
 		STEP_ACTION_GET_INFO = 4,
+		STEP_ACTION_STEP_AND_WAIT = 5,
 	};
 
 	// User-space equivalent of ARM64 pt_regs
@@ -407,6 +408,12 @@ public:
     bool get_step_info(pid_t tid, user_pt_regs& regs) {
         if (fd < 0) return false;
         SINGLE_STEP_CTL ctl = {tid, STEP_ACTION_GET_INFO, (uintptr_t)&regs};
+        return ioctl(fd, OP_SINGLE_STEP_CTL, &ctl) == 0;
+    }
+
+    bool step_and_wait(pid_t tid, user_pt_regs& regs) {
+        if (fd < 0) return false;
+        SINGLE_STEP_CTL ctl = {tid, STEP_ACTION_STEP_AND_WAIT, (uintptr_t)&regs};
         return ioctl(fd, OP_SINGLE_STEP_CTL, &ctl) == 0;
     }
 
