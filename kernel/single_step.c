@@ -12,7 +12,7 @@
 #include "version_control.h"
 
 // --- State Management ---
-static pid_t g_target_tid = 0;
+pid_t g_target_tid = 0;
 static struct task_struct *g_target_task = NULL;
 static struct pt_regs *g_last_regs = NULL;
 

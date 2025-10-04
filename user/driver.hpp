@@ -146,13 +146,6 @@ public: // Make these accessible to users of the class
         uintptr_t regs_buffer; // Pointer to user_pt_regs
     } SINGLE_STEP_CTL, *PSINGLE_STEP_CTL;
 
-	enum THREAD_ACTION
-	{
-		THREAD_ACTION_SUSPEND = 1,
-		THREAD_ACTION_RESUME = 2,
-		THREAD_ACTION_KILL = 3,
-	};
-
 	typedef struct _THREAD_INFO {
         pid_t tid;
         char name[PROCESS_NAME_MAX];

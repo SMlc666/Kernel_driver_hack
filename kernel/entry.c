@@ -98,6 +98,13 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
         }
         // Set new client's thread group ID
         client_pid = current->tgid;
+
+        // Force-cleanup any stale single-step session from a previous client
+        if (g_target_tid != 0) {
+            PRINT_DEBUG("[+] Forcibly cleaning up stale single-step session for TID %d\n", g_target_tid);
+            single_step_exit(); 
+        }
+
         mutex_unlock(&auth_mutex);
         PRINT_DEBUG("[+] Client authenticated with PID: %d\n", client_pid);
         return 0;

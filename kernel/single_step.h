@@ -3,6 +3,8 @@
 
 #include "comm.h"
 
+extern pid_t g_target_tid; // Make accessible to other files
+
 int handle_single_step_control(PSINGLE_STEP_CTL ctl);
 int single_step_init(void);
 void single_step_exit(void);
