@@ -14,7 +14,7 @@
 // --- State Management ---
 pid_t g_target_tid = 0;
 static struct task_struct *g_target_task = NULL;
-static struct pt_regs g_last_regs;  // Changed: store the struct itself, not a pointer
+static struct user_pt_regs g_last_regs;  // Use user_pt_regs (272 bytes) instead of pt_regs
 static bool g_regs_valid = false;   // Track if g_last_regs contains valid data
 
 // --- Synchronization ---
@@ -53,8 +53,8 @@ static void before_do_debug_exception(hook_fargs3_t *fargs, void *udata)
         // 2. Disable single-stepping to prevent immediate re-entry
         _user_disable_single_step(current_task);
 
-        // 3. Save the register state (copy the entire struct, not just the pointer!)
-        memcpy(&g_last_regs, regs, sizeof(struct pt_regs));
+        // 3. Save the register state (copy only user_pt_regs portion, 272 bytes)
+        memcpy(&g_last_regs, regs, sizeof(struct user_pt_regs));
         g_regs_valid = true;
 
         // 4. Wake up the user-space process waiting on g_step_wait_queue
@@ -133,7 +133,7 @@ int handle_single_step_control(PSINGLE_STEP_CTL ctl)
             }
 
             if (g_regs_valid) {
-                if (copy_to_user((void __user *)ctl->regs_buffer, &g_last_regs, sizeof(struct pt_regs))) {
+                if (copy_to_user((void __user *)ctl->regs_buffer, &g_last_regs, sizeof(g_last_regs))) {
                     g_step_completed = false;
                     return -EFAULT;
                 }
@@ -147,7 +147,7 @@ int handle_single_step_control(PSINGLE_STEP_CTL ctl)
             wait_event_interruptible(g_step_wait_queue, g_step_completed);
 
             if (g_regs_valid) {
-                if (copy_to_user((void __user *)ctl->regs_buffer, &g_last_regs, sizeof(struct pt_regs))) {
+                if (copy_to_user((void __user *)ctl->regs_buffer, &g_last_regs, sizeof(g_last_regs))) {
                     g_step_completed = false;
                     return -EFAULT;
                 }
