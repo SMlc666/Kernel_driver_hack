@@ -14,8 +14,8 @@
 // --- State Management ---
 pid_t g_target_tid = 0;
 static struct task_struct *g_target_task = NULL;
-static struct user_pt_regs g_last_regs;  // Use user_pt_regs (272 bytes) instead of pt_regs
-static bool g_regs_valid = false;   // Track if g_last_regs contains valid data
+struct user_pt_regs g_last_regs;  // Use user_pt_regs (272 bytes) instead of pt_regs
+bool g_regs_valid = false;   // Track if g_last_regs contains valid data
 
 // --- Synchronization ---
 static DECLARE_WAIT_QUEUE_HEAD(g_step_wait_queue);
