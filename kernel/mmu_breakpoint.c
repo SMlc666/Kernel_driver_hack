@@ -147,7 +147,7 @@ static int clear_breakpoint(struct mmu_breakpoint *bp) {
     }
     
     // 恢复原始页表项
-    set_pte(ptep, bp->original_pte);
+    set_pte_at(bp->task->mm, bp->addr, ptep, bp->original_pte);
     flush_all();
     
     bp->is_active = false;
@@ -193,8 +193,13 @@ static void hooked_handle_pte_fault(hook_fargs1_t *fargs, void *udata) {
     fargs->ret = 0; // Original function returns 0 on success for this path
 
     // 恢复页面权限
+    pte_t pte_to_set = bp->original_pte;
+    if (vmf->flags & FAULT_FLAG_WRITE) {
+        pte_to_set = pte_mkwrite(pte_mkdirty(pte_to_set));
+    }
+
     vmf->pte = pte_offset_map(vmf->pmd, vmf->address);
-    set_pte(vmf->pte, bp->original_pte);
+    set_pte_at(vmf->vma->vm_mm, vmf->address, vmf->pte, pte_to_set);
     pte_unmap(vmf->pte);
     flush_all();
     

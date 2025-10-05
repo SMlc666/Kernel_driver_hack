@@ -139,15 +139,19 @@ static inline void set_pte_aatt(struct mm_struct *mm, unsigned long addr,
 {
 	pte_t old_pte;
 #if defined(CONFIG_ARM64)
-	if (pte_present(pte) && pte_user_exec(pte) && !pte_special(pte))
-		P_SYM(p_sync_icache_dcache)(pte);
+	if (pte_present(pte) && pte_user_exec(pte) && !pte_special(pte)) {
+        unsigned long page_start = addr & PAGE_MASK;
+        flush_icache_range(page_start, page_start + PAGE_SIZE);
+    }
 
 	old_pte = (*ptep);
 
 	set_pte(ptep, pte);
 #else
-    if (addr< TASK_SIZE && pte_valid_user(pte) && !pte_special(pte))
-		P_SYM(p_sync_icache_dcache)(pte);
+    if (addr< TASK_SIZE && pte_valid_user(pte) && !pte_special(pte)) {
+        unsigned long page_start = addr & PAGE_MASK;
+        flush_icache_range(page_start, page_start + PAGE_SIZE);
+    }
 
 	old_pte = (*ptep);
 
