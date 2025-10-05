@@ -5,6 +5,7 @@
 #include <linux/slab.h>
 #include <linux/sched/signal.h>
 #include <asm/debug-monitors.h>
+#include <asm/tlbflush.h>
 
 #include "single_step.h"
 #include "inline_hook/p_lkrg_main.h"
@@ -42,6 +43,7 @@ static void before_do_debug_exception(hook_fargs3_t *fargs, void *udata)
     struct pt_regs *regs;
     struct task_struct *current_task;
     unsigned int exception_class;
+    pte_t *ptep;
 
     esr = (unsigned int)fargs->arg1;
     regs = (struct pt_regs *)fargs->arg2;
@@ -82,7 +84,7 @@ static void before_do_debug_exception(hook_fargs3_t *fargs, void *udata)
             _user_disable_single_step(current_task);
 
             // Re-arm the breakpoint
-            pte_t *ptep = virt_to_pte(current_bp->task, current_bp->addr);
+            ptep = virt_to_pte(current_bp->task, current_bp->addr);
             if (ptep && current_bp->vma) {
                 struct mm_struct *mm = current_bp->vma->vm_mm;
                 ptep_get_and_clear(mm, current_bp->addr, ptep);
