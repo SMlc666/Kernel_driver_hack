@@ -1,13 +1,16 @@
 #include <linux/kernel.h>
 #include <linux/sched.h>
 #include <linux/sched/signal.h>
-#include <linux/binfmts.h> // For kbasename
 #include <linux/string.h>
 #include <linux/spinlock.h>
+#include <linux/slab.h>
+#include <linux/prctl.h>
+#include <asm/syscall.h>
+#include <linux/ptrace.h>
 
 #include "spawn_suspend.h"
 #include "inline_hook/p_lkrg_main.h"
-#include "inline_hook/p_hook.h"
+#include "inline_hook/utils/p_memory.h"
 #include "version_control.h"
 
 #define TARGET_NAME_MAX 256
@@ -17,68 +20,105 @@ static char g_spawn_suspend_target[TARGET_NAME_MAX];
 static bool g_suspend_enabled = false;
 static DEFINE_SPINLOCK(g_suspend_lock);
 
-// --- Original function pointer ---
-static void *g_execve_addr = NULL;
+// --- Syscall table and original pointers ---
+static unsigned long **p_sys_call_table = NULL;
+static asmlinkage long (*original_sys_execve)(const struct pt_regs *);
+static asmlinkage long (*original_sys_execveat)(const struct pt_regs *);
+static asmlinkage long (*original_sys_prctl)(const struct pt_regs *);
 
-// --- Hook function ---
-static void before_execve(hook_fargs1_t *fargs, void *udata)
+// --- Hooked Syscall Functions ---
+
+static asmlinkage long hooked_sys_execve(const struct pt_regs *regs)
 {
-    const char __user *filename_user = (const char __user *)fargs->arg0;
     char *filename;
-    const char __user *const __user *argv_user;
-    int i;
 
     spin_lock(&g_suspend_lock);
-    if (!g_suspend_enabled || g_spawn_suspend_target[0] == '\0') {
+    if (g_suspend_enabled && g_spawn_suspend_target[0] != '\0') {
+        const char __user *filename_user = (const char __user *)regs->regs[0];
         spin_unlock(&g_suspend_lock);
-        return;
-    }
-    spin_unlock(&g_suspend_lock);
 
-    filename = kmalloc(PATH_MAX, GFP_KERNEL);
-    if (!filename) {
-        return;
-    }
+        filename = kmalloc(PATH_MAX, GFP_KERNEL);
+        if (filename) {
+            if (strncpy_from_user(filename, filename_user, PATH_MAX - 1) >= 0) {
+                filename[PATH_MAX - 1] = '\0';
+                PRINT_DEBUG("[spawn_suspend] execve: %s\n", filename);
 
-    if (strncpy_from_user(filename, filename_user, PATH_MAX - 1) < 0) {
-        kfree(filename);
-        return;
-    }
-    filename[PATH_MAX - 1] = '\0';
-
-    PRINT_DEBUG("[spawn_suspend] Checking execve for process: %s (PID: %d)\n", filename, current->pid);
-
-    // Log argv
-    argv_user = (const char __user *const __user *)fargs->arg1;
-    if (argv_user) {
-        char arg_buf[256];
-        i = 0;
-        const char __user *arg_ptr;
-        
-        while (get_user(arg_ptr, argv_user + i) == 0 && arg_ptr) {
-            long len = strncpy_from_user(arg_buf, arg_ptr, sizeof(arg_buf) - 1);
-            if (len < 0) {
-                PRINT_DEBUG("[spawn_suspend] argv[%d]: <fault>\n", i);
-            } else {
-                arg_buf[sizeof(arg_buf) - 1] = '\0';
-                PRINT_DEBUG("[spawn_suspend] argv[%d]: %s\n", i, arg_buf);
+                spin_lock(&g_suspend_lock);
+                if (g_suspend_enabled && strstr(filename, g_spawn_suspend_target) != NULL) {
+                    PRINT_DEBUG("[spawn_suspend] Target '%s' matched execve path '%s'. Stopping PID %d.\n", g_spawn_suspend_target, filename, current->pid);
+                    force_sig(SIGSTOP, current);
+                }
+                spin_unlock(&g_suspend_lock);
             }
-            i++;
-            if (i > 32) { // Safety break
-                PRINT_DEBUG("[spawn_suspend] argv: too many arguments, stopping log.\n");
-                break;
+            kfree(filename);
+        }
+    } else {
+        spin_unlock(&g_suspend_lock);
+    }
+
+    return original_sys_execve(regs);
+}
+
+static asmlinkage long hooked_sys_execveat(const struct pt_regs *regs)
+{
+    char *filename;
+
+    spin_lock(&g_suspend_lock);
+    if (g_suspend_enabled && g_spawn_suspend_target[0] != '\0') {
+        const char __user *filename_user = (const char __user *)regs->regs[1];
+        spin_unlock(&g_suspend_lock);
+
+        filename = kmalloc(PATH_MAX, GFP_KERNEL);
+        if (filename) {
+            if (strncpy_from_user(filename, filename_user, PATH_MAX - 1) >= 0) {
+                filename[PATH_MAX - 1] = '\0';
+                PRINT_DEBUG("[spawn_suspend] execveat: %s\n", filename);
+
+                spin_lock(&g_suspend_lock);
+                if (g_suspend_enabled && strstr(filename, g_spawn_suspend_target) != NULL) {
+                    PRINT_DEBUG("[spawn_suspend] Target '%s' matched execveat path '%s'. Stopping PID %d.\n", g_spawn_suspend_target, filename, current->pid);
+                    force_sig(SIGSTOP, current);
+                }
+                spin_unlock(&g_suspend_lock);
             }
+            kfree(filename);
+        }
+    } else {
+        spin_unlock(&g_suspend_lock);
+    }
+
+    return original_sys_execveat(regs);
+}
+
+static asmlinkage long hooked_sys_prctl(const struct pt_regs *regs)
+{
+    int option = (int)regs->regs[0];
+
+    if (option == PR_SET_NAME) {
+        char name_buf[TASK_COMM_LEN];
+
+        spin_lock(&g_suspend_lock);
+        if (g_suspend_enabled && g_spawn_suspend_target[0] != '\0') {
+            const char __user *name_user = (const char __user *)regs->regs[1];
+            spin_unlock(&g_suspend_lock);
+
+            if (strncpy_from_user(name_buf, name_user, sizeof(name_buf) - 1) >= 0) {
+                name_buf[sizeof(name_buf) - 1] = '\0';
+                PRINT_DEBUG("[spawn_suspend] prctl(PR_SET_NAME): %s\n", name_buf);
+
+                spin_lock(&g_suspend_lock);
+                if (g_suspend_enabled && strcmp(name_buf, g_spawn_suspend_target) == 0) {
+                    PRINT_DEBUG("[spawn_suspend] Target '%s' matched process name. Stopping PID %d.\n", g_spawn_suspend_target, current->pid);
+                    force_sig(SIGSTOP, current);
+                }
+                spin_unlock(&g_suspend_lock);
+            }
+        } else {
+            spin_unlock(&g_suspend_lock);
         }
     }
 
-    spin_lock(&g_suspend_lock);
-    if (g_suspend_enabled && strstr(filename, g_spawn_suspend_target) != NULL) {
-        PRINT_DEBUG("[spawn_suspend] Target '%s' matched in path '%s' for PID %d. Sending SIGSTOP.\n", g_spawn_suspend_target, filename, current->pid);
-        
-        force_sig(SIGSTOP, current);
-    }
-    spin_unlock(&g_suspend_lock);
-    kfree(filename);
+    return original_sys_prctl(regs);
 }
 
 // --- Public control function ---
@@ -101,35 +141,57 @@ void set_spawn_suspend_target(const char *name, int enable)
 // --- Init and Exit ---
 int spawn_suspend_init(void)
 {
-    // Find the address of the execve syscall handler. On arm64, it's often __arm64_sys_execve.
-    // The exact name can vary, so checking kallsyms is necessary.
-    g_execve_addr = (void *)kallsyms_lookup_name("__arm64_sys_execve");
-    if (!g_execve_addr) {
-        g_execve_addr = (void *)kallsyms_lookup_name("do_execve");
-        if (!g_execve_addr) {
-            PRINT_DEBUG("[-] spawn_suspend: Failed to find execve syscall handler.\n");
-            return -1;
-        }
+    p_sys_call_table = (unsigned long **)get_sys_call_table();
+    if (!p_sys_call_table) {
+        PRINT_DEBUG("[-] spawn_suspend: Failed to get sys_call_table address.\n");
+        return -EFAULT;
+    }
+    PRINT_DEBUG("[+] spawn_suspend: Found sys_call_table at %p\n", p_sys_call_table);
+
+    // Backup original syscalls
+    original_sys_execve = (void *)p_sys_call_table[__NR_execve];
+    original_sys_execveat = (void *)p_sys_call_table[__NR_execveat];
+    original_sys_prctl = (void *)p_sys_call_table[__NR_prctl];
+
+    // Write our hooks
+    void *hook_execve_ptr = &hooked_sys_execve;
+    void *hook_execveat_ptr = &hooked_sys_execveat;
+    void *hook_prctl_ptr = &hooked_sys_prctl;
+
+    if (remap_write_range(&p_sys_call_table[__NR_execve], &hook_execve_ptr, sizeof(void *), true)) {
+        PRINT_DEBUG("[-] spawn_suspend: Failed to hook sys_execve.\n");
+    } else {
+        PRINT_DEBUG("[+] spawn_suspend: Successfully hooked sys_execve.\n");
     }
 
-    // The execve syscall has 3 arguments, but we only need the first one.
-    // hook_wrap with arg count 1 (which maps to hook_fargs4_t) is sufficient.
-    if (hook_wrap(g_execve_addr, 1, before_execve, NULL, NULL) != HOOK_NO_ERR) {
-        PRINT_DEBUG("[-] spawn_suspend: Failed to wrap execve().\n");
-        g_execve_addr = NULL;
-        return -1;
+    if (remap_write_range(&p_sys_call_table[__NR_execveat], &hook_execveat_ptr, sizeof(void *), true)) {
+        PRINT_DEBUG("[-] spawn_suspend: Failed to hook sys_execveat.\n");
+    } else {
+        PRINT_DEBUG("[+] spawn_suspend: Successfully hooked sys_execveat.\n");
     }
 
-    PRINT_DEBUG("[+] spawn_suspend: execve() wrapped successfully at %p.\n", g_execve_addr);
+    if (remap_write_range(&p_sys_call_table[__NR_prctl], &hook_prctl_ptr, sizeof(void *), true)) {
+        PRINT_DEBUG("[-] spawn_suspend: Failed to hook sys_prctl.\n");
+    } else {
+        PRINT_DEBUG("[+] spawn_suspend: Successfully hooked sys_prctl.\n");
+    }
+
     return 0;
 }
 
 void spawn_suspend_exit(void)
 {
-    if (g_execve_addr) {
-        hook_unwrap(g_execve_addr, before_execve, NULL);
-        g_execve_addr = NULL;
-        PRINT_DEBUG("[+] spawn_suspend: execve() unwrapped.\n");
+    if (p_sys_call_table) {
+        if (original_sys_execve && remap_write_range(&p_sys_call_table[__NR_execve], &original_sys_execve, sizeof(void *), true)) {
+            PRINT_DEBUG("[-] spawn_suspend: Failed to restore sys_execve.\n");
+        }
+        if (original_sys_execveat && remap_write_range(&p_sys_call_table[__NR_execveat], &original_sys_execveat, sizeof(void *), true)) {
+            PRINT_DEBUG("[-] spawn_suspend: Failed to restore sys_execveat.\n");
+        }
+        if (original_sys_prctl && remap_write_range(&p_sys_call_table[__NR_prctl], &original_sys_prctl, sizeof(void *), true)) {
+            PRINT_DEBUG("[-] spawn_suspend: Failed to restore sys_prctl.\n");
+        }
     }
-    set_spawn_suspend_target(NULL, 0); // Clear target on exit
+    set_spawn_suspend_target(NULL, 0);
+    PRINT_DEBUG("[+] spawn_suspend: Unloaded.\n");
 }
