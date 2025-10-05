@@ -22,103 +22,111 @@ static DEFINE_SPINLOCK(g_suspend_lock);
 
 // --- Syscall table and original pointers ---
 static unsigned long **p_sys_call_table = NULL;
-static asmlinkage long (*original_sys_execve)(const struct pt_regs *);
-static asmlinkage long (*original_sys_execveat)(const struct pt_regs *);
-static asmlinkage long (*original_sys_prctl)(const struct pt_regs *);
+
+// Define types for the syscall function pointers
+typedef asmlinkage long (*sys_execve_t)(const char __user *filename, const char __user *const __user *argv, const char __user *const __user *envp);
+typedef asmlinkage long (*sys_execveat_t)(int fd, const char __user *filename, const char __user *const __user *argv, const char __user *const __user *envp, int flags);
+typedef asmlinkage long (*sys_prctl_t)(int option, unsigned long arg2, unsigned long arg3, unsigned long arg4, unsigned long arg5);
+
+static sys_execve_t original_sys_execve;
+static sys_execveat_t original_sys_execveat;
+static sys_prctl_t original_sys_prctl;
+
 
 // --- Hooked Syscall Functions ---
 
-static asmlinkage long hooked_sys_execve(const struct pt_regs *regs)
+static asmlinkage long hooked_sys_execve(const char __user *filename_user, const char __user *const __user *argv, const char __user *const __user *envp)
 {
-    char *filename;
+    char target_name_copy[TARGET_NAME_MAX];
+    bool enabled_copy;
 
     spin_lock(&g_suspend_lock);
-    if (g_suspend_enabled && g_spawn_suspend_target[0] != '\0') {
-        const char __user *filename_user = (const char __user *)regs->regs[0];
-        spin_unlock(&g_suspend_lock);
+    enabled_copy = g_suspend_enabled;
+    if (enabled_copy) {
+        strncpy(target_name_copy, g_spawn_suspend_target, TARGET_NAME_MAX);
+    }
+    spin_unlock(&g_suspend_lock);
 
-        filename = kmalloc(PATH_MAX, GFP_KERNEL);
+    if (enabled_copy && target_name_copy[0] != '\0') {
+        char *filename = kmalloc(PATH_MAX, GFP_KERNEL);
         if (filename) {
             if (strncpy_from_user(filename, filename_user, PATH_MAX - 1) >= 0) {
                 filename[PATH_MAX - 1] = '\0';
                 PRINT_DEBUG("[spawn_suspend] execve: %s\n", filename);
 
-                spin_lock(&g_suspend_lock);
-                if (g_suspend_enabled && strstr(filename, g_spawn_suspend_target) != NULL) {
-                    PRINT_DEBUG("[spawn_suspend] Target '%s' matched execve path '%s'. Stopping PID %d.\n", g_spawn_suspend_target, filename, current->pid);
+                if (strstr(filename, target_name_copy) != NULL) {
+                    PRINT_DEBUG("[spawn_suspend] Target '%s' matched execve path '%s'. Stopping PID %d.\n", target_name_copy, filename, current->pid);
                     force_sig(SIGSTOP, current);
                 }
-                spin_unlock(&g_suspend_lock);
             }
             kfree(filename);
         }
-    } else {
-        spin_unlock(&g_suspend_lock);
     }
 
-    return original_sys_execve(regs);
+    return original_sys_execve(filename_user, argv, envp);
 }
 
-static asmlinkage long hooked_sys_execveat(const struct pt_regs *regs)
+static asmlinkage long hooked_sys_execveat(int fd, const char __user *filename_user, const char __user *const __user *argv, const char __user *const __user *envp, int flags)
 {
-    char *filename;
+    char target_name_copy[TARGET_NAME_MAX];
+    bool enabled_copy;
 
     spin_lock(&g_suspend_lock);
-    if (g_suspend_enabled && g_spawn_suspend_target[0] != '\0') {
-        const char __user *filename_user = (const char __user *)regs->regs[1];
-        spin_unlock(&g_suspend_lock);
+    enabled_copy = g_suspend_enabled;
+    if (enabled_copy) {
+        strncpy(target_name_copy, g_spawn_suspend_target, TARGET_NAME_MAX);
+    }
+    spin_unlock(&g_suspend_lock);
 
-        filename = kmalloc(PATH_MAX, GFP_KERNEL);
+    if (enabled_copy && target_name_copy[0] != '\0') {
+        char *filename = kmalloc(PATH_MAX, GFP_KERNEL);
         if (filename) {
             if (strncpy_from_user(filename, filename_user, PATH_MAX - 1) >= 0) {
                 filename[PATH_MAX - 1] = '\0';
                 PRINT_DEBUG("[spawn_suspend] execveat: %s\n", filename);
 
-                spin_lock(&g_suspend_lock);
-                if (g_suspend_enabled && strstr(filename, g_spawn_suspend_target) != NULL) {
-                    PRINT_DEBUG("[spawn_suspend] Target '%s' matched execveat path '%s'. Stopping PID %d.\n", g_spawn_suspend_target, filename, current->pid);
+                if (strstr(filename, target_name_copy) != NULL) {
+                    PRINT_DEBUG("[spawn_suspend] Target '%s' matched execveat path '%s'. Stopping PID %d.\n", target_name_copy, filename, current->pid);
                     force_sig(SIGSTOP, current);
                 }
-                spin_unlock(&g_suspend_lock);
             }
             kfree(filename);
         }
-    } else {
-        spin_unlock(&g_suspend_lock);
     }
 
-    return original_sys_execveat(regs);
+    return original_sys_execveat(fd, filename_user, argv, envp, flags);
 }
 
-static asmlinkage long hooked_sys_prctl(const struct pt_regs *regs)
+static asmlinkage long hooked_sys_prctl(int option, unsigned long arg2, unsigned long arg3, unsigned long arg4, unsigned long arg5)
 {
-    int option = (int)regs->regs[0];
-
     if (option == PR_SET_NAME) {
-        char name_buf[TASK_COMM_LEN];
+        char target_name_copy[TARGET_NAME_MAX];
+        bool enabled_copy;
 
         spin_lock(&g_suspend_lock);
-        if (g_suspend_enabled && g_spawn_suspend_target[0] != '\0') {
-            const char __user *name_user = (const char __user *)regs->regs[1];
-            spin_unlock(&g_suspend_lock);
+        enabled_copy = g_suspend_enabled;
+        if (enabled_copy) {
+            strncpy(target_name_copy, g_spawn_suspend_target, TARGET_NAME_MAX);
+        }
+        spin_unlock(&g_suspend_lock);
+
+        if (enabled_copy && target_name_copy[0] != '\0') {
+            char name_buf[TASK_COMM_LEN];
+            const char __user *name_user = (const char __user *)arg2;
 
             if (strncpy_from_user(name_buf, name_user, sizeof(name_buf) - 1) >= 0) {
                 name_buf[sizeof(name_buf) - 1] = '\0';
                 PRINT_DEBUG("[spawn_suspend] prctl(PR_SET_NAME): %s\n", name_buf);
 
-                spin_lock(&g_suspend_lock);
-                if (g_suspend_enabled && strcmp(name_buf, g_spawn_suspend_target) == 0) {
-                    PRINT_DEBUG("[spawn_suspend] Target '%s' matched process name. Stopping PID %d.\n", g_spawn_suspend_target, current->pid);
+                if (strcmp(name_buf, target_name_copy) == 0) {
+                    PRINT_DEBUG("[spawn_suspend] Target '%s' matched process name. Stopping PID %d.\n", target_name_copy, current->pid);
                     force_sig(SIGSTOP, current);
                 }
-                spin_unlock(&g_suspend_lock);
             }
-        } else {
-            spin_unlock(&g_suspend_lock);
         }
     }
 
-    return original_sys_prctl(regs);
+    return original_sys_prctl(option, arg2, arg3, arg4, arg5);
 }
 
 // --- Public control function ---
