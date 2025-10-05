@@ -66,6 +66,10 @@ enum OPERATIONS
 	
 	// --- Module Unload Operation ---
 	OP_UNLOAD_MODULE = 0x888,
+	
+	// --- MMU Breakpoint Operations ---
+	OP_MMU_BP_CTL = 0x890,
+	OP_MMU_BP_LIST = 0x891,
 };
 
 // For controlling a specific thread

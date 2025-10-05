@@ -1,0 +1,57 @@
+#ifndef MMU_BREAKPOINT_H
+#define MMU_BREAKPOINT_H
+
+#include <linux/types.h>
+#include <linux/list.h>
+#include <linux/spinlock.h>
+#include <linux/mutex.h>
+#include "comm.h"
+
+// MMU断点访问类型
+#define BP_ACCESS_READ     0x01
+#define BP_ACCESS_WRITE    0x02
+#define BP_ACCESS_EXECUTE  0x04
+#define BP_ACCESS_RW       (BP_ACCESS_READ | BP_ACCESS_WRITE)
+#define BP_ACCESS_ALL      (BP_ACCESS_READ | BP_ACCESS_WRITE | BP_ACCESS_EXECUTE)
+
+// MMU断点结构体
+struct mmu_breakpoint {
+    struct list_head list;        // 链表节点
+    pid_t pid;                    // 目标进程PID
+    unsigned long addr;           // 断点地址
+    unsigned long size;           // 监控范围
+    int access_type;              // 访问类型
+    pte_t original_pte;           // 原始页表项
+    struct vm_area_struct *vma;   // VMA结构
+    struct task_struct *task;     // 任务结构
+    bool is_active;               // 是否激活
+    unsigned long hit_count;      // 命中次数
+};
+
+// MMU断点信息（用于用户空间）
+typedef struct _MMU_BP_INFO {
+    pid_t pid;
+    unsigned long addr;
+    unsigned long size;
+    int access_type;
+    bool is_active;
+    unsigned long hit_count;
+} MMU_BP_INFO, *PMMU_BP_INFO;
+
+// MMU断点控制结构体
+typedef struct _MMU_BP_CTL {
+    pid_t pid;
+    unsigned long addr;
+    unsigned long size;
+    int access_type;
+    int action;                   // 1=添加, 2=移除, 3=清空
+} MMU_BP_CTL, *PMMU_BP_CTL;
+
+// 函数声明
+int mmu_breakpoint_init(void);
+void mmu_breakpoint_exit(void);
+int handle_mmu_breakpoint_control(PMMU_BP_CTL ctl);
+int handle_mmu_breakpoint_list(pid_t pid, PMMU_BP_INFO buffer, size_t *count);
+bool is_mmu_breakpoint_active(pid_t pid, unsigned long addr);
+
+#endif // MMU_BREAKPOINT_H

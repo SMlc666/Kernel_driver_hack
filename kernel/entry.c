@@ -22,6 +22,7 @@
 #include "single_step.h"
 #include "spawn_suspend.h"
 #include "register.h"
+#include "mmu_breakpoint.h"
 #include "inline_hook/p_lkrg_main.h"
 #include "inline_hook/utils/p_memory.h"
 #include "version_control.h"
@@ -441,6 +442,52 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
         return ret;
     }
     
+    case OP_MMU_BP_CTL:
+    {
+        MMU_BP_CTL *mbp = kmalloc(sizeof(MMU_BP_CTL), GFP_KERNEL);
+        int ret = -EFAULT;
+        if (!mbp)
+            return -ENOMEM;
+        
+        if (copy_from_user(mbp, (void __user *)arg, sizeof(MMU_BP_CTL)) != 0)
+        {
+            kfree(mbp);
+            return -EFAULT;
+        }
+        
+        ret = handle_mmu_breakpoint_control(mbp);
+        kfree(mbp);
+        return ret;
+    }
+    case OP_MMU_BP_LIST:
+    {
+        // 参数结构：pid (输入), buffer (输出), count (输入/输出)
+        struct {
+            pid_t pid;
+            uintptr_t buffer;
+            size_t count;
+        } *bp_list = kmalloc(sizeof(*bp_list), GFP_KERNEL);
+        int ret = -EFAULT;
+        if (!bp_list)
+            return -ENOMEM;
+        
+        if (copy_from_user(bp_list, (void __user *)arg, sizeof(*bp_list)) != 0)
+        {
+            kfree(bp_list);
+            return -EFAULT;
+        }
+        
+        ret = handle_mmu_breakpoint_list(bp_list->pid, (PMMU_BP_INFO)bp_list->buffer, &bp_list->count);
+        if (ret == 0) {
+            // 更新count为实际找到的断点数量
+            if (copy_to_user((void __user *)arg, bp_list, sizeof(*bp_list)) != 0) {
+                ret = -EFAULT;
+            }
+        }
+        
+        kfree(bp_list);
+        return ret;
+    }
     case OP_UNLOAD_MODULE:
     {
         PRINT_DEBUG("[+] Unload module requested by PID %d\n", current->pid);
@@ -560,6 +607,13 @@ int __init driver_entry(void)
 		return ret;
 	}
 
+	ret = mmu_breakpoint_init();
+	if (ret)
+	{
+		_driver_cleanup();
+		return ret;
+	}
+
 	mutex_lock(&module_mutex);
 	list_del_init(&THIS_MODULE->list);
 	mutex_unlock(&module_mutex);
@@ -595,6 +649,7 @@ static void _driver_cleanup(void)
     stop_anti_ptrace_detection(); // Ensure it's off on unload
     spawn_suspend_exit();
     single_step_exit();
+    mmu_breakpoint_exit();
 	hide_kill_exit();
 	hide_proc_exit();
 	khook_exit();

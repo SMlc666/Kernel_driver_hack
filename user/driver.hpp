@@ -118,6 +118,10 @@ public: // Make these accessible to users of the class
 		
 		// Module Unload Operation
 		OP_UNLOAD_MODULE = 0x888,
+		
+		// MMU Breakpoint Operations
+		OP_MMU_BP_CTL = 0x890,
+		OP_MMU_BP_LIST = 0x891,
 	};
 
 	enum THREAD_ACTION
@@ -174,6 +178,24 @@ public: // Make these accessible to users of the class
         uintptr_t regs_buffer;
         int operation;
     } REG_ACCESS, *PREG_ACCESS;
+
+    // MMU Breakpoint Structures
+    typedef struct _MMU_BP_CTL {
+        pid_t pid;
+        unsigned long addr;
+        unsigned long size;
+        int access_type;
+        int action;
+    } MMU_BP_CTL, *PMMU_BP_CTL;
+
+    typedef struct _MMU_BP_INFO {
+        pid_t pid;
+        unsigned long addr;
+        unsigned long size;
+        int access_type;
+        bool is_active;
+        unsigned long hit_count;
+    } MMU_BP_INFO, *PMMU_BP_INFO;
 
 public:
 	c_driver()
@@ -437,6 +459,49 @@ public:
         if (fd < 0) return false;
         REG_ACCESS reg_access = {target_pid, (uintptr_t)&regs, 1};
         return ioctl(fd, OP_REG_ACCESS, &reg_access) == 0;
+    }
+
+    // --- MMU Breakpoint Control ---
+    bool mmu_breakpoint_control(PMMU_BP_CTL ctl) {
+        if (fd < 0) return false;
+        return ioctl(fd, OP_MMU_BP_CTL, ctl) == 0;
+    }
+
+    bool mmu_breakpoint_list(pid_t pid, std::vector<MMU_BP_INFO>& breakpoints) {
+        if (fd < 0) return false;
+
+        size_t capacity = 16; // Start with a reasonable capacity
+        breakpoints.resize(capacity);
+
+        struct {
+            pid_t pid;
+            uintptr_t buffer;
+            size_t count;
+        } list_params;
+        
+        list_params.pid = pid;
+        list_params.buffer = (uintptr_t)breakpoints.data();
+        list_params.count = capacity;
+
+        if (ioctl(fd, OP_MMU_BP_LIST, &list_params) != 0) {
+            breakpoints.clear();
+            return false;
+        }
+
+        if (list_params.count > capacity) {
+            capacity = list_params.count;
+            breakpoints.resize(capacity);
+            list_params.buffer = (uintptr_t)breakpoints.data();
+            list_params.count = capacity;
+
+            if (ioctl(fd, OP_MMU_BP_LIST, &list_params) != 0) {
+                breakpoints.clear();
+                return false;
+            }
+        }
+
+        breakpoints.resize(list_params.count);
+        return true;
     }
 
     template <typename T>
