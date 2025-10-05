@@ -14,7 +14,8 @@
 // --- State Management ---
 pid_t g_target_tid = 0;
 static struct task_struct *g_target_task = NULL;
-static struct pt_regs *g_last_regs = NULL;
+static struct pt_regs g_last_regs;  // Changed: store the struct itself, not a pointer
+static bool g_regs_valid = false;   // Track if g_last_regs contains valid data
 
 // --- Synchronization ---
 static DECLARE_WAIT_QUEUE_HEAD(g_step_wait_queue);
@@ -51,9 +52,10 @@ static void before_do_debug_exception(hook_fargs3_t *fargs, void *udata)
 
         // 2. Disable single-stepping to prevent immediate re-entry
         _user_disable_single_step(current_task);
-        
-        // 3. Save the register state
-        g_last_regs = regs;
+
+        // 3. Save the register state (copy the entire struct, not just the pointer!)
+        memcpy(&g_last_regs, regs, sizeof(struct pt_regs));
+        g_regs_valid = true;
 
         // 4. Wake up the user-space process waiting on g_step_wait_queue
         g_step_completed = true;
@@ -106,7 +108,7 @@ int handle_single_step_control(PSINGLE_STEP_CTL ctl)
             put_task_struct(g_target_task);
             g_target_tid = 0;
             g_target_task = NULL;
-            g_last_regs = NULL;
+            g_regs_valid = false;
             break;
 
         case STEP_ACTION_STEP:
@@ -129,9 +131,9 @@ int handle_single_step_control(PSINGLE_STEP_CTL ctl)
             if (wait_event_interruptible(g_step_wait_queue, g_step_completed)) {
                 return -ERESTARTSYS; // Interrupted by a signal
             }
-            
-            if (g_last_regs) {
-                if (copy_to_user((void __user *)ctl->regs_buffer, g_last_regs, sizeof(struct pt_regs))) {
+
+            if (g_regs_valid) {
+                if (copy_to_user((void __user *)ctl->regs_buffer, &g_last_regs, sizeof(struct pt_regs))) {
                     g_step_completed = false;
                     return -EFAULT;
                 }
@@ -141,11 +143,11 @@ int handle_single_step_control(PSINGLE_STEP_CTL ctl)
 
         case STEP_ACTION_GET_INFO:
             if (!g_target_task) return -EINVAL;
-            
+
             wait_event_interruptible(g_step_wait_queue, g_step_completed);
-            
-            if (g_last_regs) {
-                if (copy_to_user((void __user *)ctl->regs_buffer, g_last_regs, sizeof(struct pt_regs))) {
+
+            if (g_regs_valid) {
+                if (copy_to_user((void __user *)ctl->regs_buffer, &g_last_regs, sizeof(struct pt_regs))) {
                     g_step_completed = false;
                     return -EFAULT;
                 }
