@@ -107,11 +107,12 @@ static int set_breakpoint(struct mmu_breakpoint *bp) {
     }
     
     // 保存原始页表项
-    bp->original_pte = *ptep;
     bp->vma = find_vma(bp->task->mm, bp->addr);
-    
-    // 移除页面存在位
-    set_pte(ptep, pte_mknotpresent(*ptep));
+    if (!bp->vma) {
+        PRINT_DEBUG("[-] mmu_bp: Failed to find VMA for addr 0x%lx\n", bp->addr);
+        return -EFAULT;
+    }
+    bp->original_pte = ptep_clear_flush(bp->vma, bp->addr, ptep);
     flush_all();
     
     bp->is_active = true;
@@ -177,7 +178,7 @@ static void hooked_handle_pte_fault(hook_fargs1_t *fargs, void *udata) {
 
     // 恢复页面权限
     vmf->pte = pte_offset_map(vmf->pmd, vmf->address);
-    set_pte(vmf->pte, pte_mkpresent(*vmf->pte));
+    set_pte(vmf->pte, bp->original_pte);
     flush_all();
     
     // 增加命中计数
@@ -198,8 +199,10 @@ static void hooked_arch_do_signal_or_restart(hook_fargs1_t *fargs, void *udata) 
                    current_bp->pid, current_bp->addr);
         
         // 重新设置断点
-        set_pte(virt_to_pte(current_bp->task, current_bp->addr), 
-                pte_mknotpresent(current_bp->original_pte));
+        pte_t *ptep = virt_to_pte(current_bp->task, current_bp->addr);
+        if (ptep) {
+            ptep_clear_flush(current_bp->vma, current_bp->addr, ptep);
+        }
         flush_all();
         
         // 禁用单步调试
