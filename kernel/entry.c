@@ -42,6 +42,9 @@ static long (*original_ioctl)(struct file *, unsigned int, unsigned long) = NULL
 static struct file_operations *proc_version_fops = NULL;
 static bool is_hijacked = false;
 
+// Module unload control
+static bool g_module_unloading = false;
+
 // --- End of Hijack Logic ---
 
 int dispatch_open(struct inode *node, struct file *file)
@@ -332,6 +335,39 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
             return -EFAULT;
         }
         break;
+    }
+    
+    case OP_UNLOAD_MODULE:
+    {
+        PRINT_DEBUG("[+] Unload module requested by PID %d\n", current->pid);
+        
+        // Set the unloading flag
+        g_module_unloading = true;
+        
+        // Reset client PID to allow cleanup
+        mutex_lock(&auth_mutex);
+        client_pid = 0;
+        mutex_unlock(&auth_mutex);
+        
+        // Perform cleanup
+        _driver_cleanup();
+        
+        // Restore module visibility
+        mutex_lock(&module_mutex);
+        if (list_empty(&THIS_MODULE->list)) {
+            list_add_tail(&THIS_MODULE->list, &THIS_MODULE->mkobj.kobj.entry);
+        }
+        mutex_unlock(&module_mutex);
+        
+        // Restore sysfs entry if needed
+        if (!THIS_MODULE->mkobj.kobj.state_in_sysfs) {
+            // Note: Full restoration might require more complex handling
+            // For now, we at least make the module visible to lsmod
+            PRINT_DEBUG("[+] Module made visible for unload\n");
+        }
+        
+        // Return success - the actual unload will happen through normal module mechanism
+        return 0;
     }
 	default:
 		return -EINVAL; // Unrecognized command for our driver

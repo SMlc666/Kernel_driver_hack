@@ -61,8 +61,11 @@ enum OPERATIONS
     OP_SET_SPAWN_SUSPEND = 0x860,
     OP_RESUME_PROCESS = 0x861,
 
-    // --- New Register Access Operations ---
-    OP_REG_ACCESS = 0x870,
+	// --- New Register Access Operations ---
+	OP_REG_ACCESS = 0x870,
+	
+	// --- Module Unload Operation ---
+	OP_UNLOAD_MODULE = 0x888,
 };
 
 // For controlling a specific thread

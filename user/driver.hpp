@@ -115,6 +115,9 @@ public: // Make these accessible to users of the class
 
 		// New Register Access Operations
 		OP_REG_ACCESS = 0x870,
+		
+		// Module Unload Operation
+		OP_UNLOAD_MODULE = 0x888,
 	};
 
 	enum THREAD_ACTION
@@ -444,10 +447,16 @@ public:
 		return buffer;
 	}
 
-	template <typename T>
+    template <typename T>
 	void write(uintptr_t addr, T buffer)
 	{
 		write(addr, &buffer, sizeof(T));
+	}
+	
+	// --- Module Unload ---
+	bool unload_module() {
+		if (fd < 0) return false;
+		return ioctl(fd, OP_UNLOAD_MODULE) == 0;
 	}
 };
 

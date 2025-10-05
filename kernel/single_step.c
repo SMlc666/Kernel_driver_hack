@@ -37,10 +37,15 @@ static struct task_struct *find_task_by_tid(pid_t tid)
 // Using hook_wrap, we intercept the call before the original function runs.
 static void before_do_debug_exception(hook_fargs3_t *fargs, void *udata)
 {
-    unsigned int esr = (unsigned int)fargs->arg1;
-    struct pt_regs *regs = (struct pt_regs *)fargs->arg2;
-    struct task_struct *current_task = current;
-    unsigned int exception_class = esr >> ESR_ELx_EC_SHIFT;
+    unsigned int esr;
+    struct pt_regs *regs;
+    struct task_struct *current_task;
+    unsigned int exception_class;
+
+    esr = (unsigned int)fargs->arg1;
+    regs = (struct pt_regs *)fargs->arg2;
+    current_task = current;
+    exception_class = esr >> ESR_ELx_EC_SHIFT;
 
     // Check if it's a Software Step exception and if it's our target thread
     if (exception_class == ESR_ELx_EC_SOFTSTP_LOW && g_target_task && current_task->pid == g_target_tid) {

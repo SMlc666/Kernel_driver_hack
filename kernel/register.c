@@ -11,11 +11,6 @@
 #include "single_step.h"
 #include "version_control.h"
 
-// 外部变量声明
-extern pid_t g_target_tid;
-extern struct user_pt_regs g_last_regs;
-extern bool g_regs_valid;
-
 // 检查任务是否处于暂停状态
 static bool is_task_suspended(struct task_struct *task)
 {
