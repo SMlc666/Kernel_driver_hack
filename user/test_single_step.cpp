@@ -64,6 +64,9 @@ int main(int argc, char* argv[]) {
 
     // Get initial register state
     c_driver::user_pt_regs regs;
+    printf("[DEBUG] Before get_step_info: target_tid=%d, &target_tid=%p, &regs=%p\n",
+           target_tid, (void*)&target_tid, (void*)&regs);
+
     if (!driver->get_step_info(target_tid, regs)) {
         printf("[-] Failed to get initial register state\n");
     } else {
@@ -71,12 +74,15 @@ int main(int argc, char* argv[]) {
         print_registers(regs);
     }
 
+    printf("[DEBUG] After get_step_info: target_tid=%d\n", target_tid);
+
     // Perform single steps
     int num_steps = 5;
     printf("\n[*] Performing %d single steps...\n", num_steps);
 
     for (int i = 0; i < num_steps; i++) {
         printf("\n--- Step %d ---\n", i + 1);
+        printf("[DEBUG] Before step_and_wait: target_tid=%d\n", target_tid);
 
         // Use the new atomic step-and-wait operation
         if (!driver->step_and_wait(target_tid, regs)) {

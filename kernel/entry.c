@@ -315,13 +315,8 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
         {
             return -EFAULT;
         }
-        // GET_INFO action needs to write back register info
-        if (ssc.action == STEP_ACTION_GET_INFO) {
-             if (copy_to_user((void __user *)arg, &ssc, sizeof(ssc)) != 0)
-             {
-                 return -EFAULT;
-             }
-        }
+        // Note: handle_single_step_control already writes register data via ssc.regs_buffer
+        // No need to copy_to_user the entire ssc struct, which could corrupt user stack!
         break;
     }
 	default:
