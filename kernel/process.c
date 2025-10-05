@@ -72,7 +72,7 @@ pid_t get_pid_by_name(const char *pname)
 	struct task_struct *p;
 	pid_t pid = 0;
 
-	read_lock(&tasklist_lock);
+	rcu_read_lock();
 	for_each_process(p)
 	{
 		if (strcmp(p->comm, pname) == 0)
@@ -81,7 +81,7 @@ pid_t get_pid_by_name(const char *pname)
 			break;
 		}
 	}
-	read_unlock(&tasklist_lock);
+	rcu_read_unlock();
 	return pid;
 }
 
@@ -161,8 +161,7 @@ int get_all_processes(PPROCESS_INFO user_buffer, size_t *count)
     size_t buffer_capacity = *count;
     int ret = 0;
 
-    // Use tasklist_lock instead of RCU to safely access mm_struct
-    read_lock(&tasklist_lock);
+    rcu_read_lock();
     for_each_process(p)
     {
         if (procs_found < buffer_capacity) {
@@ -175,10 +174,9 @@ int get_all_processes(PPROCESS_INFO user_buffer, size_t *count)
             info.pid = p->pid;
             memset(info.name, 0, sizeof(info.name));
 
-            // Safely access p->mm without get_task_mm (no ref counting needed under tasklist_lock)
-            mm = p->mm;
+            // Use get_task_mm for safe access to mm_struct
+            mm = get_task_mm(p);
             if (mm && mm->exe_file) {
-                // Get a temporary reference to exe_file
                 struct file *exe_file = mm->exe_file;
                 if (exe_file) {
                     path_name = file_path(exe_file, path_buf, PROCESS_NAME_MAX - 1);
@@ -187,6 +185,7 @@ int get_all_processes(PPROCESS_INFO user_buffer, size_t *count)
                         got_path = true;
                     }
                 }
+                mmput(mm);
             }
 
             // Fallback to task comm if we couldn't get the path
@@ -203,7 +202,7 @@ int get_all_processes(PPROCESS_INFO user_buffer, size_t *count)
         }
         procs_found++;
     }
-    read_unlock(&tasklist_lock);
+    rcu_read_unlock();
 
     if (ret == 0) {
         *count = procs_found;
