@@ -112,7 +112,13 @@ static int set_breakpoint(struct mmu_breakpoint *bp) {
         PRINT_DEBUG("[-] mmu_bp: Failed to find VMA for addr 0x%lx\n", bp->addr);
         return -EFAULT;
     }
-    bp->original_pte = ptep_clear_flush(bp->vma, bp->addr, ptep);
+    do {
+        struct mm_struct *mm = bp->vma->vm_mm;
+        pte_t pte;
+        pte = ptep_get_and_clear(mm, bp->addr, ptep);
+        flush_tlb_page(bp->vma, bp->addr);
+        bp->original_pte = pte;
+    } while (0);
     flush_all();
     
     bp->is_active = true;
@@ -201,7 +207,11 @@ static void hooked_arch_do_signal_or_restart(hook_fargs1_t *fargs, void *udata) 
         // 重新设置断点
         pte_t *ptep = virt_to_pte(current_bp->task, current_bp->addr);
         if (ptep) {
-            ptep_clear_flush(current_bp->vma, current_bp->addr, ptep);
+            do {
+                struct mm_struct *mm = current_bp->vma->vm_mm;
+                ptep_get_and_clear(mm, current_bp->addr, ptep);
+                flush_tlb_page(current_bp->vma, current_bp->addr);
+            } while (0);
         }
         flush_all();
         
