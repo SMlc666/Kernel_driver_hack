@@ -25,7 +25,8 @@ static void before_execve(hook_fargs1_t *fargs, void *udata)
 {
     const char __user *filename_user = (const char __user *)fargs->arg0;
     char *filename;
-    const char *basename;
+    const char __user *const __user *argv_user;
+    int i;
 
     spin_lock(&g_suspend_lock);
     if (!g_suspend_enabled || g_spawn_suspend_target[0] == '\0') {
@@ -39,24 +40,42 @@ static void before_execve(hook_fargs1_t *fargs, void *udata)
         return;
     }
 
-    // Safely copy filename from user space
     if (strncpy_from_user(filename, filename_user, PATH_MAX - 1) < 0) {
         kfree(filename);
         return;
     }
     filename[PATH_MAX - 1] = '\0';
-    basename = kbasename(filename);
+
+    PRINT_DEBUG("[spawn_suspend] Checking execve for process: %s (PID: %d)\n", filename, current->pid);
+
+    // Log argv
+    argv_user = (const char __user *const __user *)fargs->arg1;
+    if (argv_user) {
+        char arg_buf[256];
+        i = 0;
+        const char __user *arg_ptr;
+        
+        while (get_user(arg_ptr, argv_user + i) == 0 && arg_ptr) {
+            long len = strncpy_from_user(arg_buf, arg_ptr, sizeof(arg_buf) - 1);
+            if (len < 0) {
+                PRINT_DEBUG("[spawn_suspend] argv[%d]: <fault>\n", i);
+            } else {
+                arg_buf[sizeof(arg_buf) - 1] = '\0';
+                PRINT_DEBUG("[spawn_suspend] argv[%d]: %s\n", i, arg_buf);
+            }
+            i++;
+            if (i > 32) { // Safety break
+                PRINT_DEBUG("[spawn_suspend] argv: too many arguments, stopping log.\n");
+                break;
+            }
+        }
+    }
 
     spin_lock(&g_suspend_lock);
-    if (g_suspend_enabled && strcmp(basename, g_spawn_suspend_target) == 0) {
-        PRINT_DEBUG("[spawn_suspend] Target '%s' is being executed by PID %d. Sending SIGSTOP.\n", basename, current->pid);
+    if (g_suspend_enabled && strstr(filename, g_spawn_suspend_target) != NULL) {
+        PRINT_DEBUG("[spawn_suspend] Target '%s' matched in path '%s' for PID %d. Sending SIGSTOP.\n", g_spawn_suspend_target, filename, current->pid);
         
-        // Send SIGSTOP to the current process. It will be delivered before
-        // the process's code gets to run.
         force_sig(SIGSTOP, current);
-
-        // Optional: Clear the target after it's hit once to avoid multiple triggers.
-        // set_spawn_suspend_target("", false); 
     }
     spin_unlock(&g_suspend_lock);
     kfree(filename);

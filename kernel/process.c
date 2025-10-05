@@ -6,6 +6,9 @@
 #include <linux/version.h>
 #include <linux/sched/mm.h>      // 包含 get_task_mm 的声明
 #include <linux/sched/signal.h>  // 包含 find_get_pid 和 get_pid_task 的声明
+#include <linux/fs.h>
+#include <linux/uaccess.h>
+#include <linux/string.h>
 #define ARC_PATH_MAX 256
 
 extern struct mm_struct *get_task_mm(struct task_struct *task);
@@ -67,32 +70,7 @@ uintptr_t get_module_base(pid_t pid, char *name)
 	return base_addr;
 }
 
-pid_t get_pid_by_name(const char *pname)
-{
-	struct task_struct *p;
-	pid_t pid = 0;
-	size_t pname_len = strlen(pname);
 
-	rcu_read_lock();
-	for_each_process(p)
-	{
-		// Use prefix match if pname is longer than TASK_COMM_LEN-1 (15 chars)
-		// or if exact match fails, since comm is truncated to 15 chars
-		if (pname_len >= TASK_COMM_LEN - 1) {
-			if (strncmp(p->comm, pname, TASK_COMM_LEN - 1) == 0) {
-				pid = p->pid;
-				break;
-			}
-		} else {
-			if (strcmp(p->comm, pname) == 0) {
-				pid = p->pid;
-				break;
-			}
-		}
-	}
-	rcu_read_unlock();
-	return pid;
-}
 
 int get_process_memory_segments(pid_t pid, PMEM_SEGMENT_INFO user_buffer, size_t *count)
 {
@@ -163,38 +141,4 @@ int get_process_memory_segments(pid_t pid, PMEM_SEGMENT_INFO user_buffer, size_t
     return ret;
 }
 
-int get_all_processes(PPROCESS_INFO user_buffer, size_t *count)
-{
-    struct task_struct *p;
-    size_t procs_found = 0;
-    size_t buffer_capacity = *count;
-    int ret = 0;
 
-    rcu_read_lock();
-    for_each_process(p)
-    {
-        if (procs_found < buffer_capacity) {
-            PROCESS_INFO info;
-
-            info.pid = p->pid;
-            memset(info.name, 0, sizeof(info.name));
-
-            // Use comm field which contains the package name for Android apps
-            strncpy(info.name, p->comm, sizeof(info.name) - 1);
-            info.name[sizeof(info.name) - 1] = '\0';
-
-            if (copy_to_user(&user_buffer[procs_found], &info, sizeof(PROCESS_INFO))) {
-                ret = -EFAULT;
-                break;
-            }
-        }
-        procs_found++;
-    }
-    rcu_read_unlock();
-
-    if (ret == 0) {
-        *count = procs_found;
-    }
-
-    return ret;
-}

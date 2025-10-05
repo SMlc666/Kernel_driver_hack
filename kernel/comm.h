@@ -25,11 +25,7 @@ typedef struct _HIDE_PROC
 	int action;
 } HIDE_PROC, *PHIDE_PROC;
 
-typedef struct _GET_PID
-{
-	char *name;
-	pid_t pid;
-} GET_PID, *PGET_PID;
+
 
 enum HIDE_ACTION
 {
@@ -45,7 +41,7 @@ enum OPERATIONS
 	OP_WRITE_MEM = 0x802,
 	OP_MODULE_BASE = 0x803,
 	OP_HIDE_PROC = 0x804,
-	OP_GET_PID = 0x808,
+
 	OP_READ_MEM_SAFE = 0x809,
 
 	OP_GET_MEM_SEGMENTS = 0x814,
@@ -114,19 +110,7 @@ typedef struct _THREAD_CTL
 } THREAD_CTL, *PTHREAD_CTL;
 
 
-// Struct for getting all processes
-#define PROCESS_NAME_MAX 256
-typedef struct _PROCESS_INFO
-{
-    pid_t pid;
-    char name[PROCESS_NAME_MAX]; // Extended to hold full path
-} PROCESS_INFO, *PPROCESS_INFO;
 
-typedef struct _GET_ALL_PROCS
-{
-    uintptr_t buffer; // user-space buffer
-    size_t count;     // in: buffer capacity, out: actual process count
-} GET_ALL_PROCS, *PGET_ALL_PROCS;
 
 // 路径最大长度
 #define SEGMENT_PATH_MAX 256

@@ -6,7 +6,7 @@
 #include <vector>
 
 #define DEVICE_NAME "/proc/version"
-
+static constexpr int PROCESS_NAME_MAX = 256;
 class c_driver
 {
 private:
@@ -35,11 +35,7 @@ public: // Make these accessible to users of the class
 		int action;
 	} HIDE_PROC, *PHIDE_PROC;
 
-	typedef struct _GET_PID
-	{
-		char *name;
-		pid_t pid;
-	} GET_PID, *PGET_PID;
+
 
 	// 路径最大长度
 	static constexpr int SEGMENT_PATH_MAX = 256;
@@ -73,6 +69,8 @@ public: // Make these accessible to users of the class
         int action; // see ANTI_PTRACE_ACTION
     } ANTI_PTRACE_CTL, *PANTI_PTRACE_CTL;
 
+
+
 	// New Process Spawn Control Structures
 	typedef struct _SPAWN_SUSPEND_CTL
 	{
@@ -84,21 +82,6 @@ public: // Make these accessible to users of the class
 	{
 	    pid_t pid; // The PID of the process to resume
 	} RESUME_PROCESS_CTL, *PRESUME_PROCESS_CTL;
-
-	// New structs for getting all processes
-	static constexpr int PROCESS_NAME_MAX = 256;
-
-	typedef struct _PROCESS_INFO
-	{
-		pid_t pid;
-		char name[PROCESS_NAME_MAX];
-	} PROCESS_INFO, *PPROCESS_INFO;
-
-	typedef struct _GET_ALL_PROCS
-	{
-		uintptr_t buffer;
-		size_t count;
-	} GET_ALL_PROCS, *PGET_ALL_PROCS;
 
 
 	enum HIDE_ACTION
@@ -115,10 +98,10 @@ public: // Make these accessible to users of the class
 		OP_WRITE_MEM = 0x802,
 		OP_MODULE_BASE = 0x803,
 		OP_HIDE_PROC = 0x804,
-		OP_GET_PID = 0x808,
+
 		OP_READ_MEM_SAFE = 0x809,
 		OP_GET_MEM_SEGMENTS = 0x814,
-		OP_GET_ALL_PROCS = 0x815,
+
         OP_ANTI_PTRACE_CTL = 0x830,
 
 		// New Thread Ops
@@ -248,15 +231,7 @@ public:
 		return mb.base;
 	}
 
-    pid_t get_pid(const char* name) {
-        GET_PID gp;
-        char buf[256];
-        strncpy(buf, name, sizeof(buf)-1);
-        buf[sizeof(buf)-1] = '\0';
-        gp.name = buf;
-        if (ioctl(fd, OP_GET_PID, &gp) != 0) return 0;
-        return gp.pid;
-    }
+
 
 	bool get_memory_segments(std::vector<MEM_SEGMENT_INFO>& segments)
 	{
@@ -292,38 +267,7 @@ public:
 		return true;
 	}
 
-	bool get_all_processes(std::vector<PROCESS_INFO>& processes)
-	{
-		if (fd < 0) return false;
 
-		size_t capacity = 256; // Start with a reasonable capacity
-		processes.resize(capacity);
-
-		GET_ALL_PROCS gap;
-		gap.buffer = (uintptr_t)processes.data();
-		gap.count = capacity;
-
-		if (ioctl(fd, OP_GET_ALL_PROCS, &gap) != 0) {
-			processes.clear();
-			return false;
-		}
-
-		if (gap.count > capacity) {
-			capacity = gap.count;
-			processes.resize(capacity);
-			gap.buffer = (uintptr_t)processes.data();
-			gap.count = capacity;
-
-			if (ioctl(fd, OP_GET_ALL_PROCS, &gap) != 0) {
-				processes.clear();
-				return false;
-			}
-		}
-
-		processes.resize(gap.count);
-
-		return true;
-	}
 
     // --- Process Hiding ---
     bool hide_process(pid_t pid) {

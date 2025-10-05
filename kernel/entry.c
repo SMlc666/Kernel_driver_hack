@@ -4,6 +4,7 @@
 #include <linux/uaccess.h>
 #include <linux/mutex.h>
 #include <linux/sched/signal.h> // For get_pid_task, find_get_pid
+#include <linux/sched.h> // For get_cmdline
 #include <linux/cred.h> // For current_euid()
 #include <linux/timer.h>
 #include <linux/jiffies.h>
@@ -70,11 +71,11 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     // Move declarations to the top of the function block to comply with C90
 	static COPY_MEMORY cm;
 	static MODULE_BASE mb;
-	static GET_PID gp;
+
 	static GET_MEM_SEGMENTS gms;
     static HIDE_PROC hp;
     static ANTI_PTRACE_CTL apc;
-    static GET_ALL_PROCS gap;
+
     static ENUM_THREADS et;
     static THREAD_CTL tc;
     static SINGLE_STEP_CTL ssc;
@@ -190,25 +191,7 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 		}
 		break;
 	}
-	case OP_GET_PID:
-	{
-		char name[TASK_COMM_LEN];
-		if (copy_from_user(&gp, (void __user *)arg, sizeof(gp)) != 0)
-		{
-			return -1;
-		}
-		if (copy_from_user(name, (void __user *)gp.name, sizeof(name) - 1) != 0)
-		{
-			return -1;
-		}
-		name[sizeof(name) - 1] = '\0';
-		gp.pid = get_pid_by_name(name);
-		if (copy_to_user((void __user *)arg, &gp, sizeof(gp)) != 0)
-		{
-			return -1;
-		}
-		break;
-	}
+
 	case OP_READ_MEM_SAFE:
 	{
 		if (copy_from_user(&cm, (void __user *)arg, sizeof(cm)) != 0)
@@ -239,22 +222,7 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 		}
 		break;
 	}
-	case OP_GET_ALL_PROCS:
-	{
-		if (copy_from_user(&gap, (void __user *)arg, sizeof(gap)) != 0)
-		{
-			return -EFAULT;
-		}
-		if (get_all_processes((PPROCESS_INFO)gap.buffer, &gap.count) != 0)
-		{
-			return -EFAULT;
-		}
-		if (copy_to_user((void __user *)arg, &gap, sizeof(gap)) != 0)
-		{
-			return -EFAULT;
-		}
-		break;
-	}
+
     case OP_ANTI_PTRACE_CTL:
     {
         if (copy_from_user(&apc, (void __user *)arg, sizeof(apc)) != 0)
