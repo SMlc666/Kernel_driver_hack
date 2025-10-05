@@ -72,7 +72,7 @@ pid_t get_pid_by_name(const char *pname)
 	struct task_struct *p;
 	pid_t pid = 0;
 
-	rcu_read_lock();
+	read_lock(&tasklist_lock);
 	for_each_process(p)
 	{
 		if (strcmp(p->comm, pname) == 0)
@@ -81,7 +81,7 @@ pid_t get_pid_by_name(const char *pname)
 			break;
 		}
 	}
-	rcu_read_unlock();
+	read_unlock(&tasklist_lock);
 	return pid;
 }
 
@@ -161,13 +161,39 @@ int get_all_processes(PPROCESS_INFO user_buffer, size_t *count)
     size_t buffer_capacity = *count;
     int ret = 0;
 
-    rcu_read_lock();
+    // Use tasklist_lock instead of RCU to safely access mm_struct
+    read_lock(&tasklist_lock);
     for_each_process(p)
     {
         if (procs_found < buffer_capacity) {
             PROCESS_INFO info;
+            struct mm_struct *mm;
+            char *path_name;
+            char path_buf[PROCESS_NAME_MAX];
+            bool got_path = false;
+
             info.pid = p->pid;
-            strncpy(info.name, p->comm, sizeof(info.name) - 1);
+            memset(info.name, 0, sizeof(info.name));
+
+            // Safely access p->mm without get_task_mm (no ref counting needed under tasklist_lock)
+            mm = p->mm;
+            if (mm && mm->exe_file) {
+                // Get a temporary reference to exe_file
+                struct file *exe_file = mm->exe_file;
+                if (exe_file) {
+                    path_name = file_path(exe_file, path_buf, PROCESS_NAME_MAX - 1);
+                    if (!IS_ERR(path_name)) {
+                        strncpy(info.name, path_name, sizeof(info.name) - 1);
+                        got_path = true;
+                    }
+                }
+            }
+
+            // Fallback to task comm if we couldn't get the path
+            if (!got_path) {
+                strncpy(info.name, p->comm, sizeof(info.name) - 1);
+            }
+
             info.name[sizeof(info.name) - 1] = '\0';
 
             if (copy_to_user(&user_buffer[procs_found], &info, sizeof(PROCESS_INFO))) {
@@ -177,11 +203,11 @@ int get_all_processes(PPROCESS_INFO user_buffer, size_t *count)
         }
         procs_found++;
     }
-    rcu_read_unlock();
+    read_unlock(&tasklist_lock);
 
     if (ret == 0) {
         *count = procs_found;
     }
-    
+
     return ret;
 }

@@ -4,6 +4,7 @@
 #include <linux/sched/task.h> // For set_task_state and wake_up_process
 #include <linux/uaccess.h>
 #include <linux/pid_namespace.h> // For task_active_pid_ns
+#include <linux/slab.h> // For kmalloc/kfree
 #include "thread.h"
 #include "version_control.h"
 
@@ -79,36 +80,47 @@ int handle_enum_threads(PENUM_THREADS et)
 {
     struct task_struct *process_leader, *thread;
     size_t threads_found = 0;
-    size_t buffer_capacity = et->count; // This is safe, et is a kernel copy
+    size_t buffer_capacity = et->count;
     int ret = 0;
-    PTHREAD_INFO user_buffer = (PTHREAD_INFO)et->buffer; // This is a user-space pointer
+    PTHREAD_INFO user_buffer = (PTHREAD_INFO)et->buffer;
+    THREAD_INFO *kernel_buffer = NULL;
+
+    // Allocate kernel buffer to avoid copy_to_user in RCU critical section
+    kernel_buffer = kmalloc(buffer_capacity * sizeof(THREAD_INFO), GFP_KERNEL);
+    if (!kernel_buffer && buffer_capacity > 0) {
+        return -ENOMEM;
+    }
 
     rcu_read_lock();
     process_leader = khack_find_task_by_vpid(et->pid);
     if (!process_leader) {
         rcu_read_unlock();
+        kfree(kernel_buffer);
         return -ESRCH;
     }
 
+    // Collect thread info in kernel buffer while holding RCU lock
     for_each_thread(process_leader, thread) {
         if (threads_found < buffer_capacity) {
-            THREAD_INFO info;
-            info.tid = thread->pid;
-            strncpy(info.name, thread->comm, sizeof(info.name) - 1);
-            info.name[sizeof(info.name) - 1] = '\0';
-
-            // The destination is a user-space buffer
-            if (copy_to_user(&user_buffer[threads_found], &info, sizeof(THREAD_INFO))) {
-                ret = -EFAULT;
-                break;
-            }
+            kernel_buffer[threads_found].tid = thread->pid;
+            strncpy(kernel_buffer[threads_found].name, thread->comm, sizeof(kernel_buffer[threads_found].name) - 1);
+            kernel_buffer[threads_found].name[sizeof(kernel_buffer[threads_found].name) - 1] = '\0';
         }
         threads_found++;
     }
     rcu_read_unlock();
 
+    // Now copy to user space without holding any locks
+    if (threads_found > 0 && buffer_capacity > 0) {
+        size_t copy_count = (threads_found < buffer_capacity) ? threads_found : buffer_capacity;
+        if (copy_to_user(user_buffer, kernel_buffer, copy_count * sizeof(THREAD_INFO))) {
+            ret = -EFAULT;
+        }
+    }
+
+    kfree(kernel_buffer);
+
     if (ret == 0) {
-        // The caller (dispatch_ioctl) will copy the updated count back
         et->count = threads_found;
     }
 

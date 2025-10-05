@@ -74,7 +74,7 @@ public: // Make these accessible to users of the class
     } ANTI_PTRACE_CTL, *PANTI_PTRACE_CTL;
 
 	// New structs for getting all processes
-	static constexpr int PROCESS_NAME_MAX = 16;
+	static constexpr int PROCESS_NAME_MAX = 256;
 
 	typedef struct _PROCESS_INFO
 	{

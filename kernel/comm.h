@@ -111,10 +111,11 @@ typedef struct _THREAD_CTL
 
 
 // Struct for getting all processes
+#define PROCESS_NAME_MAX 256
 typedef struct _PROCESS_INFO
 {
     pid_t pid;
-    char name[16]; // TASK_COMM_LEN
+    char name[PROCESS_NAME_MAX]; // Extended to hold full path
 } PROCESS_INFO, *PPROCESS_INFO;
 
 typedef struct _GET_ALL_PROCS
