@@ -44,6 +44,7 @@ static void before_do_debug_exception(hook_fargs3_t *fargs, void *udata)
     struct task_struct *current_task;
     unsigned int exception_class;
     pte_t *ptep;
+    struct mmu_breakpoint *bp;
 
     esr = (unsigned int)fargs->arg1;
     regs = (struct pt_regs *)fargs->arg2;
@@ -75,7 +76,7 @@ static void before_do_debug_exception(hook_fargs3_t *fargs, void *udata)
         }
 
         // Case 2: It's a step from an MMU breakpoint
-        struct mmu_breakpoint *bp = current_bp_per_cpu[raw_smp_processor_id()];
+        bp = current_bp_per_cpu[raw_smp_processor_id()];
         if (bp && current_task == bp->task) {
             PRINT_DEBUG("[single_step] MMU breakpoint step trap for TID %d.\n", current_task->pid);
 
@@ -87,13 +88,13 @@ static void before_do_debug_exception(hook_fargs3_t *fargs, void *udata)
             // Re-arm the breakpoint
             ptep = virt_to_pte(bp->task, bp->addr);
             if (ptep && bp->vma) {
-                struct mm_struct *mm = bp->vma->vm_mm;
-                            // Re-arm by clearing the valid bit, not the whole PTE.
-                            if (pte_present(bp->original_pte)) {
-                                pte_t pte = pte_clear_flags(bp->original_pte, __pgprot(PTE_VALID));
-                                set_pte_at(bp->task->mm, bp->addr, ptep, pte);
-                                flush_tlb_page(bp->vma, bp->addr);
-                            }            }
+                // Re-arm by clearing the valid bit, not the whole PTE.
+                if (pte_present(bp->original_pte)) {
+                    pte_t pte = __pte(pte_val(bp->original_pte) & ~PTE_VALID);
+                    set_pte_at(bp->task->mm, bp->addr, ptep, pte);
+                    flush_tlb_page(bp->vma, bp->addr);
+                }
+            }
 
             current_bp_per_cpu[raw_smp_processor_id()] = NULL;
             return; // Handled

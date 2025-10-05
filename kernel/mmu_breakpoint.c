@@ -122,9 +122,8 @@ static int set_breakpoint(struct mmu_breakpoint *bp) {
             return -EINVAL;
         }
 
-        // Only clear the valid bit, don't clear the whole PTE.
-        // This prevents the kernel from thinking it's a new anonymous page.
-        pte = pte_clear_flags(pte, __pgprot(PTE_VALID));
+        // Create a new PTE with the 'valid' bit cleared, which causes a fault
+        pte = __pte(pte_val(pte) & ~PTE_VALID);
         set_pte_at(mm, bp->addr, ptep, pte);
         flush_tlb_page(bp->vma, bp->addr);
     } while (0);
