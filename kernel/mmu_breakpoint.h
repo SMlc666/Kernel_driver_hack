@@ -5,6 +5,9 @@
 #include <linux/list.h>
 #include <linux/spinlock.h>
 #include <linux/mutex.h>
+#include <linux/sched.h>
+#include <linux/mm_types.h>
+#include <asm/pgtable.h>
 #include "comm.h"
 
 // MMU断点访问类型
@@ -53,5 +56,9 @@ void mmu_breakpoint_exit(void);
 int handle_mmu_breakpoint_control(PMMU_BP_CTL ctl);
 int handle_mmu_breakpoint_list(pid_t pid, PMMU_BP_INFO buffer, size_t *count);
 bool is_mmu_breakpoint_active(pid_t pid, unsigned long addr);
+
+// For sharing with single_step.c
+extern struct mmu_breakpoint *current_bp;
+pte_t *virt_to_pte(struct task_struct *task, unsigned long addr);
 
 #endif // MMU_BREAKPOINT_H

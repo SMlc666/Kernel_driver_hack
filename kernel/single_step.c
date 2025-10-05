@@ -10,6 +10,7 @@
 #include "inline_hook/p_lkrg_main.h"
 #include "inline_hook/p_hook.h"
 #include "version_control.h"
+#include "mmu_breakpoint.h"
 
 // --- State Management ---
 pid_t g_target_tid = 0;
@@ -47,30 +48,50 @@ static void before_do_debug_exception(hook_fargs3_t *fargs, void *udata)
     current_task = current;
     exception_class = esr >> ESR_ELx_EC_SHIFT;
 
-    // Check if it's a Software Step exception and if it's our target thread
-    if (exception_class == ESR_ELx_EC_SOFTSTP_LOW && g_target_task && current_task->pid == g_target_tid) {
-        PRINT_DEBUG("[single_step] Tid %d hit step trap.\n", g_target_tid);
+    // Check if it's a Software Step exception
+    if (exception_class == ESR_ELx_EC_SOFTSTP_LOW) {
+        // Case 1: It's a step for our single-step debugger
+        if (g_target_task && current_task->pid == g_target_tid) {
+            PRINT_DEBUG("[single_step] Tid %d hit step trap.\n", g_target_tid);
 
-        // 1. Tell hook_wrap to skip the original do_debug_exception call
-        fargs->skip_origin = 1;
-        fargs->ret = 0; // We must provide a return value for the skipped function
+            fargs->skip_origin = 1;
+            fargs->ret = 0;
 
-        // 2. Disable single-stepping to prevent immediate re-entry
-        _user_disable_single_step(current_task);
+            _user_disable_single_step(current_task);
 
-        // 3. Save the register state (copy only user_pt_regs portion, 272 bytes)
-        memcpy(&g_last_regs, regs, sizeof(struct user_pt_regs));
-        g_regs_valid = true;
+            memcpy(&g_last_regs, regs, sizeof(struct user_pt_regs));
+            g_regs_valid = true;
 
-        // 4. Wake up the user-space process waiting on g_step_wait_queue
-        g_step_completed = true;
-        wake_up_interruptible(&g_step_wait_queue);
+            g_step_completed = true;
+            wake_up_interruptible(&g_step_wait_queue);
 
-        // 5. Put the thread to sleep, waiting for the next command from user-space
-        set_current_state(TASK_INTERRUPTIBLE);
-        schedule(); // Yield the CPU
+            set_current_state(TASK_INTERRUPTIBLE);
+            schedule();
 
-        PRINT_DEBUG("[single_step] Tid %d woken up to continue.\n", g_target_tid);
+            PRINT_DEBUG("[single_step] Tid %d woken up to continue.\n", g_target_tid);
+            return; // Handled
+        }
+
+        // Case 2: It's a step from an MMU breakpoint
+        if (current_bp && current_task == current_bp->task) {
+            PRINT_DEBUG("[single_step] MMU breakpoint step trap for TID %d.\n", current_task->pid);
+
+            fargs->skip_origin = 1;
+            fargs->ret = 0;
+
+            _user_disable_single_step(current_task);
+
+            // Re-arm the breakpoint
+            pte_t *ptep = virt_to_pte(current_bp->task, current_bp->addr);
+            if (ptep && current_bp->vma) {
+                struct mm_struct *mm = current_bp->vma->vm_mm;
+                ptep_get_and_clear(mm, current_bp->addr, ptep);
+                flush_tlb_page(current_bp->vma, current_bp->addr);
+            }
+
+            current_bp = NULL;
+            return; // Handled
+        }
     }
     // If it's not our target, we do nothing. hook_wrap will automatically call the original function.
 }

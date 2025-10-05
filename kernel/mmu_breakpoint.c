@@ -32,22 +32,20 @@ static DEFINE_MUTEX(mmu_bp_mutex);
 // 函数指针
 static void (*user_enable_single_step_)(struct task_struct *);
 static void (*user_disable_single_step_)(struct task_struct *);
-static pte_t (*ptep_clear_flush_)(struct vm_area_struct *, unsigned long, pte_t *);
 
 // 钩子函数声明
 static void hooked_handle_pte_fault(hook_fargs1_t *fargs, void *udata);
-static void hooked_arch_do_signal_or_restart(hook_fargs1_t *fargs, void *udata);
 
-// 当前正在处理的断点
-static struct mmu_breakpoint *current_bp = NULL;
+// 当前正在处理的断点 (non-static)
+struct mmu_breakpoint *current_bp = NULL;
 
 // 刷新所有CPU的TLB和缓存
 static void flush_all(void) {
     flush_tlb_all();
 }
 
-// 虚拟地址到页表项的转换
-static pte_t *virt_to_pte(struct task_struct *task, unsigned long addr) {
+// 虚拟地址到页表项的转换 (non-static)
+pte_t *virt_to_pte(struct task_struct *task, unsigned long addr) {
     struct mm_struct *mm = task->mm;
     pgd_t *pgd;
     p4d_t *p4d;
@@ -119,7 +117,6 @@ static int set_breakpoint(struct mmu_breakpoint *bp) {
         flush_tlb_page(bp->vma, bp->addr);
         bp->original_pte = pte;
     } while (0);
-    flush_all();
     
     bp->is_active = true;
     PRINT_DEBUG("[+] mmu_bp: Breakpoint set for PID %d at 0x%lx\n", bp->pid, bp->addr);
@@ -195,39 +192,6 @@ static void hooked_handle_pte_fault(hook_fargs1_t *fargs, void *udata) {
     if (user_enable_single_step_) {
         user_enable_single_step_(current);
     }
-}
-
-// 钩子函数：处理信号或重启
-static void hooked_arch_do_signal_or_restart(hook_fargs1_t *fargs, void *udata) {
-    // This is a "before" hook. The original function will be called after this.
-    if (current_bp && current == current_bp->task) {
-        PRINT_DEBUG("[+] mmu_bp: Restoring breakpoint for PID %d at 0x%lx\n", 
-                   current_bp->pid, current_bp->addr);
-        
-        // 重新设置断点
-        pte_t *ptep = virt_to_pte(current_bp->task, current_bp->addr);
-        if (ptep) {
-            do {
-                struct mm_struct *mm = current_bp->vma->vm_mm;
-                ptep_get_and_clear(mm, current_bp->addr, ptep);
-                flush_tlb_page(current_bp->vma, current_bp->addr);
-            } while (0);
-        }
-        flush_all();
-        
-        // 禁用单步调试
-        if (user_disable_single_step_) {
-            user_disable_single_step_(current);
-        }
-        
-        // 清除SIGTRAP信号
-        sigdelset(&current->pending.signal, SIGTRAP);
-        recalc_sigpending();
-        
-        current_bp = NULL;
-    }
-    
-    // No need to call original function, hook_wrap does it.
 }
 
 // 添加断点
@@ -394,16 +358,14 @@ bool is_mmu_breakpoint_active(pid_t pid, unsigned long addr) {
 // 初始化函数
 int mmu_breakpoint_init(void) {
     void *handle_pte_fault_addr;
-    void *arch_do_signal_or_restart_addr;
     
     PRINT_DEBUG("[+] mmu_bp: Initializing MMU breakpoint system\n");
     
     // 解析符号
     user_enable_single_step_ = (void (*)(struct task_struct *))kallsyms_lookup_name("user_enable_single_step");
     user_disable_single_step_ = (void (*)(struct task_struct *))kallsyms_lookup_name("user_disable_single_step");
-    ptep_clear_flush_ = (pte_t (*)(struct vm_area_struct *, unsigned long, pte_t *))kallsyms_lookup_name("ptep_clear_flush");
     
-    if (!user_enable_single_step_ || !user_disable_single_step_ || !ptep_clear_flush_) {
+    if (!user_enable_single_step_ || !user_disable_single_step_) {
         PRINT_DEBUG("[-] mmu_bp: Failed to resolve required single-step symbols\n");
         return -ENOENT;
     }
@@ -413,22 +375,10 @@ int mmu_breakpoint_init(void) {
         PRINT_DEBUG("[-] mmu_bp: Failed to find handle_pte_fault\n");
         return -ENOENT;
     }
-
-    arch_do_signal_or_restart_addr = (void *)kallsyms_lookup_name("arch_do_signal_or_restart");
-    if (!arch_do_signal_or_restart_addr) {
-        PRINT_DEBUG("[-] mmu_bp: Failed to find arch_do_signal_or_restart\n");
-        return -ENOENT;
-    }
     
     // 设置钩子
     if (hook_wrap(handle_pte_fault_addr, 1, hooked_handle_pte_fault, NULL, NULL) != HOOK_NO_ERR) {
         PRINT_DEBUG("[-] mmu_bp: Failed to wrap handle_pte_fault()\n");
-        return -1;
-    }
-    
-    if (hook_wrap(arch_do_signal_or_restart_addr, 1, hooked_arch_do_signal_or_restart, NULL, NULL) != HOOK_NO_ERR) {
-        PRINT_DEBUG("[-] mmu_bp: Failed to wrap arch_do_signal_or_restart()\n");
-        hook_unwrap(handle_pte_fault_addr, hooked_handle_pte_fault, NULL);
         return -1;
     }
     
@@ -439,7 +389,6 @@ int mmu_breakpoint_init(void) {
 // 退出函数
 void mmu_breakpoint_exit(void) {
     void *handle_pte_fault_addr;
-    void *arch_do_signal_or_restart_addr;
 
     PRINT_DEBUG("[+] mmu_bp: Shutting down MMU breakpoint system\n");
     
@@ -450,11 +399,6 @@ void mmu_breakpoint_exit(void) {
     handle_pte_fault_addr = (void *)kallsyms_lookup_name("handle_pte_fault");
     if (handle_pte_fault_addr) {
         hook_unwrap(handle_pte_fault_addr, hooked_handle_pte_fault, NULL);
-    }
-
-    arch_do_signal_or_restart_addr = (void *)kallsyms_lookup_name("arch_do_signal_or_restart");
-    if (arch_do_signal_or_restart_addr) {
-        hook_unwrap(arch_do_signal_or_restart_addr, hooked_arch_do_signal_or_restart, NULL);
     }
     
     PRINT_DEBUG("[+] mmu_bp: MMU breakpoint system shutdown complete\n");
