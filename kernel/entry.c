@@ -10,6 +10,7 @@
 #include <linux/jiffies.h>
 #include <linux/mm.h> // Required for mmap
 #include <linux/vmalloc.h> // Required for vmalloc
+#include <linux/slab.h> // For kmalloc and kfree
 
 #include "comm.h"
 #include "memory.h"
@@ -46,19 +47,6 @@ static bool is_hijacked = false;
 static bool g_module_unloading = false;
 
 // --- End of Hijack Logic ---
-
-// Static variables for dispatch_ioctl to reduce stack frame size
-static COPY_MEMORY cm;
-static MODULE_BASE mb;
-static GET_MEM_SEGMENTS gms;
-static HIDE_PROC hp;
-static ANTI_PTRACE_CTL apc;
-static ENUM_THREADS et;
-static THREAD_CTL tc;
-static SINGLE_STEP_CTL ssc;
-static SPAWN_SUSPEND_CTL spawn_ctl;
-static RESUME_PROCESS_CTL resume_ctl;
-static REG_ACCESS reg_access;
 
 int dispatch_open(struct inode *node, struct file *file)
 {
@@ -137,203 +125,320 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 	{
 	case OP_READ_MEM:
 	{
-		if (copy_from_user(&cm, (void __user *)arg, sizeof(cm)) != 0)
+		COPY_MEMORY *cm = kmalloc(sizeof(COPY_MEMORY), GFP_KERNEL);
+		int ret = -1;
+		if (!cm)
+			return -ENOMEM;
+		
+		if (copy_from_user(cm, (void __user *)arg, sizeof(COPY_MEMORY)) != 0)
 		{
+			kfree(cm);
 			return -1;
 		}
-		if (read_process_memory(cm.pid, cm.addr, cm.buffer, cm.size) == false)
+		if (read_process_memory(cm->pid, cm->addr, cm->buffer, cm->size) == true)
 		{
-			return -1;
+			ret = 0;
 		}
-		break;
+		kfree(cm);
+		return ret;
 	}
 	case OP_WRITE_MEM:
 	{
-		if (copy_from_user(&cm, (void __user *)arg, sizeof(cm)) != 0)
+		COPY_MEMORY *cm = kmalloc(sizeof(COPY_MEMORY), GFP_KERNEL);
+		int ret = -1;
+		if (!cm)
+			return -ENOMEM;
+		
+		if (copy_from_user(cm, (void __user *)arg, sizeof(COPY_MEMORY)) != 0)
 		{
+			kfree(cm);
 			return -1;
 		}
-		if (write_process_memory(cm.pid, cm.addr, cm.buffer, cm.size) == false)
+		if (write_process_memory(cm->pid, cm->addr, cm->buffer, cm->size) == true)
 		{
-			return -1;
+			ret = 0;
 		}
-		break;
+		kfree(cm);
+		return ret;
 	}
 	case OP_MODULE_BASE:
 	{
-        char name[0x100] = {0};
-		if (copy_from_user(&mb, (void __user *)arg, sizeof(mb)) != 0 || copy_from_user(name, (void __user *)mb.name, sizeof(name) - 1) != 0)
+		MODULE_BASE *mb = kmalloc(sizeof(MODULE_BASE), GFP_KERNEL);
+		char *name = kmalloc(0x100, GFP_KERNEL);
+		int ret = -1;
+		
+		if (!mb || !name) {
+			kfree(mb);
+			kfree(name);
+			return -ENOMEM;
+		}
+		
+		memset(name, 0, 0x100);
+		
+		if (copy_from_user(mb, (void __user *)arg, sizeof(MODULE_BASE)) != 0 || 
+			copy_from_user(name, (void __user *)mb->name, 0x100 - 1) != 0)
 		{
+			kfree(mb);
+			kfree(name);
 			return -1;
 		}
-		mb.base = get_module_base(mb.pid, name);
-		if (copy_to_user((void __user *)arg, &mb, sizeof(mb)) != 0)
+		
+		mb->base = get_module_base(mb->pid, name);
+		if (copy_to_user((void __user *)arg, mb, sizeof(MODULE_BASE)) == 0)
 		{
-			return -1;
+			ret = 0;
 		}
-		break;
+		
+		kfree(mb);
+		kfree(name);
+		return ret;
 	}
 	case OP_HIDE_PROC:
 	{
-		if (copy_from_user(&hp, (void __user *)arg, sizeof(hp)) != 0)
+		HIDE_PROC *hp = kmalloc(sizeof(HIDE_PROC), GFP_KERNEL);
+		int ret = -1;
+		if (!hp)
+			return -ENOMEM;
+		
+		if (copy_from_user(hp, (void __user *)arg, sizeof(HIDE_PROC)) != 0)
 		{
+			kfree(hp);
 			return -1;
 		}
-		switch (hp.action)
+		
+		switch (hp->action)
 		{
 		case ACTION_HIDE:
-			add_hidden_pid(hp.pid);
+			add_hidden_pid(hp->pid);
+			ret = 0;
 			break;
 		case ACTION_UNHIDE:
-			remove_hidden_pid(hp.pid);
+			remove_hidden_pid(hp->pid);
+			ret = 0;
 			break;
 		case ACTION_CLEAR:
 			clear_hidden_pids();
+			ret = 0;
 			break;
 		default:
-			return -1;
+			ret = -1;
+			break;
 		}
-		break;
+		kfree(hp);
+		return ret;
 	}
 
 	case OP_READ_MEM_SAFE:
 	{
-		if (copy_from_user(&cm, (void __user *)arg, sizeof(cm)) != 0)
+		COPY_MEMORY *cm = kmalloc(sizeof(COPY_MEMORY), GFP_KERNEL);
+		int ret = -1;
+		if (!cm)
+			return -ENOMEM;
+		
+		if (copy_from_user(cm, (void __user *)arg, sizeof(COPY_MEMORY)) != 0)
 		{
+			kfree(cm);
 			return -1;
 		}
-		if (read_process_memory_safe(cm.pid, cm.addr, cm.buffer, cm.size) == false)
+		if (read_process_memory_safe(cm->pid, cm->addr, cm->buffer, cm->size) == true)
 		{
-			return -1;
+			ret = 0;
 		}
-		break;
+		kfree(cm);
+		return ret;
 	}
 	case OP_GET_MEM_SEGMENTS:
     {
-        if (copy_from_user(&gms, (void __user *)arg, sizeof(gms)) != 0)
+        GET_MEM_SEGMENTS *gms = kmalloc(sizeof(GET_MEM_SEGMENTS), GFP_KERNEL);
+        int ret = -EFAULT;
+        if (!gms)
+            return -ENOMEM;
+        
+        if (copy_from_user(gms, (void __user *)arg, sizeof(GET_MEM_SEGMENTS)) != 0)
         {
+            kfree(gms);
             return -EFAULT;
         }
 
-        if (get_process_memory_segments(gms.pid, (PMEM_SEGMENT_INFO)gms.buffer, &gms.count) != 0)
+        if (get_process_memory_segments(gms->pid, (PMEM_SEGMENT_INFO)gms->buffer, &gms->count) == 0)
         {
-            return -EFAULT;
+            if (copy_to_user((void __user *)arg, gms, sizeof(GET_MEM_SEGMENTS)) == 0)
+            {
+                ret = 0;
+            }
         }
-
-		if (copy_to_user((void __user *)arg, &gms, sizeof(gms)) != 0)
-		{
-			return -EFAULT;
-		}
-		break;
+        
+        kfree(gms);
+        return ret;
 	}
 
     case OP_ANTI_PTRACE_CTL:
     {
-        if (copy_from_user(&apc, (void __user *)arg, sizeof(apc)) != 0)
+        ANTI_PTRACE_CTL *apc = kmalloc(sizeof(ANTI_PTRACE_CTL), GFP_KERNEL);
+        int ret = -EFAULT;
+        if (!apc)
+            return -ENOMEM;
+        
+        if (copy_from_user(apc, (void __user *)arg, sizeof(ANTI_PTRACE_CTL)) != 0)
         {
+            kfree(apc);
             return -EFAULT;
         }
-        if (apc.action == ANTI_PTRACE_ENABLE) {
+        
+        if (apc->action == ANTI_PTRACE_ENABLE) {
             start_anti_ptrace_detection();
+            ret = 0;
         } else {
             stop_anti_ptrace_detection();
+            ret = 0;
         }
-        break;
+        
+        kfree(apc);
+        return ret;
     }
     case OP_ENUM_THREADS:
     {
-        if (copy_from_user(&et, (void __user *)arg, sizeof(et)) != 0)
+        ENUM_THREADS *et = kmalloc(sizeof(ENUM_THREADS), GFP_KERNEL);
+        int ret = -EFAULT;
+        if (!et)
+            return -ENOMEM;
+        
+        if (copy_from_user(et, (void __user *)arg, sizeof(ENUM_THREADS)) != 0)
         {
+            kfree(et);
             return -EFAULT;
         }
-        if (handle_enum_threads(&et) != 0)
+        
+        if (handle_enum_threads(et) == 0)
         {
-            return -EFAULT;
+            if (copy_to_user((void __user *)arg, et, sizeof(ENUM_THREADS)) == 0)
+            {
+                ret = 0;
+            }
         }
-        if (copy_to_user((void __user *)arg, &et, sizeof(et)) != 0)
-        {
-            return -EFAULT;
-        }
-        break;
+        
+        kfree(et);
+        return ret;
     }
     case OP_THREAD_CTL:
     {
-        if (copy_from_user(&tc, (void __user *)arg, sizeof(tc)) != 0)
+        THREAD_CTL *tc = kmalloc(sizeof(THREAD_CTL), GFP_KERNEL);
+        int ret = -EFAULT;
+        if (!tc)
+            return -ENOMEM;
+        
+        if (copy_from_user(tc, (void __user *)arg, sizeof(THREAD_CTL)) != 0)
         {
+            kfree(tc);
             return -EFAULT;
         }
-        if (handle_thread_control(&tc) != 0)
+        
+        if (handle_thread_control(tc) == 0)
         {
-            return -EFAULT;
+            ret = 0;
         }
-        break;
+        
+        kfree(tc);
+        return ret;
     }
     case OP_SINGLE_STEP_CTL:
     {
-        if (copy_from_user(&ssc, (void __user *)arg, sizeof(ssc)) != 0)
+        SINGLE_STEP_CTL *ssc = kmalloc(sizeof(SINGLE_STEP_CTL), GFP_KERNEL);
+        int ret = -EFAULT;
+        if (!ssc)
+            return -ENOMEM;
+        
+        if (copy_from_user(ssc, (void __user *)arg, sizeof(SINGLE_STEP_CTL)) != 0)
         {
+            kfree(ssc);
             return -EFAULT;
         }
 
         // Debug: print raw bytes received
         {
-            unsigned char *bytes = (unsigned char *)&ssc;
+            unsigned char *bytes = (unsigned char *)ssc;
             PRINT_DEBUG("[single_step] Received %zu bytes: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
-                        sizeof(ssc),
+                        sizeof(SINGLE_STEP_CTL),
                         bytes[0], bytes[1], bytes[2], bytes[3],
                         bytes[4], bytes[5], bytes[6], bytes[7],
                         bytes[8], bytes[9], bytes[10], bytes[11],
                         bytes[12], bytes[13], bytes[14], bytes[15]);
         }
 
-        if (handle_single_step_control(&ssc) != 0)
+        if (handle_single_step_control(ssc) == 0)
         {
-            return -EFAULT;
+            ret = 0;
         }
-        // Note: handle_single_step_control already writes register data via ssc.regs_buffer
-        // No need to copy_to_user the entire ssc struct, which could corrupt user stack!
-        break;
+        
+        kfree(ssc);
+        return ret;
     }
     case OP_SET_SPAWN_SUSPEND:
     {
-        if (copy_from_user(&spawn_ctl, (void __user *)arg, sizeof(spawn_ctl)) != 0)
+        SPAWN_SUSPEND_CTL *spawn_ctl = kmalloc(sizeof(SPAWN_SUSPEND_CTL), GFP_KERNEL);
+        int ret = -EFAULT;
+        if (!spawn_ctl)
+            return -ENOMEM;
+        
+        if (copy_from_user(spawn_ctl, (void __user *)arg, sizeof(SPAWN_SUSPEND_CTL)) != 0)
         {
-            return -EFAULT;
-        }
-        set_spawn_suspend_target(spawn_ctl.target_name, spawn_ctl.enable);
-        break;
-    }
-    case OP_RESUME_PROCESS:
-    {
-        struct task_struct *task;
-        if (copy_from_user(&resume_ctl, (void __user *)arg, sizeof(resume_ctl)) != 0)
-        {
+            kfree(spawn_ctl);
             return -EFAULT;
         }
         
-        task = get_pid_task(find_get_pid(resume_ctl.pid), PIDTYPE_PID);
+        set_spawn_suspend_target(spawn_ctl->target_name, spawn_ctl->enable);
+        ret = 0;
+        kfree(spawn_ctl);
+        return ret;
+    }
+    case OP_RESUME_PROCESS:
+    {
+        RESUME_PROCESS_CTL *resume_ctl = kmalloc(sizeof(RESUME_PROCESS_CTL), GFP_KERNEL);
+        struct task_struct *task;
+        int ret = -EFAULT;
+        if (!resume_ctl)
+            return -ENOMEM;
+        
+        if (copy_from_user(resume_ctl, (void __user *)arg, sizeof(RESUME_PROCESS_CTL)) != 0)
+        {
+            kfree(resume_ctl);
+            return -EFAULT;
+        }
+        
+        task = get_pid_task(find_get_pid(resume_ctl->pid), PIDTYPE_PID);
         if (!task) {
+            kfree(resume_ctl);
             return -ESRCH;
         }
         
         // Send SIGCONT to resume the process
         send_sig_info(SIGCONT, SEND_SIG_FORCED, task);
         put_task_struct(task);
-        PRINT_DEBUG("[+] Sent SIGCONT to PID %d.\n", resume_ctl.pid);
-        break;
+        PRINT_DEBUG("[+] Sent SIGCONT to PID %d.\n", resume_ctl->pid);
+        ret = 0;
+        kfree(resume_ctl);
+        return ret;
     }
     case OP_REG_ACCESS:
     {
-        if (copy_from_user(&reg_access, (void __user *)arg, sizeof(reg_access)) != 0)
+        REG_ACCESS *reg_access = kmalloc(sizeof(REG_ACCESS), GFP_KERNEL);
+        int ret = -EFAULT;
+        if (!reg_access)
+            return -ENOMEM;
+        
+        if (copy_from_user(reg_access, (void __user *)arg, sizeof(REG_ACCESS)) != 0)
         {
+            kfree(reg_access);
             return -EFAULT;
         }
         
-        if (handle_register_access(&reg_access) != 0)
+        if (handle_register_access(reg_access) == 0)
         {
-            return -EFAULT;
+            ret = 0;
         }
-        break;
+        
+        kfree(reg_access);
+        return ret;
     }
     
     case OP_UNLOAD_MODULE:
