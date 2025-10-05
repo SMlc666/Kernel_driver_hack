@@ -66,16 +66,15 @@ int main(int argc, char* argv[]) {
 
     // 测试1: 添加断点
     printf("\n[+] Test 1: Adding MMU breakpoint...\n");
-    MMU_BP_CTL ctl;
+    c_driver::MMU_BP_CTL ctl;
     ctl.pid = target_pid;
     ctl.addr = target_addr;
     ctl.size = size;
     ctl.access_type = access_type;
     ctl.action = 1; // 添加
 
-    if (driver.mmu_breakpoint_control(&ctl) != 0) {
+    if (!driver.mmu_breakpoint_control(&ctl)) {
         printf("[-] Failed to add MMU breakpoint\n");
-        driver.cleanup();
         return 1;
     }
     printf("[+] MMU breakpoint added successfully\n");
@@ -102,7 +101,7 @@ int main(int argc, char* argv[]) {
 
     // 测试3: 列出断点
     printf("\n[+] Test 3: Listing breakpoints...\n");
-    std::vector<MMU_BP_INFO> breakpoints;
+    std::vector<c_driver::MMU_BP_INFO> breakpoints;
     if (driver.mmu_breakpoint_list(target_pid, breakpoints)) {
         printf("[+] Found %zu breakpoints:\n", breakpoints.size());
         for (size_t i = 0; i < breakpoints.size(); i++) {
@@ -134,7 +133,7 @@ int main(int argc, char* argv[]) {
         }
         
         // 再次查看断点状态
-        std::vector<MMU_BP_INFO> final_breakpoints;
+        std::vector<c_driver::MMU_BP_INFO> final_breakpoints;
         if (driver.mmu_breakpoint_list(target_pid, final_breakpoints)) {
             printf("[+] Final breakpoint states:\n");
             for (size_t i = 0; i < final_breakpoints.size(); i++) {
@@ -161,8 +160,6 @@ int main(int argc, char* argv[]) {
         printf("[+] MMU breakpoint removed successfully\n");
     }
 
-    // 清理
-    driver.cleanup();
     printf("[+] Test completed\n");
     
     return 0;

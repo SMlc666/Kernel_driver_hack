@@ -20,6 +20,9 @@ void* worker_thread(void* arg) {
 
 int main() {
     printf("[Target] PID: %d\n", getpid());
+    printf("[Target] counter address: %p\n", (void*)&counter);
+    printf("[Target] main function address: %p\n", (void*)main);
+    printf("[Target] worker_thread function address: %p\n", (void*)worker_thread);
     printf("[Target] Starting worker threads...\n");
 
     pthread_t thread1, thread2;
