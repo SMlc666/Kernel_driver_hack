@@ -88,9 +88,12 @@ static void before_do_debug_exception(hook_fargs3_t *fargs, void *udata)
             ptep = virt_to_pte(bp->task, bp->addr);
             if (ptep && bp->vma) {
                 struct mm_struct *mm = bp->vma->vm_mm;
-                ptep_get_and_clear(mm, bp->addr, ptep);
-                flush_tlb_page(bp->vma, bp->addr);
-            }
+                            // Re-arm by clearing the valid bit, not the whole PTE.
+                            if (pte_present(bp->original_pte)) {
+                                pte_t pte = pte_clear_flags(bp->original_pte, __pgprot(PTE_VALID));
+                                set_pte_at(bp->task->mm, bp->addr, ptep, pte);
+                                flush_tlb_page(bp->vma, bp->addr);
+                            }            }
 
             current_bp_per_cpu[raw_smp_processor_id()] = NULL;
             return; // Handled

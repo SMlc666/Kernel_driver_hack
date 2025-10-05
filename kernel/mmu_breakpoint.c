@@ -114,9 +114,19 @@ static int set_breakpoint(struct mmu_breakpoint *bp) {
     do {
         struct mm_struct *mm = bp->vma->vm_mm;
         pte_t pte;
-        pte = ptep_get_and_clear(mm, bp->addr, ptep);
-        flush_tlb_page(bp->vma, bp->addr);
+        pte = *ptep;
         bp->original_pte = pte;
+
+        if (!pte_present(pte)) {
+            PRINT_DEBUG("[-] mmu_bp: Page at 0x%lx is not present, cannot set breakpoint.\n", bp->addr);
+            return -EINVAL;
+        }
+
+        // Only clear the valid bit, don't clear the whole PTE.
+        // This prevents the kernel from thinking it's a new anonymous page.
+        pte = pte_clear_flags(pte, __pgprot(PTE_VALID));
+        set_pte_at(mm, bp->addr, ptep, pte);
+        flush_tlb_page(bp->vma, bp->addr);
     } while (0);
     
     bp->is_active = true;
