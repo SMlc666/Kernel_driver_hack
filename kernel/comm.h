@@ -147,6 +147,8 @@ typedef struct _ANTI_PTRACE_CTL
 
 // --- New Process Spawn Control Structures ---
 
+#define PROCESS_NAME_MAX 256
+
 // For setting a target process to suspend on spawn
 typedef struct _SPAWN_SUSPEND_CTL
 {
