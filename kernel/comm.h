@@ -60,6 +60,10 @@ enum OPERATIONS
 
     // --- New Single-Step Operations ---
     OP_SINGLE_STEP_CTL = 0x850,
+
+    // --- New Process Spawn Control ---
+    OP_SET_SPAWN_SUSPEND = 0x860,
+    OP_RESUME_PROCESS = 0x861,
 };
 
 // For controlling a specific thread
@@ -155,6 +159,22 @@ typedef struct _ANTI_PTRACE_CTL
 {
     int action; // see ANTI_PTRACE_ACTION
 } ANTI_PTRACE_CTL, *PANTI_PTRACE_CTL;
+
+
+// --- New Process Spawn Control Structures ---
+
+// For setting a target process to suspend on spawn
+typedef struct _SPAWN_SUSPEND_CTL
+{
+    char target_name[PROCESS_NAME_MAX]; // The name of the process to suspend
+    int enable;                      // 1 to enable, 0 to disable
+} SPAWN_SUSPEND_CTL, *PSPAWN_SUSPEND_CTL;
+
+// For resuming a suspended process
+typedef struct _RESUME_PROCESS_CTL
+{
+    pid_t pid; // The PID of the process to resume
+} RESUME_PROCESS_CTL, *PRESUME_PROCESS_CTL;
 
 
 #endif // COMM_H

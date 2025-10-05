@@ -18,6 +18,7 @@
 #include "anti_ptrace_detection.h" // Added
 #include "thread.h"
 #include "single_step.h"
+#include "spawn_suspend.h"
 #include "inline_hook/p_lkrg_main.h"
 #include "inline_hook/utils/p_memory.h"
 #include "version_control.h"
@@ -77,6 +78,8 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     static ENUM_THREADS et;
     static THREAD_CTL tc;
     static SINGLE_STEP_CTL ssc;
+    static SPAWN_SUSPEND_CTL spawn_ctl;
+    static RESUME_PROCESS_CTL resume_ctl;
     
     PRINT_DEBUG("[+] dispatch_ioctl called by PID %d with cmd: 0x%x\n", current->pid, cmd);
 
@@ -319,6 +322,34 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
         // No need to copy_to_user the entire ssc struct, which could corrupt user stack!
         break;
     }
+    case OP_SET_SPAWN_SUSPEND:
+    {
+        if (copy_from_user(&spawn_ctl, (void __user *)arg, sizeof(spawn_ctl)) != 0)
+        {
+            return -EFAULT;
+        }
+        set_spawn_suspend_target(spawn_ctl.target_name, spawn_ctl.enable);
+        break;
+    }
+    case OP_RESUME_PROCESS:
+    {
+        struct task_struct *task;
+        if (copy_from_user(&resume_ctl, (void __user *)arg, sizeof(resume_ctl)) != 0)
+        {
+            return -EFAULT;
+        }
+        
+        task = get_pid_task(find_get_pid(resume_ctl.pid), PIDTYPE_PID);
+        if (!task) {
+            return -ESRCH;
+        }
+        
+        // Send SIGCONT to resume the process
+        send_sig_info(SIGCONT, SEND_SIG_FORCED, task);
+        put_task_struct(task);
+        PRINT_DEBUG("[+] Sent SIGCONT to PID %d.\n", resume_ctl.pid);
+        break;
+    }
 	default:
 		return -EINVAL; // Unrecognized command for our driver
 	}
@@ -399,6 +430,13 @@ int __init driver_entry(void)
 		return ret;
 	}
 
+	ret = spawn_suspend_init();
+	if (ret)
+	{
+		_driver_cleanup();
+		return ret;
+	}
+
 	mutex_lock(&module_mutex);
 	list_del_init(&THIS_MODULE->list);
 	mutex_unlock(&module_mutex);
@@ -432,6 +470,7 @@ static void _driver_cleanup(void)
     
     // Cleanup our subsystems
     stop_anti_ptrace_detection(); // Ensure it's off on unload
+    spawn_suspend_exit();
     single_step_exit();
 	hide_kill_exit();
 	hide_proc_exit();

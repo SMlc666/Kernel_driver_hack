@@ -71,14 +71,23 @@ pid_t get_pid_by_name(const char *pname)
 {
 	struct task_struct *p;
 	pid_t pid = 0;
+	size_t pname_len = strlen(pname);
 
 	rcu_read_lock();
 	for_each_process(p)
 	{
-		if (strcmp(p->comm, pname) == 0)
-		{
-			pid = p->pid;
-			break;
+		// Use prefix match if pname is longer than TASK_COMM_LEN-1 (15 chars)
+		// or if exact match fails, since comm is truncated to 15 chars
+		if (pname_len >= TASK_COMM_LEN - 1) {
+			if (strncmp(p->comm, pname, TASK_COMM_LEN - 1) == 0) {
+				pid = p->pid;
+				break;
+			}
+		} else {
+			if (strcmp(p->comm, pname) == 0) {
+				pid = p->pid;
+				break;
+			}
 		}
 	}
 	rcu_read_unlock();
@@ -166,33 +175,12 @@ int get_all_processes(PPROCESS_INFO user_buffer, size_t *count)
     {
         if (procs_found < buffer_capacity) {
             PROCESS_INFO info;
-            struct mm_struct *mm;
-            char *path_name;
-            char path_buf[PROCESS_NAME_MAX];
-            bool got_path = false;
 
             info.pid = p->pid;
             memset(info.name, 0, sizeof(info.name));
 
-            // Use get_task_mm for safe access to mm_struct
-            mm = get_task_mm(p);
-            if (mm && mm->exe_file) {
-                struct file *exe_file = mm->exe_file;
-                if (exe_file) {
-                    path_name = file_path(exe_file, path_buf, PROCESS_NAME_MAX - 1);
-                    if (!IS_ERR(path_name)) {
-                        strncpy(info.name, path_name, sizeof(info.name) - 1);
-                        got_path = true;
-                    }
-                }
-                mmput(mm);
-            }
-
-            // Fallback to task comm if we couldn't get the path
-            if (!got_path) {
-                strncpy(info.name, p->comm, sizeof(info.name) - 1);
-            }
-
+            // Use comm field which contains the package name for Android apps
+            strncpy(info.name, p->comm, sizeof(info.name) - 1);
             info.name[sizeof(info.name) - 1] = '\0';
 
             if (copy_to_user(&user_buffer[procs_found], &info, sizeof(PROCESS_INFO))) {

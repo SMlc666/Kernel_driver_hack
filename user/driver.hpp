@@ -73,6 +73,18 @@ public: // Make these accessible to users of the class
         int action; // see ANTI_PTRACE_ACTION
     } ANTI_PTRACE_CTL, *PANTI_PTRACE_CTL;
 
+	// New Process Spawn Control Structures
+	typedef struct _SPAWN_SUSPEND_CTL
+	{
+	    char target_name[PROCESS_NAME_MAX]; // The name of the process to suspend
+	    int enable;                      // 1 to enable, 0 to disable
+	} SPAWN_SUSPEND_CTL, *PSPAWN_SUSPEND_CTL;
+
+	typedef struct _RESUME_PROCESS_CTL
+	{
+	    pid_t pid; // The PID of the process to resume
+	} RESUME_PROCESS_CTL, *PRESUME_PROCESS_CTL;
+
 	// New structs for getting all processes
 	static constexpr int PROCESS_NAME_MAX = 256;
 
@@ -113,6 +125,10 @@ public: // Make these accessible to users of the class
 		OP_ENUM_THREADS = 0x840,
     	OP_THREAD_CTL = 0x841,
 		OP_SINGLE_STEP_CTL = 0x850,
+
+		// New Process Spawn Control
+		OP_SET_SPAWN_SUSPEND = 0x860,
+		OP_RESUME_PROCESS = 0x861,
 	};
 
 	enum THREAD_ACTION
@@ -435,6 +451,22 @@ public:
         printf("[DEBUG] tid=%d, action=%d, regs_buffer=0x%lx\n", ctl.tid, ctl.action, ctl.regs_buffer);
 
         return ioctl(fd, OP_SINGLE_STEP_CTL, &ctl) == 0;
+    }
+
+    // --- Process Spawn Control ---
+    bool set_spawn_suspend_target(const char* target_name, bool enable) {
+        if (fd < 0) return false;
+        SPAWN_SUSPEND_CTL ctl;
+        strncpy(ctl.target_name, target_name, PROCESS_NAME_MAX - 1);
+        ctl.target_name[PROCESS_NAME_MAX - 1] = '\0';
+        ctl.enable = enable ? 1 : 0;
+        return ioctl(fd, OP_SET_SPAWN_SUSPEND, &ctl) == 0;
+    }
+
+    bool resume_process(pid_t pid_to_resume) {
+        if (fd < 0) return false;
+        RESUME_PROCESS_CTL ctl = {pid_to_resume};
+        return ioctl(fd, OP_RESUME_PROCESS, &ctl) == 0;
     }
 
     template <typename T>
