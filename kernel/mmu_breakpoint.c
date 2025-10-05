@@ -36,8 +36,9 @@ static void (*user_disable_single_step_)(struct task_struct *);
 // 钩子函数声明
 static void hooked_handle_pte_fault(hook_fargs1_t *fargs, void *udata);
 
-// 当前正在处理的断点 (non-static)
-struct mmu_breakpoint *current_bp = NULL;
+// 当前正在处理的断点 (per-CPU)
+struct mmu_breakpoint *current_bp_per_cpu[NR_CPUS] = {NULL};
+EXPORT_SYMBOL(current_bp_per_cpu);
 
 // 刷新所有CPU的TLB和缓存
 static void flush_all(void) {
@@ -150,43 +151,51 @@ static void hooked_handle_pte_fault(hook_fargs1_t *fargs, void *udata) {
     struct vm_fault *vmf = (struct vm_fault *)fargs->arg0;
     struct mmu_breakpoint *bp;
     unsigned long addr = vmf->address;
+    bool is_hit = false;
     
     // 检查是否是我们的断点
     bp = find_breakpoint(current->pid, addr);
     if (!bp) {
-        return; // Let original function run
+        return; // Not our breakpoint, let original function run
     }
     
-    // 检查访问类型是否匹配
+    // It's a fault on our monitored page. We MUST handle it to prevent the kernel from replacing the page.
+    // First, determine if it's a "hit" we care about.
     if (vmf->flags & FAULT_FLAG_INSTRUCTION) {
-        if (!(bp->access_type & BP_ACCESS_EXECUTE)) {
-            return; // Let original function run
+        if (bp->access_type & BP_ACCESS_EXECUTE) {
+            is_hit = true;
+            PRINT_DEBUG("[+] mmu_bp: EXECUTE fault at 0x%lx, IP: 0x%lx\n", addr, task_pt_regs(current)->pc);
         }
-        PRINT_DEBUG("[+] mmu_bp: EXECUTE fault at 0x%lx, IP: 0x%lx\n", addr, task_pt_regs(current)->pc);
     } else if (vmf->flags & FAULT_FLAG_WRITE) {
-        if (!(bp->access_type & BP_ACCESS_WRITE)) {
-            return; // Let original function run
+        if (bp->access_type & BP_ACCESS_WRITE) {
+            is_hit = true;
+            PRINT_DEBUG("[+] mmu_bp: WRITE fault at 0x%lx\n", addr);
         }
-        PRINT_DEBUG("[+] mmu_bp: WRITE fault at 0x%lx\n", addr);
-    } else {
-        if (!(bp->access_type & BP_ACCESS_READ)) {
-            return; // Let original function run
+    } else { // Read fault
+        if (bp->access_type & BP_ACCESS_READ) {
+            is_hit = true;
+            PRINT_DEBUG("[+] mmu_bp: READ fault at 0x%lx\n", addr);
         }
-        PRINT_DEBUG("[+] mmu_bp: READ fault at 0x%lx\n", addr);
     }
-    
-    // It's our breakpoint, handle it and skip the original function
+
+    // Now, handle the fault. We do this for ALL accesses on the page, hit or not,
+    // to prevent the kernel's default handler from running and replacing the page.
     fargs->skip_origin = 1;
     fargs->ret = 0; // Original function returns 0 on success for this path
 
     // 恢复页面权限
     vmf->pte = pte_offset_map(vmf->pmd, vmf->address);
     set_pte(vmf->pte, bp->original_pte);
+    pte_unmap(vmf->pte);
     flush_all();
     
-    // 增加命中计数
-    bp->hit_count++;
-    current_bp = bp;
+    // If it was a "hit", increment the counter.
+    if (is_hit) {
+        bp->hit_count++;
+    }
+    
+    // Store the current breakpoint for the single-step handler
+    current_bp_per_cpu[raw_smp_processor_id()] = bp;
     
     // 启用单步调试
     if (user_enable_single_step_) {

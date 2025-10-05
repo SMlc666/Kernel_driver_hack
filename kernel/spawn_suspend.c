@@ -118,8 +118,8 @@ static asmlinkage long hooked_sys_prctl(int option, unsigned long arg2, unsigned
                 name_buf[sizeof(name_buf) - 1] = '\0';
                 PRINT_DEBUG("[spawn_suspend] prctl(PR_SET_NAME): %s\n", name_buf);
 
-                if (strcmp(name_buf, target_name_copy) == 0) {
-                    PRINT_DEBUG("[spawn_suspend] Target '%s' matched process name. Stopping PID %d.\n", target_name_copy, current->pid);
+                if (strstr(name_buf, target_name_copy) != NULL) {
+                    PRINT_DEBUG("[spawn_suspend] Target '%s' matched process name '%s'. Stopping PID %d.\n", target_name_copy, name_buf, current->pid);
                     force_sig(SIGSTOP, current);
                 }
             }

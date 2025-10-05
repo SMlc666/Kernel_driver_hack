@@ -633,11 +633,10 @@ static void _driver_cleanup(void)
 
 	// --- Restore Logic (Corrected) ---
 	if (is_hijacked) {
-        void *original_ioctl_ptr = &original_ioctl;
-		PRINT_DEBUG("[+] Restoring original operations for %s\n", TARGET_FILE);
+        PRINT_DEBUG("[+] Restoring original operations for %s\n", TARGET_FILE);
 		
 		if (proc_version_fops) {
-            if (remap_write_range(&proc_version_fops->unlocked_ioctl, &original_ioctl_ptr, sizeof(void *), true)) {
+            if (remap_write_range(&proc_version_fops->unlocked_ioctl, &original_ioctl, sizeof(void *), true)) {
                 PRINT_DEBUG("[-] Failed to restore unlocked_ioctl for %s\n", TARGET_FILE);
             } else {
                 PRINT_DEBUG("[+] Successfully restored unlocked_ioctl.\n");

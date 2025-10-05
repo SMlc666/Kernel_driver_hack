@@ -75,7 +75,8 @@ static void before_do_debug_exception(hook_fargs3_t *fargs, void *udata)
         }
 
         // Case 2: It's a step from an MMU breakpoint
-        if (current_bp && current_task == current_bp->task) {
+        struct mmu_breakpoint *bp = current_bp_per_cpu[raw_smp_processor_id()];
+        if (bp && current_task == bp->task) {
             PRINT_DEBUG("[single_step] MMU breakpoint step trap for TID %d.\n", current_task->pid);
 
             fargs->skip_origin = 1;
@@ -84,14 +85,14 @@ static void before_do_debug_exception(hook_fargs3_t *fargs, void *udata)
             _user_disable_single_step(current_task);
 
             // Re-arm the breakpoint
-            ptep = virt_to_pte(current_bp->task, current_bp->addr);
-            if (ptep && current_bp->vma) {
-                struct mm_struct *mm = current_bp->vma->vm_mm;
-                ptep_get_and_clear(mm, current_bp->addr, ptep);
-                flush_tlb_page(current_bp->vma, current_bp->addr);
+            ptep = virt_to_pte(bp->task, bp->addr);
+            if (ptep && bp->vma) {
+                struct mm_struct *mm = bp->vma->vm_mm;
+                ptep_get_and_clear(mm, bp->addr, ptep);
+                flush_tlb_page(bp->vma, bp->addr);
             }
 
-            current_bp = NULL;
+            current_bp_per_cpu[raw_smp_processor_id()] = NULL;
             return; // Handled
         }
     }
