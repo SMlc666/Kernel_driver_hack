@@ -112,6 +112,9 @@ public: // Make these accessible to users of the class
 		// New Process Spawn Control
 		OP_SET_SPAWN_SUSPEND = 0x860,
 		OP_RESUME_PROCESS = 0x861,
+
+		// New Register Access Operations
+		OP_REG_ACCESS = 0x870,
 	};
 
 	enum THREAD_ACTION
@@ -157,10 +160,17 @@ public: // Make these accessible to users of the class
         size_t count;
     } ENUM_THREADS, *PENUM_THREADS;
 
-    typedef struct _THREAD_CTL {
+	typedef struct _THREAD_CTL {
         pid_t tid;
         int action;
     } THREAD_CTL, *PTHREAD_CTL;
+
+    // Register Access Structures
+    typedef struct _REG_ACCESS {
+        pid_t target_pid;
+        uintptr_t regs_buffer;
+        int operation;
+    } REG_ACCESS, *PREG_ACCESS;
 
 public:
 	c_driver()
@@ -411,6 +421,19 @@ public:
         if (fd < 0) return false;
         RESUME_PROCESS_CTL ctl = {pid_to_resume};
         return ioctl(fd, OP_RESUME_PROCESS, &ctl) == 0;
+    }
+
+    // --- Register Access ---
+    bool read_registers(pid_t target_pid, user_pt_regs& regs) {
+        if (fd < 0) return false;
+        REG_ACCESS reg_access = {target_pid, (uintptr_t)&regs, 0};
+        return ioctl(fd, OP_REG_ACCESS, &reg_access) == 0;
+    }
+
+    bool write_registers(pid_t target_pid, user_pt_regs& regs) {
+        if (fd < 0) return false;
+        REG_ACCESS reg_access = {target_pid, (uintptr_t)&regs, 1};
+        return ioctl(fd, OP_REG_ACCESS, &reg_access) == 0;
     }
 
     template <typename T>

@@ -20,6 +20,7 @@
 #include "thread.h"
 #include "single_step.h"
 #include "spawn_suspend.h"
+#include "register.h"
 #include "inline_hook/p_lkrg_main.h"
 #include "inline_hook/utils/p_memory.h"
 #include "version_control.h"
@@ -81,6 +82,7 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     static SINGLE_STEP_CTL ssc;
     static SPAWN_SUSPEND_CTL spawn_ctl;
     static RESUME_PROCESS_CTL resume_ctl;
+    static REG_ACCESS reg_access;
     
     PRINT_DEBUG("[+] dispatch_ioctl called by PID %d with cmd: 0x%x\n", current->pid, cmd);
 
@@ -316,6 +318,19 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
         send_sig_info(SIGCONT, SEND_SIG_FORCED, task);
         put_task_struct(task);
         PRINT_DEBUG("[+] Sent SIGCONT to PID %d.\n", resume_ctl.pid);
+        break;
+    }
+    case OP_REG_ACCESS:
+    {
+        if (copy_from_user(&reg_access, (void __user *)arg, sizeof(reg_access)) != 0)
+        {
+            return -EFAULT;
+        }
+        
+        if (handle_register_access(&reg_access) != 0)
+        {
+            return -EFAULT;
+        }
         break;
     }
 	default:
