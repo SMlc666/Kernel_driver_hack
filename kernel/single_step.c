@@ -170,6 +170,8 @@ int handle_single_step_control(PSINGLE_STEP_CTL ctl)
 // --- Init and Exit ---
 int single_step_init(void)
 {
+    void *addr;
+
     _user_enable_single_step = (void (*)(struct task_struct *))kallsyms_lookup_name("user_enable_single_step");
     if (!_user_enable_single_step) {
         PRINT_DEBUG("[-] single_step: Failed to find user_enable_single_step.\n");
@@ -182,7 +184,7 @@ int single_step_init(void)
         return -1;
     }
 
-    void *addr = (void *)kallsyms_lookup_name("do_debug_exception");
+    addr = (void *)kallsyms_lookup_name("do_debug_exception");
     if (!addr) {
         PRINT_DEBUG("[-] single_step: Failed to find do_debug_exception.\n");
         return -1;

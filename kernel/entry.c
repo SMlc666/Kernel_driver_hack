@@ -47,6 +47,19 @@ static bool g_module_unloading = false;
 
 // --- End of Hijack Logic ---
 
+// Static variables for dispatch_ioctl to reduce stack frame size
+static COPY_MEMORY cm;
+static MODULE_BASE mb;
+static GET_MEM_SEGMENTS gms;
+static HIDE_PROC hp;
+static ANTI_PTRACE_CTL apc;
+static ENUM_THREADS et;
+static THREAD_CTL tc;
+static SINGLE_STEP_CTL ssc;
+static SPAWN_SUSPEND_CTL spawn_ctl;
+static RESUME_PROCESS_CTL resume_ctl;
+static REG_ACCESS reg_access;
+
 int dispatch_open(struct inode *node, struct file *file)
 {
 	return 0;
@@ -72,20 +85,6 @@ bool is_pid_alive(pid_t pid)
 
 long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned long const arg)
 {
-    // Move declarations to the top of the function block to comply with C90
-	static COPY_MEMORY cm;
-	static MODULE_BASE mb;
-
-	static GET_MEM_SEGMENTS gms;
-    static HIDE_PROC hp;
-    static ANTI_PTRACE_CTL apc;
-
-    static ENUM_THREADS et;
-    static THREAD_CTL tc;
-    static SINGLE_STEP_CTL ssc;
-    static SPAWN_SUSPEND_CTL spawn_ctl;
-    static RESUME_PROCESS_CTL resume_ctl;
-    static REG_ACCESS reg_access;
     
     PRINT_DEBUG("[+] dispatch_ioctl called by PID %d with cmd: 0x%x\n", current->pid, cmd);
 
