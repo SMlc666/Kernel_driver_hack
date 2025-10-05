@@ -154,7 +154,7 @@ int main(int argc, char* argv[]) {
     printf("\n[+] Test 5: Removing MMU breakpoint...\n");
     ctl.action = 2; // 移除
     
-    if (driver.mmu_breakpoint_control(&ctl) != 0) {
+    if (!driver.mmu_breakpoint_control(&ctl)) {
         printf("[-] Failed to remove MMU breakpoint\n");
     } else {
         printf("[+] MMU breakpoint removed successfully\n");
