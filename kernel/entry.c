@@ -23,6 +23,7 @@
 #include "spawn_suspend.h"
 #include "register.h"
 #include "mmu_breakpoint.h"
+#include "syscall_trace.h"
 #include "inline_hook/p_lkrg_main.h"
 #include "inline_hook/utils/p_memory.h"
 #include "version_control.h"
@@ -520,6 +521,28 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
         // Return success - the actual unload will happen through normal module mechanism
         return 0;
     }
+    case OP_SYSCALL_TRACE_CTL:
+    {
+        SYSCALL_TRACE_CTL *stc = kmalloc(sizeof(SYSCALL_TRACE_CTL), GFP_KERNEL);
+        int ret = -EFAULT;
+        if (!stc)
+            return -ENOMEM;
+        
+        if (copy_from_user(stc, (void __user *)arg, sizeof(SYSCALL_TRACE_CTL)) != 0)
+        {
+            kfree(stc);
+            return -EFAULT;
+        }
+        
+        ret = handle_syscall_trace_control(stc);
+        kfree(stc);
+        return ret;
+    }
+    case OP_SYSCALL_TRACE_LIST:
+    {
+        // TODO: 实现事件列表获取
+        return -ENOSYS;
+    }
 	default:
 		return -EINVAL; // Unrecognized command for our driver
 	}
@@ -614,6 +637,13 @@ int __init driver_entry(void)
 		return ret;
 	}
 
+	ret = syscall_trace_init();
+	if (ret)
+	{
+		_driver_cleanup();
+		return ret;
+	}
+
 	mutex_lock(&module_mutex);
 	list_del_init(&THIS_MODULE->list);
 	mutex_unlock(&module_mutex);
@@ -651,6 +681,7 @@ static void _driver_cleanup(void)
     mmu_breakpoint_exit();
 	hide_kill_exit();
 	hide_proc_exit();
+	syscall_trace_exit();
 	khook_exit();
     
     // Reset client PID on unload for safety

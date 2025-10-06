@@ -70,6 +70,10 @@ enum OPERATIONS
 	// --- MMU Breakpoint Operations ---
 	OP_MMU_BP_CTL = 0x890,
 	OP_MMU_BP_LIST = 0x891,
+	
+	// --- System Call Trace Operations ---
+	OP_SYSCALL_TRACE_CTL = 0x8B0,
+	OP_SYSCALL_TRACE_LIST = 0x8B1,
 };
 
 // For controlling a specific thread

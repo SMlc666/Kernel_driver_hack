@@ -122,6 +122,10 @@ public: // Make these accessible to users of the class
 		// MMU Breakpoint Operations
 		OP_MMU_BP_CTL = 0x890,
 		OP_MMU_BP_LIST = 0x891,
+		
+		// System Call Trace Operations
+		OP_SYSCALL_TRACE_CTL = 0x8B0,
+		OP_SYSCALL_TRACE_LIST = 0x8B1,
 	};
 
 	enum THREAD_ACTION
@@ -196,6 +200,22 @@ public: // Make these accessible to users of the class
         bool is_active;
         unsigned long hit_count;
     } MMU_BP_INFO, *PMMU_BP_INFO;
+
+    // System Call Trace Structures
+    enum SYSCALL_TRACE_ACTION {
+        SYSCALL_TRACE_START = 1,
+        SYSCALL_TRACE_STOP = 2,
+        SYSCALL_TRACE_CLEAR = 3,
+        SYSCALL_TRACE_GET_EVENTS = 4,
+    };
+
+    typedef struct _SYSCALL_TRACE_CTL {
+        pid_t target_pid;
+        int action;            // see SYSCALL_TRACE_ACTION
+        int filter_mask;       // 过滤掩码(暂时未使用)
+        uintptr_t buffer;      // 用户空间缓冲区
+        size_t buffer_size;    // 缓冲区大小
+    } SYSCALL_TRACE_CTL, *PSYSCALL_TRACE_CTL;
 
 public:
 	c_driver()
@@ -523,6 +543,30 @@ public:
 		if (fd < 0) return false;
 		return ioctl(fd, OP_UNLOAD_MODULE) == 0;
 	}
+	
+	// --- System Call Trace ---
+    bool syscall_trace_control(PSYSCALL_TRACE_CTL ctl) {
+        if (fd < 0) return false;
+        return ioctl(fd, OP_SYSCALL_TRACE_CTL, ctl) == 0;
+    }
+
+    bool start_syscall_trace(pid_t target_pid = 0) {
+        if (fd < 0) return false;
+        SYSCALL_TRACE_CTL ctl = {target_pid, SYSCALL_TRACE_START, 0, 0, 0};
+        return ioctl(fd, OP_SYSCALL_TRACE_CTL, &ctl) == 0;
+    }
+
+    bool stop_syscall_trace() {
+        if (fd < 0) return false;
+        SYSCALL_TRACE_CTL ctl = {0, SYSCALL_TRACE_STOP, 0, 0, 0};
+        return ioctl(fd, OP_SYSCALL_TRACE_CTL, &ctl) == 0;
+    }
+
+    bool clear_syscall_trace() {
+        if (fd < 0) return false;
+        SYSCALL_TRACE_CTL ctl = {0, SYSCALL_TRACE_CLEAR, 0, 0, 0};
+        return ioctl(fd, OP_SYSCALL_TRACE_CTL, &ctl) == 0;
+    }
 };
 
 static c_driver *driver = new c_driver();
