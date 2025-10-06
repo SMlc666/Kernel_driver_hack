@@ -91,7 +91,7 @@ static void before_do_debug_exception(hook_fargs3_t *fargs, void *udata)
                 // Re-arm by clearing the valid bit, not the whole PTE.
                 if (pte_present(bp->original_pte)) {
                     pte_t pte = __pte(pte_val(bp->original_pte) & ~PTE_VALID);
-                    set_pte_at(bp->task->mm, bp->addr, ptep, pte);
+                    khack_set_pte_at(bp->task->mm, bp->addr, ptep, pte);
                     flush_tlb_page(bp->vma, bp->addr);
                 }
             }

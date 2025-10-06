@@ -122,7 +122,7 @@ static int set_breakpoint(struct mmu_breakpoint *bp) {
 
         // Create a new PTE with the 'valid' bit cleared, which causes a fault
         pte = __pte(pte_val(pte) & ~PTE_VALID);
-        set_pte_at(mm, bp->addr, ptep, pte);
+        khack_set_pte_at, bp->addr, ptep, pte);
         flush_tlb_page(bp->vma, bp->addr);
     } while (0);
     

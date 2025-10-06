@@ -13,7 +13,7 @@
 #include "comm.h"
 #include "inline_hook/p_lkrg_main.h"
 
-static inline void set_pte_at(struct mm_struct *mm, unsigned long addr, pte_t *ptep, pte_t pte) {
+static inline void khack_set_pte_at(struct mm_struct *mm, unsigned long addr, pte_t *ptep, pte_t pte) {
     if (pte_present(pte) && pte_user_exec(pte) && !pte_special(pte))
         P_SYM(p_sync_icache_dcache)(pte, addr);
 
