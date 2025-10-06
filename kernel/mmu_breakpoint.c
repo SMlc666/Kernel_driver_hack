@@ -145,7 +145,7 @@ static int clear_breakpoint(struct mmu_breakpoint *bp) {
     }
     
     // 恢复原始页表项
-    set_pte_at(bp->task->mm, bp->addr, ptep, bp->original_pte);
+    khack_set_pte_at(bp->task->mm, bp->addr, ptep, bp->original_pte);
     flush_all();
     
     bp->is_active = false;
@@ -197,7 +197,7 @@ static void hooked_handle_pte_fault(hook_fargs1_t *fargs, void *udata) {
     }
 
     vmf->pte = pte_offset_map(vmf->pmd, vmf->address);
-    set_pte_at(vmf->vma->vm_mm, vmf->address, vmf->pte, pte_to_set);
+    khack_set_pte_at(vmf->vma->vm_mm, vmf->address, vmf->pte, pte_to_set);
     pte_unmap(vmf->pte);
     flush_all();
     
