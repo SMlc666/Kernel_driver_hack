@@ -5,7 +5,6 @@
 #include <linux/signal.h>
 #include <linux/smp.h>
 #include <linux/sched/signal.h>
-#include <linux/mm.h>
 #include <linux/mm_types.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
@@ -15,7 +14,6 @@
 #include <asm/tlbflush.h>
 #include <asm/io.h>
 #include <asm/pgtable.h>
-#include <asm/cacheflush.h>
 
 #include "mmu_breakpoint.h"
 #include "single_step.h"
@@ -391,6 +389,14 @@ int mmu_breakpoint_init(void) {
     if (!user_enable_single_step_ || !user_disable_single_step_) {
         PRINT_DEBUG("[-] mmu_bp: Failed to resolve required single-step symbols\n");
         return -ENOENT;
+    }
+
+    if (!P_SYM(p_sync_icache_dcache)) {
+        P_SYM(p_sync_icache_dcache) = (void *)kallsyms_lookup_name("__sync_icache_dcache");
+        if (!P_SYM(p_sync_icache_dcache)) {
+            PRINT_DEBUG("[-] mmu_bp: Failed to resolve __sync_icache_dcache\n");
+            return -ENOENT;
+        }
     }
 
     handle_pte_fault_addr = (void *)kallsyms_lookup_name("handle_pte_fault");

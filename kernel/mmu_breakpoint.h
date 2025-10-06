@@ -8,7 +8,26 @@
 #include <linux/sched.h>
 #include <linux/mm_types.h>
 #include <asm/pgtable.h>
+#include <linux/mm.h>
+#include <asm/cacheflush.h>
 #include "comm.h"
+#include "inline_hook/p_lkrg_main.h"
+
+static inline void set_pte_at(struct mm_struct *mm, unsigned long addr, pte_t *ptep, pte_t pte) {
+    if (pte_present(pte) && pte_user_exec(pte) && !pte_special(pte))
+        P_SYM(p_sync_icache_dcache)(pte, addr);
+
+    /*
+     * If the existing pte is valid, check for potential race with
+     * hardware updates of the pte (ptep_set_access_flags safely changes
+     * valid ptes without going through an invalid entry).
+     */
+    if (pte_valid(*ptep) && pte_valid(pte)) {
+        VM_WARN_ONCE(!pte_young(pte), "%s: racy access flag clearing: 0x%016llx -> 0x%016llx", __func__, pte_val(*ptep), pte_val(pte));
+        VM_WARN_ONCE(pte_write(*ptep) && !pte_dirty(pte), "%s: racy dirty state clearing: 0x%016llx -> 0x%016llx", __func__, pte_val(*ptep), pte_val(pte));
+    }
+    set_pte(ptep, pte);
+}
 
 // MMU断点访问类型
 #define BP_ACCESS_READ     0x01

@@ -211,7 +211,7 @@ typedef struct _p_lkrg_global_symbols_structure
 	unsigned long (*p_get_symbol_pos)(unsigned long, unsigned long *, unsigned long *);
 	void (*p_flush_tlb_kernel_range)(unsigned long start, unsigned long end);
 	int (*p_apply_to_page_range)(struct mm_struct *mm, unsigned long addr,unsigned long size, pte_fn_t fn, void *data);
-	void (*p_sync_icache_dcache)(pte_t);
+	void (*p_sync_icache_dcache)(pte_t, unsigned long);
 
 	void * p_stext;
 	void * p_etext;
