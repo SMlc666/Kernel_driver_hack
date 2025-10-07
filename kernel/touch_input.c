@@ -33,7 +33,7 @@
 // --- Forward Declarations ---
 static void unhook_device(void);
 static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff_t *pos);
-static __poll_t hook_poll(struct file *file, struct poll_table_struct *wait);
+static unsigned int hook_poll(struct file *file, struct poll_table_struct *wait);
 static int install_hook_internal(void);
 
 // --- Global State ---
@@ -44,7 +44,7 @@ static DEFINE_MUTEX(g_hook_lock);
 
 // Original function pointers
 static ssize_t (*g_old_read)(struct file *, char __user *, size_t, loff_t *);
-static __poll_t (*g_old_poll)(struct file *, struct poll_table_struct *);
+static unsigned int (*g_old_poll)(struct file *, struct poll_table_struct *);
 
 // Pointers to kernel symbols
 static struct files_struct *(*get_files_struct_ptr)(struct task_struct *task);
@@ -290,6 +290,9 @@ static struct input_dev* find_touch_device(void) {
     static struct list_head *input_dev_list = NULL;
     static struct mutex *input_mutex = NULL;
     static bool kallsyms_failed = false;
+    struct input_dev *dummy_dev;
+    struct list_head *p;
+    struct input_dev *iter_dev;
 
     if (CACHE != NULL) return CACHE;
 
@@ -317,7 +320,7 @@ static struct input_dev* find_touch_device(void) {
         return CACHE;
     } else {
         // Fallback path: kallsyms failed, use dummy device
-        struct input_dev *dummy_dev = input_allocate_device();
+        dummy_dev = input_allocate_device();
         if (!dummy_dev) {
             PRINT_DEBUG("[-] touch_input: Failed to allocate dummy device for fallback search\n");
             return NULL;
@@ -329,9 +332,8 @@ static struct input_dev* find_touch_device(void) {
         }
 
         rcu_read_lock();
-        struct list_head *p;
         for (p = dummy_dev->node.next; p != &dummy_dev->node; p = p->next) {
-            struct input_dev *iter_dev = container_of(p, struct input_dev, node);
+            iter_dev = container_of(p, struct input_dev, node);
             if (test_bit(EV_ABS, iter_dev->evbit) && test_bit(ABS_MT_POSITION_X, iter_dev->absbit)) {
                 PRINT_DEBUG("[+] touch_input: Found touch device (via fallback): %s\n", iter_dev->name);
                 dev = iter_dev;
@@ -530,14 +532,16 @@ static unsigned int g_inject_count = 0;
 
 // Helper to build an input_event and add it to our buffer
 static void append_event(u16 type, u16 code, s32 value) {
+    struct input_event *evt;
+    struct timespec64 ts;
+
     if (g_inject_count >= MAX_INJECT_EVENTS) return;
-    struct input_event *evt = &g_inject_events[g_inject_count];
+    evt = &g_inject_events[g_inject_count];
     
     // Get timestamp for the event
-    struct timespec64 ts;
     ktime_get_real_ts64(&ts);
-    evt->input_event_sec = ts.tv_sec;
-    evt->input_event_usec = ts.tv_nsec / 1000;
+    evt->time.tv_sec = ts.tv_sec;
+    evt->time.tv_usec = ts.tv_nsec / 1000;
 
     evt->type = type;
     evt->code = code;
@@ -548,6 +552,9 @@ static void append_event(u16 type, u16 code, s32 value) {
 static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
 {
     enum TOUCH_MODE current_mode;
+    TOUCH_POINT point;
+    struct slot_state *s;
+    size_t bytes_to_copy;
     
     mutex_lock(&g_hook_lock);
     current_mode = g_current_mode;
@@ -576,14 +583,14 @@ static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff
 
         // Process points from the ring buffer until it's empty or our event buffer is full
         while (g_shared_buffer->head != g_shared_buffer->tail && g_inject_count < MAX_INJECT_EVENTS - 5) {
-            TOUCH_POINT point = g_shared_buffer->points[g_shared_buffer->tail];
+            point = g_shared_buffer->points[g_shared_buffer->tail];
             
             if (point.slot >= MAX_SLOTS) { // Sanity check
                 g_shared_buffer->tail = (g_shared_buffer->tail + 1) % TOUCH_BUFFER_POINTS;
                 continue;
             }
 
-            struct slot_state *s = &g_slots[point.slot];
+            s = &g_slots[point.slot];
             append_event(EV_ABS, ABS_MT_SLOT, point.slot);
 
             switch (point.action) {
@@ -611,7 +618,7 @@ static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff
         if (g_inject_count > 0) {
             append_event(EV_SYN, SYN_REPORT, 0);
             
-            size_t bytes_to_copy = g_inject_count * sizeof(struct input_event);
+            bytes_to_copy = g_inject_count * sizeof(struct input_event);
             if (bytes_to_copy > count) {
                 bytes_to_copy = count - (count % sizeof(struct input_event));
             }
@@ -632,9 +639,9 @@ static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff
     return g_old_read(file, buf, count, pos);
 }
 
-static __poll_t hook_poll(struct file *file, struct poll_table_struct *wait)
+static unsigned int hook_poll(struct file *file, struct poll_table_struct *wait)
 {
-    __poll_t mask = g_old_poll(file, wait);
+    unsigned int mask = g_old_poll(file, wait);
     
     // If we are in injection mode and our buffer has data, signal it
     if (g_current_mode == TOUCH_MODE_EXCLUSIVE_INJECT && g_shared_buffer) {
