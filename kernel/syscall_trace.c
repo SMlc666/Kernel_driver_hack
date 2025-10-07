@@ -56,7 +56,6 @@ static asmlinkage long hooked_##name(const struct pt_regs *regs) \
 }
 
 // 定义常用的系统调用Hook
-DEFINE_SYSCALL_HOOK(__NR_open, sys_open)
 DEFINE_SYSCALL_HOOK(__NR_openat, sys_openat)
 DEFINE_SYSCALL_HOOK(__NR_close, sys_close)
 DEFINE_SYSCALL_HOOK(__NR_read, sys_read)
