@@ -659,7 +659,7 @@ int __init driver_entry(void)
         return -EFAULT;
     }
 
-    if (original_mmap && remap_write_range(&proc_version_fops->mmap, &dispatch_mmap_ptr, sizeof(void *), true)) {
+    if (remap_write_range(&proc_version_fops->mmap, &dispatch_mmap_ptr, sizeof(void *), true)) {
         PRINT_DEBUG("[-] Failed to hook mmap for %s\n", TARGET_FILE);
         // Try to restore ioctl hook
         remap_write_range(&proc_version_fops->unlocked_ioctl, &original_ioctl, sizeof(void *), true);
