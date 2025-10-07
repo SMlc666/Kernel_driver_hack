@@ -141,4 +141,19 @@ int get_process_memory_segments(pid_t pid, PMEM_SEGMENT_INFO user_buffer, size_t
     return ret;
 }
 
+pid_t get_process_pid(const char *name)
+{
+    struct task_struct *task;
+    pid_t pid = 0;
 
+    rcu_read_lock();
+    for_each_process(task) {
+        if (strcmp(task->comm, name) == 0) {
+            pid = task->pid;
+            break;
+        }
+    }
+    rcu_read_unlock();
+
+    return pid;
+}

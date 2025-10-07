@@ -74,6 +74,13 @@ enum OPERATIONS
 	// --- System Call Trace Operations ---
 	OP_SYSCALL_TRACE_CTL = 0x8B0,
 	OP_SYSCALL_TRACE_LIST = 0x8B1,
+
+	// --- New Touch Input Operations ---
+    OP_TOUCH_HOOK_INSTALL = 0x900,
+    OP_TOUCH_HOOK_UNINSTALL = 0x901,
+    OP_TOUCH_SET_MODE = 0x902,
+    OP_TOUCH_NOTIFY = 0x903,
+    OP_TOUCH_CLEAN_STATE = 0x904,
 };
 
 // For controlling a specific thread
@@ -175,6 +182,43 @@ typedef struct _RESUME_PROCESS_CTL
 {
     pid_t pid; // The PID of the process to resume
 } RESUME_PROCESS_CTL, *PRESUME_PROCESS_CTL;
+
+
+// --- New Touch Input Structures ---
+
+// For OP_TOUCH_SET_MODE
+enum TOUCH_MODE {
+    TOUCH_MODE_DISABLED = 0,      // Hook installed but inactive
+    TOUCH_MODE_FILTER_MODIFY = 1, // Intercept and modify real events
+    TOUCH_MODE_EXCLUSIVE_INJECT = 2, // Block real events, inject from buffer
+};
+
+typedef struct _TOUCH_MODE_CTL {
+    enum TOUCH_MODE mode;
+} TOUCH_MODE_CTL, *PTOUCH_MODE_CTL;
+
+// For the mmap shared buffer
+#define TOUCH_BUFFER_POINTS 256 // Number of points in the ring buffer
+
+enum TOUCH_ACTION {
+    TOUCH_ACTION_DOWN,
+    TOUCH_ACTION_UP,
+    TOUCH_ACTION_MOVE,
+};
+
+typedef struct _TOUCH_POINT {
+    enum TOUCH_ACTION action;
+    unsigned int slot;
+    int x;
+    int y;
+} TOUCH_POINT, *PTOUCH_POINT;
+
+// The layout of the shared memory region
+typedef struct _TOUCH_SHARED_BUFFER {
+    volatile unsigned int head; // Written by user, read by kernel
+    volatile unsigned int tail; // Written by kernel, read by user
+    TOUCH_POINT points[TOUCH_BUFFER_POINTS];
+} TOUCH_SHARED_BUFFER, *PTOUCH_SHARED_BUFFER;
 
 
 #endif // COMM_H

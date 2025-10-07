@@ -19,6 +19,7 @@
 #include "hide_kill.h"
 #include "anti_ptrace_detection.h" // Added
 #include "thread.h"
+#include "touch_input.h"
 #include "single_step.h"
 #include "spawn_suspend.h"
 #include "register.h"
@@ -40,9 +41,9 @@ static pid_t client_pid = 0;
 static DEFINE_MUTEX(auth_mutex); // Mutex to protect client_pid
 
 // --- Hijack State ---
-// Pointers for original and hooked operations
-static long (*original_ioctl)(struct file *, unsigned int, unsigned long) = NULL;
-static struct file_operations *proc_version_fops = NULL;
+static struct file_operations original_fops;
+static struct file_operations hooked_fops;
+static struct file *g_target_proc_file = NULL; // Keep the file open
 static bool is_hijacked = false;
 
 // Module unload control
@@ -112,9 +113,9 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     if (current->tgid != client_pid || client_pid == 0)
     {
         // Not the client, or no client is connected. Behave like the original file.
-        if (original_ioctl)
+        if (original_fops.unlocked_ioctl)
         {
-            return original_ioctl(file, cmd, arg);
+            return original_fops.unlocked_ioctl(file, cmd, arg);
         }
         else
         {
@@ -123,6 +124,12 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     }
 
     // --- If we reach here, the caller is the authenticated client ---
+    
+    // Dispatch to submodules first
+    if (cmd >= OP_TOUCH_HOOK_INSTALL && cmd <= OP_TOUCH_CLEAN_STATE) {
+        return handle_touch_ioctl(cmd, arg);
+    }
+
 	switch (cmd)
 	{
 	case OP_READ_MEM:
@@ -549,12 +556,25 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 	return 0;
 }
 
+static int dispatch_mmap(struct file *filp, struct vm_area_struct *vma)
+{
+    // Only our authenticated client can mmap
+    if (current->tgid != client_pid || client_pid == 0) {
+        // For any other process, fall back to original behavior (which is likely NULL/unsupported)
+        if (original_fops.mmap) {
+            return original_fops.mmap(filp, vma);
+        }
+        return -ENODEV;
+    }
+
+    // Pass the request to our touch input handler
+    return touch_input_mmap(filp, vma);
+}
+
 int __init driver_entry(void)
 {
 	int ret;
-	struct file *target_file;
-    struct inode *target_inode;
-    void *dispatch_ioctl_ptr = &dispatch_ioctl;
+    const struct file_operations *fops;
 
 	PRINT_DEBUG("[+] driver_entry");
 
@@ -565,42 +585,36 @@ int __init driver_entry(void)
 		return ret;
 	}
 
-	// --- Hijack Logic (Corrected) ---
-	PRINT_DEBUG("[+] Hijacking ioctl for %s\n", TARGET_FILE);
-	target_file = filp_open(TARGET_FILE, O_RDONLY, 0);
-	if (IS_ERR(target_file)) {
+	// --- Hijack Logic (Refactored for mmap support) ---
+	PRINT_DEBUG("[+] Hijacking f_op for %s\n", TARGET_FILE);
+	g_target_proc_file = filp_open(TARGET_FILE, O_RDONLY, 0);
+	if (IS_ERR(g_target_proc_file)) {
 		PRINT_DEBUG("[-] Failed to open target file %s\n", TARGET_FILE);
 		khook_exit();
-		return PTR_ERR(target_file);
+		return PTR_ERR(g_target_proc_file);
 	}
 
-    target_inode = file_inode(target_file);
-    if (!target_inode) {
-        PRINT_DEBUG("[-] Failed to get inode for %s\n", TARGET_FILE);
-        filp_close(target_file, NULL);
+    fops = g_target_proc_file->f_op;
+    if (!fops) {
+        PRINT_DEBUG("[-] Target file %s has no file_operations\n", TARGET_FILE);
+        filp_close(g_target_proc_file, NULL);
         khook_exit();
         return -EFAULT;
     }
 
-	proc_version_fops = (struct file_operations *)target_inode->i_fop;
-    filp_close(target_file, NULL); // Close the file, we have the fops pointer.
+    // Backup original fops and create our hooked version
+    memcpy(&original_fops, fops, sizeof(struct file_operations));
+    memcpy(&hooked_fops, fops, sizeof(struct file_operations));
 
-	if (!proc_version_fops) {
-		PRINT_DEBUG("[-] Target file %s has no file_operations\n", TARGET_FILE);
-		khook_exit();
-		return -EFAULT;
-	}
+    // Replace the operations we want to control
+    hooked_fops.unlocked_ioctl = dispatch_ioctl;
+    hooked_fops.mmap = dispatch_mmap;
 
-    original_ioctl = proc_version_fops->unlocked_ioctl;
-
-	if (remap_write_range(&proc_version_fops->unlocked_ioctl, &dispatch_ioctl_ptr, sizeof(void *), true)) {
-        PRINT_DEBUG("[-] Failed to hook unlocked_ioctl for %s\n", TARGET_FILE);
-        khook_exit();
-        return -EFAULT;
-    }
+    // Atomically replace the f_op pointer
+    g_target_proc_file->f_op = &hooked_fops;
 	
     is_hijacked = true;
-	PRINT_DEBUG("[+] Successfully hooked unlocked_ioctl for %s\n", TARGET_FILE);
+	PRINT_DEBUG("[+] Successfully hijacked f_op for %s\n", TARGET_FILE);
 
 	ret = hide_proc_init();
 	if (ret)
@@ -644,6 +658,13 @@ int __init driver_entry(void)
 		return ret;
 	}
 
+    ret = touch_input_init();
+    if (ret)
+    {
+        _driver_cleanup();
+        return ret;
+    }
+
 	mutex_lock(&module_mutex);
 	list_del_init(&THIS_MODULE->list);
 	mutex_unlock(&module_mutex);
@@ -661,17 +682,12 @@ static void _driver_cleanup(void)
 {
 	PRINT_DEBUG("[+] driver_unload");
 
-	// --- Restore Logic (Corrected) ---
-	if (is_hijacked) {
-        PRINT_DEBUG("[+] Restoring original operations for %s\n", TARGET_FILE);
-		
-		if (proc_version_fops) {
-            if (remap_write_range(&proc_version_fops->unlocked_ioctl, &original_ioctl, sizeof(void *), true)) {
-                PRINT_DEBUG("[-] Failed to restore unlocked_ioctl for %s\n", TARGET_FILE);
-            } else {
-                PRINT_DEBUG("[+] Successfully restored unlocked_ioctl.\n");
-            }
-        }
+	// --- Restore Logic (Refactored) ---
+	if (is_hijacked && g_target_proc_file) {
+        PRINT_DEBUG("[+] Restoring original f_op for %s\n", TARGET_FILE);
+        g_target_proc_file->f_op = &original_fops;
+        filp_close(g_target_proc_file, NULL);
+        g_target_proc_file = NULL;
 	}
     
     // Cleanup our subsystems
@@ -682,6 +698,7 @@ static void _driver_cleanup(void)
 	hide_kill_exit();
 	hide_proc_exit();
 	syscall_trace_exit();
+    touch_input_exit();
 	khook_exit();
     
     // Reset client PID on unload for safety
