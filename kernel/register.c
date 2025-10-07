@@ -24,7 +24,7 @@ static bool is_task_suspended(struct task_struct *task)
     // 检查各种暂停状态
     return task_is_stopped(task) ||      // SIGSTOP等信号停止
            task_is_traced(task) ||       // ptrace跟踪
-           task->state == TASK_UNINTERRUPTIBLE;  // 线程控制暂停
+           (task->state & TASK_UNINTERRUPTIBLE);  // 线程控制暂停
 }
 
 // 查找任务并增加引用计数
