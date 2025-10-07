@@ -126,6 +126,13 @@ public: // Make these accessible to users of the class
 		// System Call Trace Operations
 		OP_SYSCALL_TRACE_CTL = 0x8B0,
 		OP_SYSCALL_TRACE_LIST = 0x8B1,
+
+		// --- New Touch Input Operations ---
+		OP_TOUCH_HOOK_INSTALL = 0x900,
+		OP_TOUCH_HOOK_UNINSTALL = 0x901,
+		OP_TOUCH_SET_MODE = 0x902,
+		OP_TOUCH_NOTIFY = 0x903,
+		OP_TOUCH_CLEAN_STATE = 0x904,
 	};
 
 	enum THREAD_ACTION
@@ -216,6 +223,38 @@ public: // Make these accessible to users of the class
         uintptr_t buffer;      // 用户空间缓冲区
         size_t buffer_size;    // 缓冲区大小
     } SYSCALL_TRACE_CTL, *PSYSCALL_TRACE_CTL;
+
+	// --- Touch Input Structures ---
+    enum TOUCH_MODE {
+        TOUCH_MODE_DISABLED = 0,
+        TOUCH_MODE_FILTER_MODIFY = 1,
+        TOUCH_MODE_EXCLUSIVE_INJECT = 2,
+    };
+
+    typedef struct _TOUCH_MODE_CTL {
+        enum TOUCH_MODE mode;
+    } TOUCH_MODE_CTL, *PTOUCH_MODE_CTL;
+
+    static constexpr int TOUCH_BUFFER_POINTS = 256;
+
+    enum TOUCH_ACTION {
+        TOUCH_ACTION_DOWN,
+        TOUCH_ACTION_UP,
+        TOUCH_ACTION_MOVE,
+    };
+
+    typedef struct _TOUCH_POINT {
+        enum TOUCH_ACTION action;
+        unsigned int slot;
+        int x;
+        int y;
+    } TOUCH_POINT, *PTOUCH_POINT;
+
+    typedef struct _TOUCH_SHARED_BUFFER {
+        volatile unsigned int head;
+        volatile unsigned int tail;
+        TOUCH_POINT points[TOUCH_BUFFER_POINTS];
+    } TOUCH_SHARED_BUFFER, *PTOUCH_SHARED_BUFFER;
 
 public:
 	c_driver()
@@ -566,6 +605,42 @@ public:
         if (fd < 0) return false;
         SYSCALL_TRACE_CTL ctl = {0, SYSCALL_TRACE_CLEAR, 0, 0, 0};
         return ioctl(fd, OP_SYSCALL_TRACE_CTL, &ctl) == 0;
+    }
+
+    // --- Touch Input Control ---
+    bool install_touch_hook() {
+        if (fd < 0) return false;
+        return ioctl(fd, OP_TOUCH_HOOK_INSTALL) == 0;
+    }
+
+    bool uninstall_touch_hook() {
+        if (fd < 0) return false;
+        return ioctl(fd, OP_TOUCH_HOOK_UNINSTALL) == 0;
+    }
+
+    bool set_touch_mode(TOUCH_MODE mode) {
+        if (fd < 0) return false;
+        TOUCH_MODE_CTL ctl = {mode};
+        return ioctl(fd, OP_TOUCH_SET_MODE, &ctl) == 0;
+    }
+
+    bool notify_touch_data() {
+        if (fd < 0) return false;
+        return ioctl(fd, OP_TOUCH_NOTIFY) == 0;
+    }
+
+    bool clean_touch_state() {
+        if (fd < 0) return false;
+        return ioctl(fd, OP_TOUCH_CLEAN_STATE) == 0;
+    }
+
+    TOUCH_SHARED_BUFFER* mmap_touch_buffer() {
+        if (fd < 0) return nullptr;
+        void* mapped = mmap(NULL, sizeof(TOUCH_SHARED_BUFFER), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        if (mapped == MAP_FAILED) {
+            return nullptr;
+        }
+        return (TOUCH_SHARED_BUFFER*)mapped;
     }
 };
 
