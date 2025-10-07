@@ -25,6 +25,7 @@
 #include <linux/stat.h>
 #include <linux/mm.h>
 #include <linux/vmalloc.h>
+#include <linux/major.h>
 
 #include "touch_input.h"
 #include "process.h"
@@ -90,7 +91,6 @@ struct evdev_client {
 	struct fasync_struct *fasync;
 	struct evdev *evdev;
 	struct list_head node;
-	enum input_clock_type clk_type;
 	bool revoked;
 	unsigned long *evmasks[EV_CNT];
 	unsigned int bufsize;
@@ -117,7 +117,6 @@ struct evdev_client {
 	struct fasync_struct *fasync;
 	struct evdev *evdev;
 	struct list_head node;
-	enum input_clock_type clk_type;
 	bool revoked;
 	unsigned long *evmasks[EV_CNT];
 	unsigned int bufsize;
