@@ -6,6 +6,8 @@
 #include <linux/kallsyms.h>
 #include <linux/spinlock.h>
 #include <linux/hashtable.h>
+#include <asm/unistd.h>
+#include <asm/ptrace.h>
 
 #include "syscall_trace.h"
 #include "cvector.h"
@@ -36,6 +38,7 @@ static int copy_string_from_user_safe(const char __user *user_ptr, char *kernel_
 #define DEFINE_SYSCALL_HOOK(nr, name) \
 static asmlinkage long hooked_##name(const struct pt_regs *regs) \
 { \
+    long retval; \
     unsigned long args[6] = {regs->regs[0], regs->regs[1], regs->regs[2], \
                            regs->regs[3], regs->regs[4], regs->regs[5]}; \
     \
@@ -43,7 +46,7 @@ static asmlinkage long hooked_##name(const struct pt_regs *regs) \
         trace_syscall_entry(nr, args); \
     } \
     \
-    long retval = original_syscalls[nr](regs); \
+    retval = original_syscalls[nr](regs); \
     \
     if (g_trace_enabled && (g_target_pid == 0 || g_target_pid == current->pid)) { \
         trace_syscall_exit(retval); \
@@ -66,6 +69,8 @@ DEFINE_SYSCALL_HOOK(__NR_clone, sys_clone)
 // 安全地从用户空间复制字符串
 static int copy_string_from_user_safe(const char __user *user_ptr, char *kernel_buffer, size_t max_len)
 {
+    long copied;
+
     if (!user_ptr || !kernel_buffer || max_len == 0) {
         return -EINVAL;
     }
@@ -74,7 +79,7 @@ static int copy_string_from_user_safe(const char __user *user_ptr, char *kernel_
     memset(kernel_buffer, 0, max_len);
     
     // 使用strncpy_from_user安全复制
-    long copied = strncpy_from_user(kernel_buffer, user_ptr, max_len - 1);
+    copied = strncpy_from_user(kernel_buffer, user_ptr, max_len - 1);
     if (copied < 0) {
         return copied; // 返回错误码
     }
@@ -134,7 +139,8 @@ static void parse_generic_params(unsigned long *args, PSYSCALL_EVENT_BASE event)
 {
     // 默认处理前3个参数为整数
     int param_count = 3;
-    for (int i = 0; i < param_count && i < 6; i++) {
+    int i;
+    for (i = 0; i < param_count && i < 6; i++) {
         snprintf(event->params[i].name, sizeof(event->params[i].name) - 1, "arg%d", i);
         event->params[i].type = PARAM_TYPE_LONG;
         event->params[i].data.value = (long)args[i];
@@ -146,11 +152,11 @@ static void parse_generic_params(unsigned long *args, PSYSCALL_EVENT_BASE event)
 void trace_syscall_entry(int nr, unsigned long *args)
 {
     unsigned long flags;
+    struct timespec64 ts;
     
     spin_lock_irqsave(&g_trace_lock, flags);
     
     // 记录入口时间
-    struct timespec64 ts;
     ktime_get_real_ts64(&ts);
     g_entry_time = ts.tv_sec * 1000000000UL + ts.tv_nsec;
     
@@ -162,6 +168,9 @@ void trace_syscall_exit(long retval)
 {
     unsigned long flags;
     SYSCALL_EVENT_BASE *event;
+    struct timespec64 ts;
+    unsigned long exit_time;
+    unsigned long duration;
     
     spin_lock_irqsave(&g_trace_lock, flags);
     
@@ -171,10 +180,9 @@ void trace_syscall_exit(long retval)
     }
     
     // 计算执行时间
-    struct timespec64 ts;
     ktime_get_real_ts64(&ts);
-    unsigned long exit_time = ts.tv_sec * 1000000000UL + ts.tv_nsec;
-    unsigned long duration = exit_time - g_entry_time;
+    exit_time = ts.tv_sec * 1000000000UL + ts.tv_nsec;
+    duration = exit_time - g_entry_time;
     
     // 创建事件
     event = kmalloc(sizeof(SYSCALL_EVENT_BASE), GFP_ATOMIC);
