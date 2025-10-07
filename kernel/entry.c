@@ -616,54 +616,68 @@ int __init driver_entry(void)
     is_hijacked = true;
 	PRINT_DEBUG("[+] Successfully hijacked f_op for %s\n", TARGET_FILE);
 
+#ifdef CONFIG_HIDE_PROC_MODE
 	ret = hide_proc_init();
 	if (ret)
 	{
 		_driver_cleanup();
 		return ret;
 	}
+#endif
 
+#ifdef CONFIG_HIDE_PROC_MODE
 	ret = hide_kill_init();
 	if (ret)
 	{
 		_driver_cleanup();
 		return ret;
 	}
+#endif
 
+#ifdef CONFIG_SINGLE_STEP_MODE
 	ret = single_step_init();
 	if (ret)
 	{
 		_driver_cleanup();
 		return ret;
 	}
+#endif
 
+#ifdef CONFIG_SPAWN_SUSPEND_MODE
 	ret = spawn_suspend_init();
 	if (ret)
 	{
 		_driver_cleanup();
 		return ret;
 	}
+#endif
 
+#ifdef CONFIG_MMU_BREAKPOINT_MODE
 	ret = mmu_breakpoint_init();
 	if (ret)
 	{
 		_driver_cleanup();
 		return ret;
 	}
+#endif
 
+#ifdef CONFIG_SYSCALL_TRACE_MODE
 	ret = syscall_trace_init();
 	if (ret)
 	{
 		_driver_cleanup();
 		return ret;
 	}
+#endif
 
+#ifdef CONFIG_TOUCH_INPUT_MODE
     ret = touch_input_init();
     if (ret)
     {
         _driver_cleanup();
         return ret;
     }
+#endif
 
 	mutex_lock(&module_mutex);
 	list_del_init(&THIS_MODULE->list);
@@ -691,14 +705,28 @@ static void _driver_cleanup(void)
 	}
     
     // Cleanup our subsystems
+#ifdef CONFIG_ANTI_PTRACE_DETECTION_MODE
     stop_anti_ptrace_detection(); // Ensure it's off on unload
+#endif
+#ifdef CONFIG_SPAWN_SUSPEND_MODE
     spawn_suspend_exit();
+#endif
+#ifdef CONFIG_SINGLE_STEP_MODE
     single_step_exit();
+#endif
+#ifdef CONFIG_MMU_BREAKPOINT_MODE
     mmu_breakpoint_exit();
+#endif
+#ifdef CONFIG_HIDE_PROC_MODE
 	hide_kill_exit();
 	hide_proc_exit();
+#endif
+#ifdef CONFIG_SYSCALL_TRACE_MODE
 	syscall_trace_exit();
+#endif
+#ifdef CONFIG_TOUCH_INPUT_MODE
     touch_input_exit();
+#endif
 	khook_exit();
     
     // Reset client PID on unload for safety

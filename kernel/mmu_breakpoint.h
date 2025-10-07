@@ -12,6 +12,9 @@
 #include <asm/cacheflush.h>
 #include "comm.h"
 #include "inline_hook/p_lkrg_main.h"
+#include "version_control.h"
+
+#ifdef CONFIG_MMU_BREAKPOINT_MODE
 
 static inline void khack_set_pte_at(struct mm_struct *mm, unsigned long addr, pte_t *ptep, pte_t pte) {
     if (pte_present(pte) && pte_user_exec(pte) && !pte_special(pte))
@@ -81,5 +84,16 @@ bool is_mmu_breakpoint_active(pid_t pid, unsigned long addr);
 // For sharing with single_step.c
 extern struct mmu_breakpoint *current_bp_per_cpu[NR_CPUS];
 pte_t *virt_to_pte(struct task_struct *task, unsigned long addr);
+
+#else
+
+// If the mode is disabled, define the functions as empty inlines
+static inline int mmu_breakpoint_init(void) { return 0; }
+static inline void mmu_breakpoint_exit(void) { }
+static inline int handle_mmu_breakpoint_control(void *ctl) { return 0; }
+static inline int handle_mmu_breakpoint_list(pid_t pid, void *buffer, size_t *count) { return 0; }
+static inline bool is_mmu_breakpoint_active(pid_t pid, unsigned long addr) { return false; }
+
+#endif
 
 #endif // MMU_BREAKPOINT_H

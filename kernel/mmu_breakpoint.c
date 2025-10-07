@@ -22,6 +22,8 @@
 #include "inline_hook/utils/p_memory.h"
 #include "version_control.h"
 
+#ifdef CONFIG_MMU_BREAKPOINT_MODE
+
 // 全局断点列表
 static LIST_HEAD(mmu_breakpoints);
 static DEFINE_SPINLOCK(mmu_bp_lock);
@@ -432,3 +434,4 @@ void mmu_breakpoint_exit(void) {
     
     PRINT_DEBUG("[+] mmu_bp: MMU breakpoint system shutdown complete\n");
 }
+#endif

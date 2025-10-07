@@ -16,6 +16,9 @@
 #include <linux/list.h>
 
 #include "memory.h"
+#include "version_control.h"
+
+#ifdef CONFIG_MEMORY_ACCESS_MODE
 
 static struct kmem_cache *my_vm_area_cachep = NULL;
 static int (*insert_vm_struct_ptr)(struct mm_struct *mm, struct vm_area_struct *vma) = NULL;
@@ -472,4 +475,4 @@ bool read_process_memory_safe(
 	mmput(mm);
 	return result;
 }
-
+#endif

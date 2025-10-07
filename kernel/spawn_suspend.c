@@ -13,6 +13,8 @@
 #include "inline_hook/utils/p_memory.h"
 #include "version_control.h"
 
+#ifdef CONFIG_SPAWN_SUSPEND_MODE
+
 #define TARGET_NAME_MAX 256
 
 // --- Global state for the target ---
@@ -203,3 +205,4 @@ void spawn_suspend_exit(void)
     set_spawn_suspend_target(NULL, 0);
     PRINT_DEBUG("[+] spawn_suspend: Unloaded.\n");
 }
+#endif

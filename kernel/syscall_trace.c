@@ -15,6 +15,8 @@
 #include "inline_hook/p_hook.h"
 #include "version_control.h"
 
+#ifdef CONFIG_SYSCALL_TRACE_MODE
+
 // 全局状态
 static bool g_trace_enabled = false;
 static pid_t g_target_pid = 0;
@@ -318,3 +320,4 @@ void syscall_trace_exit(void)
     
     PRINT_DEBUG("[+] syscall_trace: Exited\n");
 }
+#endif

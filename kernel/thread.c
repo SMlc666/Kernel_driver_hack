@@ -8,6 +8,8 @@
 #include "thread.h"
 #include "version_control.h"
 
+#ifdef CONFIG_THREAD_CONTROL_MODE
+
 // The function find_task_by_vpid is not exported in all kernel versions.
 // We re-implement it here using exported functions.
 static struct task_struct *khack_find_task_by_pid_ns(pid_t nr, struct pid_namespace *ns)
@@ -126,3 +128,4 @@ int handle_enum_threads(PENUM_THREADS et)
 
     return ret;
 }
+#endif

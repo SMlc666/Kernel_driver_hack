@@ -13,6 +13,8 @@
 #include "version_control.h"
 #include "mmu_breakpoint.h"
 
+#ifdef CONFIG_SINGLE_STEP_MODE
+
 // --- State Management ---
 pid_t g_target_tid = 0;
 static struct task_struct *g_target_task = NULL;
@@ -242,3 +244,4 @@ void single_step_exit(void)
         g_target_task = NULL;
     }
 }
+#endif

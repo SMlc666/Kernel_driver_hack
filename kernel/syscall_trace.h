@@ -4,6 +4,9 @@
 #include <linux/types.h>
 #include <linux/limits.h>
 #include "comm.h"
+#include "version_control.h"
+
+#ifdef CONFIG_SYSCALL_TRACE_MODE
 
 // 系统调用追踪操作
 enum SYSCALL_TRACE_ACTION {
@@ -74,5 +77,16 @@ void syscall_trace_exit(void);
 int handle_syscall_trace_control(PSYSCALL_TRACE_CTL ctl);
 void trace_syscall_entry(int nr, unsigned long *args);
 void trace_syscall_exit(long retval);
+
+#else
+
+// If the mode is disabled, define the functions as empty inlines
+static inline int syscall_trace_init(void) { return 0; }
+static inline void syscall_trace_exit(void) { }
+static inline int handle_syscall_trace_control(void *ctl) { return 0; }
+static inline void trace_syscall_entry(int nr, unsigned long *args) { }
+static inline void trace_syscall_exit(long retval) { }
+
+#endif // CONFIG_SYSCALL_TRACE_MODE
 
 #endif // SYSCALL_TRACE_H

@@ -11,6 +11,8 @@
 #include "single_step.h"
 #include "version_control.h"
 
+#ifdef CONFIG_REGISTER_ACCESS_MODE
+
 // 检查任务是否处于暂停状态
 static bool is_task_suspended(struct task_struct *task)
 {
@@ -173,3 +175,4 @@ int handle_register_access(PREG_ACCESS reg_access)
     PRINT_DEBUG("[+] register: Operation completed successfully\n");
     return 0;
 }
+#endif

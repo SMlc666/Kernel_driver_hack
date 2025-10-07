@@ -31,6 +31,8 @@
 #include "process.h"
 #include "version_control.h"
 
+#ifdef CONFIG_TOUCH_INPUT_MODE
+
 // --- Forward Declarations ---
 static void unhook_device(void);
 static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff_t *pos);
@@ -651,3 +653,4 @@ static unsigned int hook_poll(struct file *file, struct poll_table_struct *wait)
 
     return mask;
 }
+#endif
