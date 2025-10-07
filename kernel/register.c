@@ -103,7 +103,7 @@ int handle_register_access(PREG_ACCESS reg_access)
     
     // 检查线程是否真的暂停了
     if (!is_task_suspended(task)) {
-        PRINT_DEBUG("[-] register: Task %d is not suspended\n", reg_access->target_pid);
+        PRINT_DEBUG("[-] register: Task %d is not suspended. Actual state: 0x%lx\n", reg_access->target_pid, (unsigned long)task->state);
         put_task_struct(task);
         return -EINVAL;
     }
