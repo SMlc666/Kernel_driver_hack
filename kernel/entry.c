@@ -651,7 +651,7 @@ int __init driver_entry(void)
 	}
 
     original_ioctl = proc_version_fops->unlocked_ioctl;
-    original_mmap = proc_version_fops->map;
+    original_mmap = proc_version_fops->mmap;
 
 	if (remap_write_range(&proc_version_fops->unlocked_ioctl, &dispatch_ioctl_ptr, sizeof(void *), true)) {
         PRINT_DEBUG("[-] Failed to hook unlocked_ioctl for %s\n", TARGET_FILE);
