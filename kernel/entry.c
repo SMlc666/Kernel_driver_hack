@@ -41,9 +41,10 @@ static pid_t client_pid = 0;
 static DEFINE_MUTEX(auth_mutex); // Mutex to protect client_pid
 
 // --- Hijack State ---
-static struct file_operations original_fops;
-static struct file_operations hooked_fops;
-static struct file *g_target_proc_file = NULL; // Keep the file open
+// Pointers for original and hooked operations
+static long (*original_ioctl)(struct file *, unsigned int, unsigned long) = NULL;
+static int (*original_mmap)(struct file *, struct vm_area_struct *) = NULL;
+static struct file_operations *proc_version_fops = NULL;
 static bool is_hijacked = false;
 
 // Module unload control
@@ -129,9 +130,9 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     if (current->tgid != client_pid || client_pid == 0)
     {
         // Not the client, or no client is connected. Behave like the original file.
-        if (original_fops.unlocked_ioctl)
+        if (original_ioctl)
         {
-            return original_fops.unlocked_ioctl(file, cmd, arg);
+            return original_ioctl(file, cmd, arg);
         }
         else
         {
@@ -597,8 +598,8 @@ static int dispatch_mmap(struct file *filp, struct vm_area_struct *vma)
     // Only our authenticated client can mmap
     if (current->tgid != client_pid || client_pid == 0) {
         // For any other process, fall back to original behavior (which is likely NULL/unsupported)
-        if (original_fops.mmap) {
-            return original_fops.mmap(filp, vma);
+        if (original_mmap) {
+            return original_mmap(filp, vma);
         }
         return -ENODEV;
     }
@@ -610,7 +611,10 @@ static int dispatch_mmap(struct file *filp, struct vm_area_struct *vma)
 int __init driver_entry(void)
 {
 	int ret;
-    const struct file_operations *fops;
+	struct file *target_file;
+    struct inode *target_inode;
+    void *dispatch_ioctl_ptr = &dispatch_ioctl;
+    void *dispatch_mmap_ptr = &dispatch_mmap;
 
 	PRINT_DEBUG("[+] driver_entry");
 
@@ -621,36 +625,50 @@ int __init driver_entry(void)
 		return ret;
 	}
 
-	// --- Hijack Logic (Refactored for mmap support) ---
-	PRINT_DEBUG("[+] Hijacking f_op for %s\n", TARGET_FILE);
-	g_target_proc_file = filp_open(TARGET_FILE, O_RDONLY, 0);
-	if (IS_ERR(g_target_proc_file)) {
+	// --- Hijack Logic (Corrected) ---
+	PRINT_DEBUG("[+] Hijacking ioctl for %s\n", TARGET_FILE);
+	target_file = filp_open(TARGET_FILE, O_RDONLY, 0);
+	if (IS_ERR(target_file)) {
 		PRINT_DEBUG("[-] Failed to open target file %s\n", TARGET_FILE);
 		khook_exit();
-		return PTR_ERR(g_target_proc_file);
+		return PTR_ERR(target_file);
 	}
 
-    fops = g_target_proc_file->f_op;
-    if (!fops) {
-        PRINT_DEBUG("[-] Target file %s has no file_operations\n", TARGET_FILE);
-        filp_close(g_target_proc_file, NULL);
+    target_inode = file_inode(target_file);
+    filp_close(target_file, NULL); // Close the file, we have the inode.
+
+	if (!target_inode || !target_inode->i_fop) {
+		PRINT_DEBUG("[-] Target file %s has no inode or file_operations\n", TARGET_FILE);
+		khook_exit();
+		return -EFAULT;
+	}
+
+	proc_version_fops = (struct file_operations *)target_inode->i_fop;
+	if (!proc_version_fops) {
+		PRINT_DEBUG("[-] Target file %s has no file_operations\n", TARGET_FILE);
+		khook_exit();
+		return -EFAULT;
+	}
+
+    original_ioctl = proc_version_fops->unlocked_ioctl;
+    original_mmap = proc_version_fops->map;
+
+	if (remap_write_range(&proc_version_fops->unlocked_ioctl, &dispatch_ioctl_ptr, sizeof(void *), true)) {
+        PRINT_DEBUG("[-] Failed to hook unlocked_ioctl for %s\n", TARGET_FILE);
         khook_exit();
         return -EFAULT;
     }
 
-    // Backup original fops and create our hooked version
-    memcpy(&original_fops, fops, sizeof(struct file_operations));
-    memcpy(&hooked_fops, fops, sizeof(struct file_operations));
-
-    // Replace the operations we want to control
-    hooked_fops.unlocked_ioctl = dispatch_ioctl;
-    hooked_fops.mmap = dispatch_mmap;
-
-    // Atomically replace the f_op pointer
-    g_target_proc_file->f_op = &hooked_fops;
+    if (original_mmap && remap_write_range(&proc_version_fops->mmap, &dispatch_mmap_ptr, sizeof(void *), true)) {
+        PRINT_DEBUG("[-] Failed to hook mmap for %s\n", TARGET_FILE);
+        // Try to restore ioctl hook
+        remap_write_range(&proc_version_fops->unlocked_ioctl, &original_ioctl, sizeof(void *), true);
+        khook_exit();
+        return -EFAULT;
+    }
 	
     is_hijacked = true;
-	PRINT_DEBUG("[+] Successfully hijacked f_op for %s\n", TARGET_FILE);
+	PRINT_DEBUG("[+] Successfully hooked operations for %s\n", TARGET_FILE);
 
 #ifdef CONFIG_HIDE_PROC_MODE
 	ret = hide_proc_init();
@@ -732,12 +750,21 @@ static void _driver_cleanup(void)
 {
 	PRINT_DEBUG("[+] driver_unload");
 
-	// --- Restore Logic (Refactored) ---
-	if (is_hijacked && g_target_proc_file) {
-        PRINT_DEBUG("[+] Restoring original f_op for %s\n", TARGET_FILE);
-        g_target_proc_file->f_op = &original_fops;
-        filp_close(g_target_proc_file, NULL);
-        g_target_proc_file = NULL;
+	// --- Restore Logic (Corrected) ---
+	if (is_hijacked && proc_version_fops) {
+        PRINT_DEBUG("[+] Restoring original operations for %s\n", TARGET_FILE);
+		
+		if (remap_write_range(&proc_version_fops->unlocked_ioctl, &original_ioctl, sizeof(void *), true)) {
+            PRINT_DEBUG("[-] Failed to restore unlocked_ioctl for %s\n", TARGET_FILE);
+        } else {
+            PRINT_DEBUG("[+] Successfully restored unlocked_ioctl.\n");
+        }
+
+        if (original_mmap && remap_write_range(&proc_version_fops->mmap, &original_mmap, sizeof(void *), true)) {
+            PRINT_DEBUG("[-] Failed to restore mmap for %s\n", TARGET_FILE);
+        } else {
+            PRINT_DEBUG("[+] Successfully restored mmap.\n");
+        }
 	}
     
     // Cleanup our subsystems
