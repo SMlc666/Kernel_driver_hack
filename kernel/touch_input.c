@@ -147,6 +147,10 @@ int touch_input_init(void)
         PRINT_DEBUG("[-] touch_input: Failed to allocate shared buffer\n");
         return -ENOMEM;
     }
+    
+    // Zero out the buffer to ensure physical pages are allocated.
+    memset(g_shared_buffer, 0, sizeof(TOUCH_SHARED_BUFFER));
+    
     // Initialize buffer state
     g_shared_buffer->head = 0;
     g_shared_buffer->tail = 0;
