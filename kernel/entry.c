@@ -127,7 +127,11 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     
     // Dispatch to submodules first
     if (cmd >= OP_TOUCH_HOOK_INSTALL && cmd <= OP_TOUCH_CLEAN_STATE) {
+#ifdef CONFIG_TOUCH_INPUT_MODE
         return handle_touch_ioctl(cmd, arg);
+#else
+        return -ENOTTY; // Operation not supported when module is disabled
+#endif
     }
 
 	switch (cmd)
@@ -430,6 +434,7 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     }
     case OP_REG_ACCESS:
     {
+#ifdef CONFIG_REGISTER_ACCESS_MODE
         REG_ACCESS *reg_access = kmalloc(sizeof(REG_ACCESS), GFP_KERNEL);
         int ret = -EFAULT;
         if (!reg_access)
@@ -448,10 +453,14 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
         
         kfree(reg_access);
         return ret;
+#else
+        return -ENOTTY; // Operation not supported when module is disabled
+#endif
     }
     
     case OP_MMU_BP_CTL:
     {
+#ifdef CONFIG_MMU_BREAKPOINT_MODE
         MMU_BP_CTL *mbp = kmalloc(sizeof(MMU_BP_CTL), GFP_KERNEL);
         int ret = -EFAULT;
         if (!mbp)
@@ -466,9 +475,13 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
         ret = handle_mmu_breakpoint_control(mbp);
         kfree(mbp);
         return ret;
+#else
+        return -ENOTTY; // Operation not supported when module is disabled
+#endif
     }
     case OP_MMU_BP_LIST:
     {
+#ifdef CONFIG_MMU_BREAKPOINT_MODE
         // 参数结构：pid (输入), buffer (输出), count (输入/输出)
         struct {
             pid_t pid;
@@ -495,6 +508,9 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
         
         kfree(bp_list);
         return ret;
+#else
+        return -ENOTTY; // Operation not supported when module is disabled
+#endif
     }
     case OP_UNLOAD_MODULE:
     {
@@ -530,6 +546,7 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     }
     case OP_SYSCALL_TRACE_CTL:
     {
+#ifdef CONFIG_SYSCALL_TRACE_MODE
         SYSCALL_TRACE_CTL *stc = kmalloc(sizeof(SYSCALL_TRACE_CTL), GFP_KERNEL);
         int ret = -EFAULT;
         if (!stc)
@@ -544,6 +561,9 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
         ret = handle_syscall_trace_control(stc);
         kfree(stc);
         return ret;
+#else
+        return -ENOTTY; // Operation not supported when module is disabled
+#endif
     }
     case OP_SYSCALL_TRACE_LIST:
     {

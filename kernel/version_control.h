@@ -37,10 +37,13 @@
 #define CONFIG_MMU_BREAKPOINT_MODE
 
 // System call trace module
-#define CONFIG_SYSCALL_TRACE_MODE
+//#define CONFIG_SYSCALL_TRACE_MODE
 
 // Touch input control module
 #define CONFIG_TOUCH_INPUT_MODE
+
+// Register access module (read/write CPU registers)
+#define CONFIG_REGISTER_ACCESS_MODE
 
 // Kallsyms lookup support (required for some modules)
 #define CONFIG_KALLSYMS_LOOKUP_NAME
