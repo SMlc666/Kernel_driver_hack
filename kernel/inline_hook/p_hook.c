@@ -79,8 +79,11 @@ static s32 relo_len[] = { 6, 8, 8, 4, 4, 6, 6, 6, 8, 8, 8, 8, 6, 6, 6, 6, 2 };
 
 static int is_in_tramp(hook_t *hook, u64 addr)
 {
-    u64 tramp_start = hook->origin_addr;
-    u64 tramp_end = tramp_start + hook->tramp_insts_num * 4;
+    u64 tramp_start;
+    u64 tramp_end;
+
+    tramp_start = hook->origin_addr;
+    tramp_end = tramp_start + hook->tramp_insts_num * 4;
     if (addr >= tramp_start && addr < tramp_end) {
         return 1;
     }
@@ -89,15 +92,21 @@ static int is_in_tramp(hook_t *hook, u64 addr)
 
 static u64 relo_in_tramp(hook_t *hook, u64 addr)
 {
-    u64 tramp_start = hook->origin_addr;
-    u64 tramp_end = tramp_start + hook->tramp_insts_num * 4;
+    u64 tramp_start;
+    u64 tramp_end;
+    int i;
+    int j;
+    u32 addr_inst_index;
+    u64 fix_addr;
+    inst_type_t inst;
+
+    tramp_start = hook->origin_addr;
+    tramp_end = tramp_start + hook->tramp_insts_num * 4;
     if (!(addr >= tramp_start && addr < tramp_end)) return addr;
-    int i; // Moved declaration to the beginning of the block
-    int j; // Moved declaration to the beginning of the block
-    u32 addr_inst_index = (addr - tramp_start) / 4;
-    u64 fix_addr = hook->relo_addr;
+    addr_inst_index = (addr - tramp_start) / 4;
+    fix_addr = hook->relo_addr;
     for (i = 0; i < addr_inst_index; i++) {
-        inst_type_t inst = hook->origin_insts[i];
+        inst = hook->origin_insts[i];
         for (j = 0; j < sizeof(relo_len) / sizeof(relo_len[0]); j++) {
             if ((inst & masks[j]) == types[j]) {
                 fix_addr += relo_len[j] * 4;
@@ -513,10 +522,14 @@ extern void _transit12_end(void);
 
 static hook_err_t relocate_inst(hook_t *hook, u64 inst_addr, u32 inst)
 {
-    hook_err_t rc = HOOK_NO_ERR;
-    inst_type_t it = INST_IGNORE;
-    int len = 1;
-    int j; // Moved declaration to the beginning of the block
+    hook_err_t rc;
+    inst_type_t it;
+    int len;
+    int j;
+
+    rc = HOOK_NO_ERR;
+    it = INST_IGNORE;
+    len = 1;
 
     for (j = 0; j < sizeof(relo_len) / sizeof(relo_len[0]); j++) {
         if ((inst & masks[j]) == types[j]) {
@@ -572,7 +585,14 @@ hook_err_t hook_prepare(hook_t *hook)
     if (is_bad_address((void *)hook->relo_addr)) return -HOOK_BAD_ADDRESS;
 
     // backup origin instruction
-    int i; // Moved declaration to the beginning of the block
+    int i;
+    u64 inst_addr;
+    u32 inst;
+    hook_err_t relo_res;
+    u64 back_src_addr;
+    u64 back_dst_addr;
+    u32 *buf;
+
     for (i = 0; i < TRAMPOLINE_NUM; i++) {
         hook->origin_insts[i] = *((u32 *)hook->origin_addr + i);
     }
@@ -590,18 +610,18 @@ hook_err_t hook_prepare(hook_t *hook)
     hook->relo_insts_num += 2;
 
     for (i = 0; i < hook->tramp_insts_num; i++) {
-        u64 inst_addr = hook->origin_addr + i * 4;
-        u32 inst = hook->origin_insts[i];
-        hook_err_t relo_res = relocate_inst(hook, inst_addr, inst);
+        inst_addr = hook->origin_addr + i * 4;
+        inst = hook->origin_insts[i];
+        relo_res = relocate_inst(hook, inst_addr, inst);
         if (relo_res) {
             return -HOOK_BAD_RELO;
         }
     }
 
     // jump back
-    u64 back_src_addr = hook->relo_addr + hook->relo_insts_num * 4;
-    u64 back_dst_addr = hook->origin_addr + hook->tramp_insts_num * 4;
-    u32 *buf = hook->relo_insts + hook->relo_insts_num;
+    back_src_addr = hook->relo_addr + hook->relo_insts_num * 4;
+    back_dst_addr = hook->origin_addr + hook->tramp_insts_num * 4;
+    buf = hook->relo_insts + hook->relo_insts_num;
     hook->relo_insts_num += branch_from_to(buf, back_src_addr, back_dst_addr);
     return HOOK_NO_ERR;
 }
@@ -660,7 +680,11 @@ void unhook(void *func)
 
 static hook_err_t hook_chain_prepare(u32 *transit, s32 argno)
 {
-    u64 transit_start, transit_end;
+    u64 transit_start;
+    u64 transit_end;
+    s32 transit_num;
+    int i;
+
     switch (argno) {
     case 0:
         transit_start = (u64)_transit0;
@@ -686,13 +710,12 @@ static hook_err_t hook_chain_prepare(u32 *transit, s32 argno)
         break;
     }
 
-    s32 transit_num = (transit_end - transit_start) / 4;
+    transit_num = (transit_end - transit_start) / 4;
     // todo:assert
     if (transit_num >= TRANSIT_INST_NUM) return -HOOK_TRANSIT_NO_MEM;
 
     transit[0] = ARM64_BTI_JC;
     transit[1] = ARM64_NOP;
-    int i;
     for (i = 0; i < transit_num; i++) {
         transit[i + 2] = ((u32 *)transit_start)[i];
     }
@@ -701,7 +724,9 @@ static hook_err_t hook_chain_prepare(u32 *transit, s32 argno)
 
 hook_err_t hook_chain_add(hook_chain_t *chain, void *before, void *after, void *udata)
 {
-    int i; // Moved declaration to the beginning of the block
+    int i;
+    hook_chain0_callback func_cb;
+
     for (i = 0; i < HOOK_CHAIN_NUM; i++) {
         if ((before && chain->befores[i] == before) || (after && chain->afters[i] == after)) return -HOOK_DUPLICATED;
 
@@ -728,7 +753,9 @@ hook_err_t hook_chain_add(hook_chain_t *chain, void *before, void *after, void *
 
 void hook_chain_remove(hook_chain_t *chain, void *before, void *after)
 {
-    int i; // Moved declaration to the beginning of the block
+    int i;
+    hook_chain0_callback func_cb;
+
     for (i = 0; i < HOOK_CHAIN_NUM; i++) {
         if (chain->states[i] == CHAIN_ITEM_STATE_READY)
             if ((before && chain->befores[i] == before) || (after && chain->afters[i] == after)) {
@@ -792,7 +819,9 @@ void hook_unwrap_remove(void *func, void *before, void *after, int remove)
     hook_chain_remove(chain, before, after);
     if (!remove) return;
     // todo:
-    int i; // Moved declaration to the beginning of the block
+    int i;
+    hook_chain0_callback func_cb;
+
     for (i = 0; i < HOOK_CHAIN_NUM; i++) {
         if (chain->states[i] != CHAIN_ITEM_STATE_EMPTY) return;
     }

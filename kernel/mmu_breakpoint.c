@@ -193,9 +193,11 @@ static void hooked_handle_pte_fault(hook_fargs1_t *fargs, void *udata) {
     fargs->ret = 0; // Original function returns 0 on success for this path
 
     // 恢复页面权限
-    pte_t pte_to_set = bp->original_pte;
+    pte_t pte_to_set;
     if (vmf->flags & FAULT_FLAG_WRITE) {
-        pte_to_set = pte_mkwrite(pte_mkdirty(pte_to_set));
+        pte_to_set = pte_mkwrite(pte_mkdirty(bp->original_pte));
+    } else {
+        pte_to_set = bp->original_pte;
     }
 
     vmf->pte = pte_offset_map(vmf->pmd, vmf->address);

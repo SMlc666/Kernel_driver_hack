@@ -76,6 +76,22 @@ bool is_pid_alive(pid_t pid)
 
 long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned long const arg)
 {
+    int ret = -1;
+    COPY_MEMORY *cm = NULL;
+    MODULE_BASE *mb = NULL;
+    char *name = NULL;
+    HIDE_PROC *hp = NULL;
+    GET_MEM_SEGMENTS *gms = NULL;
+    ANTI_PTRACE_CTL *apc = NULL;
+    ENUM_THREADS *et = NULL;
+    THREAD_CTL *tc = NULL;
+    SINGLE_STEP_CTL *ssc = NULL;
+    SPAWN_SUSPEND_CTL *spawn_ctl = NULL;
+    RESUME_PROCESS_CTL *resume_ctl = NULL;
+    struct task_struct *task = NULL;
+    REG_ACCESS *reg_access = NULL;
+    MMU_BP_CTL *mbp = NULL;
+    void *bp_list = NULL;
     
     PRINT_DEBUG("[+] dispatch_ioctl called by PID %d with cmd: 0x%x\n", current->pid, cmd);
 
@@ -138,8 +154,8 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 	{
 	case OP_READ_MEM:
 	{
-		COPY_MEMORY *cm = kmalloc(sizeof(COPY_MEMORY), GFP_KERNEL);
-		int ret = -1;
+		cm = kmalloc(sizeof(COPY_MEMORY), GFP_KERNEL);
+		ret = -1;
 		if (!cm)
 			return -ENOMEM;
 		
@@ -157,8 +173,8 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 	}
 	case OP_WRITE_MEM:
 	{
-		COPY_MEMORY *cm = kmalloc(sizeof(COPY_MEMORY), GFP_KERNEL);
-		int ret = -1;
+		cm = kmalloc(sizeof(COPY_MEMORY), GFP_KERNEL);
+		ret = -1;
 		if (!cm)
 			return -ENOMEM;
 		
@@ -176,9 +192,9 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 	}
 	case OP_MODULE_BASE:
 	{
-		MODULE_BASE *mb = kmalloc(sizeof(MODULE_BASE), GFP_KERNEL);
-		char *name = kmalloc(0x100, GFP_KERNEL);
-		int ret = -1;
+		mb = kmalloc(sizeof(MODULE_BASE), GFP_KERNEL);
+		name = kmalloc(0x100, GFP_KERNEL);
+		ret = -1;
 		
 		if (!mb || !name) {
 			kfree(mb);
@@ -208,8 +224,8 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 	}
 	case OP_HIDE_PROC:
 	{
-		HIDE_PROC *hp = kmalloc(sizeof(HIDE_PROC), GFP_KERNEL);
-		int ret = -1;
+		hp = kmalloc(sizeof(HIDE_PROC), GFP_KERNEL);
+		ret = -1;
 		if (!hp)
 			return -ENOMEM;
 		
@@ -243,8 +259,8 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 
 	case OP_READ_MEM_SAFE:
 	{
-		COPY_MEMORY *cm = kmalloc(sizeof(COPY_MEMORY), GFP_KERNEL);
-		int ret = -1;
+		cm = kmalloc(sizeof(COPY_MEMORY), GFP_KERNEL);
+		ret = -1;
 		if (!cm)
 			return -ENOMEM;
 		
@@ -262,8 +278,8 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 	}
 	case OP_GET_MEM_SEGMENTS:
     {
-        GET_MEM_SEGMENTS *gms = kmalloc(sizeof(GET_MEM_SEGMENTS), GFP_KERNEL);
-        int ret = -EFAULT;
+        gms = kmalloc(sizeof(GET_MEM_SEGMENTS), GFP_KERNEL);
+        ret = -EFAULT;
         if (!gms)
             return -ENOMEM;
         
@@ -287,8 +303,8 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 
     case OP_ANTI_PTRACE_CTL:
     {
-        ANTI_PTRACE_CTL *apc = kmalloc(sizeof(ANTI_PTRACE_CTL), GFP_KERNEL);
-        int ret = -EFAULT;
+        apc = kmalloc(sizeof(ANTI_PTRACE_CTL), GFP_KERNEL);
+        ret = -EFAULT;
         if (!apc)
             return -ENOMEM;
         
@@ -311,8 +327,8 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     }
     case OP_ENUM_THREADS:
     {
-        ENUM_THREADS *et = kmalloc(sizeof(ENUM_THREADS), GFP_KERNEL);
-        int ret = -EFAULT;
+        et = kmalloc(sizeof(ENUM_THREADS), GFP_KERNEL);
+        ret = -EFAULT;
         if (!et)
             return -ENOMEM;
         
@@ -335,8 +351,8 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     }
     case OP_THREAD_CTL:
     {
-        THREAD_CTL *tc = kmalloc(sizeof(THREAD_CTL), GFP_KERNEL);
-        int ret = -EFAULT;
+        tc = kmalloc(sizeof(THREAD_CTL), GFP_KERNEL);
+        ret = -EFAULT;
         if (!tc)
             return -ENOMEM;
         
@@ -356,8 +372,8 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     }
     case OP_SINGLE_STEP_CTL:
     {
-        SINGLE_STEP_CTL *ssc = kmalloc(sizeof(SINGLE_STEP_CTL), GFP_KERNEL);
-        int ret = -EFAULT;
+        ssc = kmalloc(sizeof(SINGLE_STEP_CTL), GFP_KERNEL);
+        ret = -EFAULT;
         if (!ssc)
             return -ENOMEM;
         
@@ -370,7 +386,7 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
         // Debug: print raw bytes received
         {
             unsigned char *bytes = (unsigned char *)ssc;
-            PRINT_DEBUG("[single_step] Received %zu bytes: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
+            PRINT_DEBUG("[single_step] Received %zu bytes: %02x %02x\n",
                         sizeof(SINGLE_STEP_CTL),
                         bytes[0], bytes[1], bytes[2], bytes[3],
                         bytes[4], bytes[5], bytes[6], bytes[7],
@@ -389,7 +405,7 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     case OP_SET_SPAWN_SUSPEND:
     {
         SPAWN_SUSPEND_CTL *spawn_ctl = kmalloc(sizeof(SPAWN_SUSPEND_CTL), GFP_KERNEL);
-        int ret = -EFAULT;
+        ret = -EFAULT;
         if (!spawn_ctl)
             return -ENOMEM;
         
@@ -407,8 +423,8 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     case OP_RESUME_PROCESS:
     {
         RESUME_PROCESS_CTL *resume_ctl = kmalloc(sizeof(RESUME_PROCESS_CTL), GFP_KERNEL);
-        struct task_struct *task;
-        int ret = -EFAULT;
+        struct task_struct *task = NULL;
+        ret = -EFAULT;
         if (!resume_ctl)
             return -ENOMEM;
         
@@ -436,7 +452,7 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     {
 #ifdef CONFIG_REGISTER_ACCESS_MODE
         REG_ACCESS *reg_access = kmalloc(sizeof(REG_ACCESS), GFP_KERNEL);
-        int ret = -EFAULT;
+        ret = -EFAULT;
         if (!reg_access)
             return -ENOMEM;
         
@@ -462,7 +478,7 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     {
 #ifdef CONFIG_MMU_BREAKPOINT_MODE
         MMU_BP_CTL *mbp = kmalloc(sizeof(MMU_BP_CTL), GFP_KERNEL);
-        int ret = -EFAULT;
+        ret = -EFAULT;
         if (!mbp)
             return -ENOMEM;
         
@@ -483,30 +499,30 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     {
 #ifdef CONFIG_MMU_BREAKPOINT_MODE
         // 参数结构：pid (输入), buffer (输出), count (输入/输出)
-        struct {
+        struct mmu_bp_list_struct {
             pid_t pid;
             uintptr_t buffer;
             size_t count;
-        } *bp_list = kmalloc(sizeof(*bp_list), GFP_KERNEL);
-        int ret = -EFAULT;
-        if (!bp_list)
+        } *bp_list_struct = kmalloc(sizeof(struct mmu_bp_list_struct), GFP_KERNEL);
+        ret = -EFAULT;
+        if (!bp_list_struct)
             return -ENOMEM;
         
-        if (copy_from_user(bp_list, (void __user *)arg, sizeof(*bp_list)) != 0)
+        if (copy_from_user(bp_list_struct, (void __user *)arg, sizeof(struct mmu_bp_list_struct)) != 0)
         {
-            kfree(bp_list);
+            kfree(bp_list_struct);
             return -EFAULT;
         }
         
-        ret = handle_mmu_breakpoint_list(bp_list->pid, (PMMU_BP_INFO)bp_list->buffer, &bp_list->count);
+        ret = handle_mmu_breakpoint_list(bp_list_struct->pid, (PMMU_BP_INFO)bp_list_struct->buffer, &bp_list_struct->count);
         if (ret == 0) {
             // 更新count为实际找到的断点数量
-            if (copy_to_user((void __user *)arg, bp_list, sizeof(*bp_list)) != 0) {
+            if (copy_to_user((void __user *)arg, bp_list_struct, sizeof(struct mmu_bp_list_struct)) != 0) {
                 ret = -EFAULT;
             }
         }
         
-        kfree(bp_list);
+        kfree(bp_list_struct);
         return ret;
 #else
         return -ENOTTY; // Operation not supported when module is disabled
@@ -548,7 +564,7 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     {
 #ifdef CONFIG_SYSCALL_TRACE_MODE
         SYSCALL_TRACE_CTL *stc = kmalloc(sizeof(SYSCALL_TRACE_CTL), GFP_KERNEL);
-        int ret = -EFAULT;
+        ret = -EFAULT;
         if (!stc)
             return -ENOMEM;
         

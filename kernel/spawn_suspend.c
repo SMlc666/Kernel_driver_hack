@@ -41,6 +41,7 @@ static asmlinkage long hooked_sys_execve(const char __user *filename_user, const
 {
     char target_name_copy[TARGET_NAME_MAX];
     bool enabled_copy;
+    char *filename;
 
     spin_lock(&g_suspend_lock);
     enabled_copy = g_suspend_enabled;
@@ -50,7 +51,7 @@ static asmlinkage long hooked_sys_execve(const char __user *filename_user, const
     spin_unlock(&g_suspend_lock);
 
     if (enabled_copy && target_name_copy[0] != '\0') {
-        char *filename = kmalloc(PATH_MAX, GFP_KERNEL);
+        filename = kmalloc(PATH_MAX, GFP_KERNEL);
         if (filename) {
             if (strncpy_from_user(filename, filename_user, PATH_MAX - 1) >= 0) {
                 filename[PATH_MAX - 1] = '\0';
@@ -151,6 +152,10 @@ void set_spawn_suspend_target(const char *name, int enable)
 // --- Init and Exit ---
 int spawn_suspend_init(void)
 {
+    void *hook_execve_ptr = &hooked_sys_execve;
+    void *hook_execveat_ptr = &hooked_sys_execveat;
+    void *hook_prctl_ptr = &hooked_sys_prctl;
+
     p_sys_call_table = (unsigned long **)get_sys_call_table();
     if (!p_sys_call_table) {
         PRINT_DEBUG("[-] spawn_suspend: Failed to get sys_call_table address.\n");
@@ -164,10 +169,6 @@ int spawn_suspend_init(void)
     original_sys_prctl = (void *)p_sys_call_table[__NR_prctl];
 
     // Write our hooks
-    void *hook_execve_ptr = &hooked_sys_execve;
-    void *hook_execveat_ptr = &hooked_sys_execveat;
-    void *hook_prctl_ptr = &hooked_sys_prctl;
-
     if (remap_write_range(&p_sys_call_table[__NR_execve], &hook_execve_ptr, sizeof(void *), true)) {
         PRINT_DEBUG("[-] spawn_suspend: Failed to hook sys_execve.\n");
     } else {
