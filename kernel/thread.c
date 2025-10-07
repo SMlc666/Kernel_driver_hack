@@ -6,7 +6,11 @@
 #include <linux/pid_namespace.h> // For task_active_pid_ns
 #include <linux/slab.h> // For kmalloc/kfree
 #include "thread.h"
+#include "single_step.h"
 #include "version_control.h"
+
+// Function pointer for single-step functions
+static void (*_user_enable_single_step)(struct task_struct *task);
 
 #ifdef CONFIG_THREAD_CONTROL_MODE
 
@@ -29,6 +33,15 @@ int handle_thread_control(PTHREAD_CTL ctl)
     struct task_struct *task;
     int ret = 0;
 
+    // Initialize function pointer if needed
+    if (!_user_enable_single_step) {
+        _user_enable_single_step = (void (*)(struct task_struct *))kallsyms_lookup_name("user_enable_single_step");
+        if (!_user_enable_single_step) {
+            PRINT_DEBUG("[-] thread: Failed to find user_enable_single_step.\n");
+            return -EFAULT;
+        }
+    }
+
     rcu_read_lock();
     task = khack_find_task_by_vpid(ctl->tid);
     if (task) {
@@ -42,13 +55,11 @@ int handle_thread_control(PTHREAD_CTL ctl)
 
     switch (ctl->action) {
         case THREAD_ACTION_SUSPEND:
-            PRINT_DEBUG("[+] Stealth Suspend: Setting TID %d to TASK_UNINTERRUPTIBLE.\n", ctl->tid);
-            // Directly manipulate the scheduler state. No signals involved.
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 0)
-            task->__state = TASK_UNINTERRUPTIBLE;
-#else
-            task->state = TASK_UNINTERRUPTIBLE;
-#endif
+            PRINT_DEBUG("[+] Stealth Suspend: Using single-step mechanism for TID %d.\n", ctl->tid);
+            // Use single-step mechanism for reliable suspension
+            // Set the general suspend flag and enable single-step
+            g_is_general_suspend = true;
+            _user_enable_single_step(task);
             break;
 
         case THREAD_ACTION_RESUME:

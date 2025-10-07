@@ -9,6 +9,7 @@
 extern pid_t g_target_tid; // Make accessible to other files
 extern struct user_pt_regs g_last_regs; // Make accessible to other files
 extern bool g_regs_valid; // Make accessible to other files
+extern bool g_is_general_suspend; // Make accessible to other files - indicates general suspend mode
 
 int handle_single_step_control(PSINGLE_STEP_CTL ctl);
 int single_step_init(void);

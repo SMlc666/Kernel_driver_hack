@@ -20,6 +20,7 @@ pid_t g_target_tid = 0;
 static struct task_struct *g_target_task = NULL;
 struct user_pt_regs g_last_regs;  // Use user_pt_regs (272 bytes) instead of pt_regs
 bool g_regs_valid = false;   // Track if g_last_regs contains valid data
+bool g_is_general_suspend = false; // Indicates general suspend mode (not single-step debugging)
 
 // --- Synchronization ---
 static DECLARE_WAIT_QUEUE_HEAD(g_step_wait_queue);
@@ -67,14 +68,23 @@ static void before_do_debug_exception(hook_fargs3_t *fargs, void *udata)
             memcpy(&g_last_regs, regs, sizeof(struct user_pt_regs));
             g_regs_valid = true;
 
-            g_step_completed = true;
-            wake_up_interruptible(&g_step_wait_queue);
+            if (g_is_general_suspend) {
+                // General suspend mode: just sleep, don't wake up the wait queue
+                PRINT_DEBUG("[single_step] Tid %d suspended (general suspend mode).\n", g_target_tid);
+                set_current_state(TASK_INTERRUPTIBLE);
+                schedule();
+                // Don't return here, let the original function handle it
+            } else {
+                // Single-step debugging mode: wake up the wait queue
+                g_step_completed = true;
+                wake_up_interruptible(&g_step_wait_queue);
 
-            set_current_state(TASK_INTERRUPTIBLE);
-            schedule();
+                set_current_state(TASK_INTERRUPTIBLE);
+                schedule();
 
-            PRINT_DEBUG("[single_step] Tid %d woken up to continue.\n", g_target_tid);
-            return; // Handled
+                PRINT_DEBUG("[single_step] Tid %d woken up to continue.\n", g_target_tid);
+                return; // Handled
+            }
         }
 
         // Case 2: It's a step from an MMU breakpoint
@@ -243,5 +253,6 @@ void single_step_exit(void)
         g_target_tid = 0;
         g_target_task = NULL;
     }
+    g_is_general_suspend = false; // Reset general suspend flag
 }
 #endif
