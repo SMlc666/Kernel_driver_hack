@@ -103,17 +103,37 @@ static void before_do_debug_exception(hook_fargs3_t *fargs, void *udata)
                 // Read the current PTE which may have been updated by hardware (e.g., dirty bit set)
                 pte_t current_pte = *ptep;
 
-                // Update the original_pte in the breakpoint structure to reflect hardware changes
-                bp->original_pte = current_pte;
-
-                // Re-arm by clearing the valid bit, but preserve other hardware-updated bits
+                // Safely update the original_pte by merging hardware state bits (like dirty/young)
+                // while preserving the original physical page frame number (PFN) and access permissions.
+                // This prevents corruption if the page was swapped out during the single-step window.
                 if (pte_present(current_pte)) {
-                    pte_t pte = __pte(pte_val(current_pte) & ~PTE_VALID);
-                    khack_set_pte_at(bp->task->mm, bp->addr, ptep, pte);
+                    // If the page is still present, merge the hardware state bits into our saved PTE
+                    pte_t new_pte = bp->original_pte; // Start with our saved PTE
+                    
+                    // Preserve the original PFN (Physical Frame Number)
+                    unsigned long pfn = pte_pfn(bp->original_pte);
+                    
+                    // Get the new state bits from the current PTE
+                    unsigned long new_state_bits = pte_val(current_pte) & (PTE_DIRTY | PTE_YOUNG | PTE_WRITE);
+                    
+                    // Clear the old state bits and set the new ones, keeping the original PFN and other permissions
+                    new_pte = __pte((pte_val(new_pte) & ~(PTE_DIRTY | PTE_YOUNG | PTE_WRITE)) | new_state_bits);
+                    
+                    // Set the PTE with the merged state
+                    khack_set_pte_at(bp->task->mm, bp->addr, ptep, new_pte);
+                    
+                    // Update our saved original_pte with the merged state for future re-arming
+                    bp->original_pte = new_pte;
+                    
                     flush_tlb_page(bp->vma, bp->addr);
-                    PRINT_DEBUG("[single_step] Re-armed MMU breakpoint with updated PTE for TID %d.\n", current_task->pid);
+                    PRINT_DEBUG("[single_step] Re-armed MMU breakpoint with merged PTE for TID %d.\n", current_task->pid);
                 } else {
-                    PRINT_DEBUG("[single_step] Warning: Current PTE not present for TID %d.\n", current_task->pid);
+                    // If the page is not present (e.g., swapped out), we need to be very careful.
+                    // We should not overwrite our original valid PTE with a swapped-out one.
+                    // Instead, we'll restore the original PTE to maintain the breakpoint.
+                    khack_set_pte_at(bp->task->mm, bp->addr, ptep, bp->original_pte);
+                    flush_tlb_page(bp->vma, bp->addr);
+                    PRINT_DEBUG("[single_step] Page was swapped, restored original PTE for TID %d.\n", current_task->pid);
                 }
             } else {
                 PRINT_DEBUG("[single_step] Warning: Failed to get PTE or VMA for TID %d.\n", current_task->pid);

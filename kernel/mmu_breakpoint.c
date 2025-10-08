@@ -40,9 +40,9 @@ static void hooked_handle_pte_fault(hook_fargs1_t *fargs, void *udata);
 struct mmu_breakpoint *current_bp_per_cpu[NR_CPUS] = {NULL};
 EXPORT_SYMBOL(current_bp_per_cpu);
 
-// 刷新所有CPU的TLB和缓存
-static void flush_all(void) {
-    flush_tlb_all();
+// 刷新特定页的TLB
+static void flush_page(struct vm_area_struct *vma, unsigned long addr) {
+    flush_tlb_page(vma, addr);
 }
 
 // 虚拟地址到页表项的转换 (non-static)
@@ -148,7 +148,7 @@ static int clear_breakpoint(struct mmu_breakpoint *bp) {
     
     // 恢复原始页表项
     khack_set_pte_at(bp->task->mm, bp->addr, ptep, bp->original_pte);
-    flush_all();
+    flush_page(bp->vma, bp->addr);
     
     bp->is_active = false;
     PRINT_DEBUG("[+] mmu_bp: Breakpoint cleared for PID %d at 0x%lx\n", bp->pid, bp->addr);
@@ -192,18 +192,11 @@ static void hooked_handle_pte_fault(hook_fargs1_t *fargs, void *udata) {
     fargs->skip_origin = 1;
     fargs->ret = 0; // Original function returns 0 on success for this path
 
-    // 恢复页面权限
-    pte_t pte_to_set;
-    if (vmf->flags & FAULT_FLAG_WRITE) {
-        pte_to_set = pte_mkwrite(pte_mkdirty(bp->original_pte));
-    } else {
-        pte_to_set = bp->original_pte;
-    }
-
+    // 恢复页面权限 - 直接使用原始PTE，让硬件处理标志位更新
     vmf->pte = pte_offset_map(vmf->pmd, vmf->address);
-    khack_set_pte_at(vmf->vma->vm_mm, vmf->address, vmf->pte, pte_to_set);
+    khack_set_pte_at(vmf->vma->vm_mm, vmf->address, vmf->pte, bp->original_pte);
     pte_unmap(vmf->pte);
-    flush_all();
+    flush_page(vmf->vma, vmf->address);
     
     // If it was a "hit", increment the counter.
     if (is_hit) {
