@@ -203,6 +203,12 @@ static int set_breakpoint(struct mmu_breakpoint *bp) {
         flush_tlb_page(bp->vma, bp->addr);
     } while (0);
     
+    // Lock the VMA to prevent the page from being swapped out
+    if (bp->vma) {
+        bp->vma->vm_flags |= VM_LOCKED;
+        PRINT_DEBUG("[+] mmu_bp: Set VM_LOCKED for VMA to prevent swapping\n");
+    }
+    
     bp->is_active = true;
     PRINT_DEBUG("[+] mmu_bp: Breakpoint set for PID %d at 0x%lx\n", bp->pid, bp->addr);
     return 0;
