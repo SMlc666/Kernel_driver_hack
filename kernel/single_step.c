@@ -119,21 +119,27 @@ static void before_do_debug_exception(hook_fargs3_t *fargs, void *udata)
                     // Clear the old state bits and set the new ones, keeping the original PFN and other permissions
                     new_pte = __pte((pte_val(new_pte) & ~(PTE_DIRTY | PTE_AF | PTE_WRITE)) | new_state_bits);
                     
-                    // Set the PTE with the merged state
-                    khack_set_pte_at(bp->task->mm, bp->addr, ptep, new_pte);
-                    
                     // Update our saved original_pte with the merged state for future re-arming
                     bp->original_pte = new_pte;
+
+                    // CRITICAL FIX: Clear the valid bit again to re-arm the breakpoint
+                    new_pte = __pte(pte_val(new_pte) & ~PTE_VALID);
+                    
+                    // Set the PTE with the merged state but now invalid
+                    khack_set_pte_at(bp->task->mm, bp->addr, ptep, new_pte);
                     
                     flush_tlb_page(bp->vma, bp->addr);
-                    PRINT_DEBUG("[single_step] Re-armed MMU breakpoint with merged PTE for TID %d.\n", current_task->pid);
+                    PRINT_DEBUG("[single_step] Re-armed MMU breakpoint with updated PTE for TID %d.\n", current_task->pid);
+                    PRINT_DEBUG("[single_step] PTE value after re-arm: 0x%lx\n", pte_val(new_pte));
                 } else {
                     // If the page is not present (e.g., swapped out), we need to be very careful.
                     // We should not overwrite our original valid PTE with a swapped-out one.
                     // Instead, we'll restore the original PTE to maintain the breakpoint.
-                    khack_set_pte_at(bp->task->mm, bp->addr, ptep, bp->original_pte);
+                    pte_t invalid_pte = __pte(pte_val(bp->original_pte) & ~PTE_VALID);
+                    khack_set_pte_at(bp->task->mm, bp->addr, ptep, invalid_pte);
                     flush_tlb_page(bp->vma, bp->addr);
-                    PRINT_DEBUG("[single_step] Page was swapped, restored original PTE for TID %d.\n", current_task->pid);
+                    PRINT_DEBUG("[single_step] Page was swapped, restored invalid PTE for TID %d.\n", current_task->pid);
+                    PRINT_DEBUG("[single_step] Invalid PTE value: 0x%lx\n", pte_val(invalid_pte));
                 }
             } else {
                 PRINT_DEBUG("[single_step] Warning: Failed to get PTE or VMA for TID %d.\n", current_task->pid);
