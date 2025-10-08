@@ -83,12 +83,12 @@ pte_t *virt_to_pte(struct task_struct *task, unsigned long addr) {
 }
 
 // 查找断点
-static struct mmu_breakpoint *find_breakpoint(pid_t pid, unsigned long addr) {
+static struct mmu_breakpoint *find_breakpoint(pid_t tgid, unsigned long addr) {
     struct mmu_breakpoint *bp;
     
     spin_lock(&mmu_bp_lock);
     list_for_each_entry(bp, &mmu_breakpoints, list) {
-        if (bp->pid == pid && addr >= bp->addr && addr < bp->addr + bp->size) {
+        if (bp->tgid == tgid && addr >= bp->addr && addr < bp->addr + bp->size) {
             spin_unlock(&mmu_bp_lock);
             return bp;
         }
@@ -98,12 +98,12 @@ static struct mmu_breakpoint *find_breakpoint(pid_t pid, unsigned long addr) {
 }
 
 // 通过PID查找断点，供single_step.c使用
-struct mmu_breakpoint *find_breakpoint_by_pid(pid_t pid, unsigned long addr) {
+struct mmu_breakpoint *find_breakpoint_by_pid(pid_t tgid, unsigned long addr) {
     struct mmu_breakpoint *bp;
     
     spin_lock(&mmu_bp_lock);
     list_for_each_entry(bp, &mmu_breakpoints, list) {
-        if (bp->pid == pid && (addr == 0 || (addr >= bp->addr && addr < bp->addr + bp->size))) {
+        if (bp->tgid == tgid && (addr == 0 || (addr >= bp->addr && addr < bp->addr + bp->size))) {
             spin_unlock(&mmu_bp_lock);
             return bp;
         }
@@ -122,8 +122,8 @@ static void before_handle_pte_fault(hook_fargs1_t *fargs, void *udata) {
     unsigned long addr = vmf->address;
     bool is_hit = false;
     
-    // 在before钩子中查找断点
-    bp = find_breakpoint(current->pid, addr);
+    // 在before钩子中查找断点 - 使用TGID而不是PID
+    bp = find_breakpoint(current->tgid, addr);
     if (!bp) {
         // Not our breakpoint, let the original function handle it
         return;
@@ -251,11 +251,23 @@ static int clear_breakpoint(struct mmu_breakpoint *bp) {
 static int add_breakpoint(pid_t pid, unsigned long addr, unsigned long size, int access_type) {
     struct mmu_breakpoint *bp;
     struct task_struct *task;
+    pid_t tgid;
     int ret;
     
+    // 获取任务结构
+    task = get_pid_task(find_vpid(pid), PIDTYPE_PID);
+    if (!task) {
+        PRINT_DEBUG("[-] mmu_bp: Task not found for PID %d\n", pid);
+        return -ESRCH;
+    }
+    
+    // 获取线程组ID (TGID)
+    tgid = task->tgid;
+    put_task_struct(task);
+    
     // 检查是否已存在
-    if (find_breakpoint(pid, addr)) {
-        PRINT_DEBUG("[-] mmu_bp: Breakpoint already exists for PID %d at 0x%lx\n", pid, addr);
+    if (find_breakpoint(tgid, addr)) {
+        PRINT_DEBUG("[-] mmu_bp: Breakpoint already exists for TGID %d at 0x%lx\n", tgid, addr);
         return -EEXIST;
     }
     
@@ -274,7 +286,7 @@ static int add_breakpoint(pid_t pid, unsigned long addr, unsigned long size, int
     }
     
     // 初始化断点
-    bp->pid = pid;
+    bp->tgid = tgid;
     bp->addr = addr;
     bp->size = size;
     bp->access_type = access_type;
@@ -295,8 +307,8 @@ static int add_breakpoint(pid_t pid, unsigned long addr, unsigned long size, int
     list_add(&bp->list, &mmu_breakpoints);
     mutex_unlock(&mmu_bp_mutex);
     
-    PRINT_DEBUG("[+] mmu_bp: Added breakpoint for PID %d at 0x%lx (size: %lu, type: 0x%x)\n", 
-               pid, addr, size, access_type);
+    PRINT_DEBUG("[+] mmu_bp: Added breakpoint for TGID %d at 0x%lx (size: %lu, type: 0x%x)\n", 
+               tgid, addr, size, access_type);
     return 0;
 }
 
@@ -304,10 +316,21 @@ static int add_breakpoint(pid_t pid, unsigned long addr, unsigned long size, int
 static int remove_breakpoint(pid_t pid, unsigned long addr) {
     struct mmu_breakpoint *bp, *tmp;
     bool found = false;
+    struct task_struct *task;
+    pid_t tgid;
+    
+    // 获取任务结构以获取TGID
+    task = get_pid_task(find_vpid(pid), PIDTYPE_PID);
+    if (!task) {
+        PRINT_DEBUG("[-] mmu_bp: Task not found for PID %d\n", pid);
+        return -ESRCH;
+    }
+    tgid = task->tgid;
+    put_task_struct(task);
     
     mutex_lock(&mmu_bp_mutex);
     list_for_each_entry_safe(bp, tmp, &mmu_breakpoints, list) {
-        if (bp->pid == pid && addr >= bp->addr && addr < bp->addr + bp->size) {
+        if (bp->tgid == tgid && addr >= bp->addr && addr < bp->addr + bp->size) {
             clear_breakpoint(bp);
             list_del(&bp->list);
             put_task_struct(bp->task);
@@ -319,11 +342,11 @@ static int remove_breakpoint(pid_t pid, unsigned long addr) {
     mutex_unlock(&mmu_bp_mutex);
     
     if (!found) {
-        PRINT_DEBUG("[-] mmu_bp: Breakpoint not found for PID %d at 0x%lx\n", pid, addr);
+        PRINT_DEBUG("[-] mmu_bp: Breakpoint not found for TGID %d at 0x%lx\n", tgid, addr);
         return -ENOENT;
     }
     
-    PRINT_DEBUG("[+] mmu_bp: Removed breakpoint for PID %d at 0x%lx\n", pid, addr);
+    PRINT_DEBUG("[+] mmu_bp: Removed breakpoint for TGID %d at 0x%lx\n", tgid, addr);
     return 0;
 }
 
@@ -371,7 +394,7 @@ int handle_mmu_breakpoint_control(PMMU_BP_CTL ctl) {
     return ret;
 }
 
-int handle_mmu_breakpoint_list(pid_t pid, PMMU_BP_INFO buffer, size_t *count) {
+int handle_mmu_breakpoint_list(pid_t tgid, PMMU_BP_INFO buffer, size_t *count) {
     struct mmu_breakpoint *bp;
     size_t found = 0;
     size_t capacity = *count;
@@ -379,10 +402,10 @@ int handle_mmu_breakpoint_list(pid_t pid, PMMU_BP_INFO buffer, size_t *count) {
     
     mutex_lock(&mmu_bp_mutex);
     list_for_each_entry(bp, &mmu_breakpoints, list) {
-        if (pid == 0 || bp->pid == pid) {
+        if (tgid == 0 || bp->tgid == tgid) {
             if (found < capacity) {
                 MMU_BP_INFO info;
-                info.pid = bp->pid;
+                info.pid = bp->tgid;  // 保持info.pid为tgid以兼容用户空间
                 info.addr = bp->addr;
                 info.size = bp->size;
                 info.access_type = bp->access_type;
@@ -403,8 +426,8 @@ int handle_mmu_breakpoint_list(pid_t pid, PMMU_BP_INFO buffer, size_t *count) {
     return ret;
 }
 
-bool is_mmu_breakpoint_active(pid_t pid, unsigned long addr) {
-    struct mmu_breakpoint *bp = find_breakpoint(pid, addr);
+bool is_mmu_breakpoint_active(pid_t tgid, unsigned long addr) {
+    struct mmu_breakpoint *bp = find_breakpoint(tgid, addr);
     return bp && bp->is_active;
 }
 

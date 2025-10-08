@@ -96,67 +96,67 @@ static void before_do_debug_exception(hook_fargs3_t *fargs, void *udata)
             }
         }
 
-        // Case 2: It's a step from an MMU breakpoint
-        // 在单步异常处理中，直接查找当前任务的断点
-        bp = find_breakpoint_by_pid(current_task->pid, 0); // addr参数为0表示只查找PID
-        if (bp && current_task == bp->task) {
-            PRINT_DEBUG("[single_step] MMU breakpoint step trap for TID %d.\n", current_task->pid);
+    // Case 2: It's a step from an MMU breakpoint
+    // 在单步异常处理中，直接查找当前任务的断点 - 使用TGID而不是PID
+    bp = find_breakpoint_by_pid(current_task->tgid, 0); // addr参数为0表示只查找TGID
+    if (bp && current_task == bp->task) {
+        PRINT_DEBUG("[single_step] MMU breakpoint step trap for TID %d.\n", current_task->pid);
 
-            fargs->skip_origin = 1;
-            fargs->ret = 0;
+        fargs->skip_origin = 1;
+        fargs->ret = 0;
 
-            _user_disable_single_step(current_task);
+        _user_disable_single_step(current_task);
 
-            // Re-arm the breakpoint
-            ptep = virt_to_pte(bp->task, bp->addr);
-            if (ptep && bp->vma) {
-                // Read the current PTE which may have been updated by hardware (e.g., dirty bit set)
-                pte_t current_pte = *ptep;
+        // Re-arm the breakpoint
+        ptep = virt_to_pte(bp->task, bp->addr);
+        if (ptep && bp->vma) {
+            // Read the current PTE which may have been updated by hardware (e.g., dirty bit set)
+            pte_t current_pte = *ptep;
 
-                // Safely update the original_pte by merging hardware state bits (like dirty/young)
-                // while preserving the original physical page frame number (PFN) and access permissions.
-                // This prevents corruption if the page was swapped out during the single-step window.
-                if (pte_present(current_pte)) {
-                    // If the page is still present, merge the hardware state bits into our saved PTE
-                    pte_t new_pte = bp->original_pte; // Start with our saved PTE
-                    
-                    // Preserve the original PFN (Physical Frame Number)
-                    unsigned long pfn = pte_pfn(bp->original_pte);
-                    
-                    // Get the new state bits from the current PTE
-                    unsigned long new_state_bits = pte_val(current_pte) & (PTE_DIRTY | PTE_AF | PTE_WRITE);
-                    
-                    // Clear the old state bits and set the new ones, keeping the original PFN and other permissions
-                    new_pte = __pte((pte_val(new_pte) & ~(PTE_DIRTY | PTE_AF | PTE_WRITE)) | new_state_bits);
-                    
-                    // Update our saved original_pte with the merged state for future re-arming
-                    bp->original_pte = new_pte;
+            // Safely update the original_pte by merging hardware state bits (like dirty/young)
+            // while preserving the original physical page frame number (PFN) and access permissions.
+            // This prevents corruption if the page was swapped out during the single-step window.
+            if (pte_present(current_pte)) {
+                // If the page is still present, merge the hardware state bits into our saved PTE
+                pte_t new_pte = bp->original_pte; // Start with our saved PTE
+                
+                // Preserve the original PFN (Physical Frame Number)
+                unsigned long pfn = pte_pfn(bp->original_pte);
+                
+                // Get the new state bits from the current PTE
+                unsigned long new_state_bits = pte_val(current_pte) & (PTE_DIRTY | PTE_AF | PTE_WRITE);
+                
+                // Clear the old state bits and set the new ones, keeping the original PFN and other permissions
+                new_pte = __pte((pte_val(new_pte) & ~(PTE_DIRTY | PTE_AF | PTE_WRITE)) | new_state_bits);
+                
+                // Update our saved original_pte with the merged state for future re-arming
+                bp->original_pte = new_pte;
 
-                    // CRITICAL FIX: Clear the type bits to re-arm the breakpoint properly
-                    new_pte = __pte(pte_val(new_pte) & ~PTE_TYPE_MASK);
-                    
-                    // Set the PTE with the merged state but now invalid
-                    khack_set_pte_at(bp->task->mm, bp->addr, ptep, new_pte);
-                    
-                    flush_tlb_page(bp->vma, bp->addr);
-                    PRINT_DEBUG("[single_step] Re-armed MMU breakpoint with updated PTE for TID %d.\n", current_task->pid);
-                    PRINT_DEBUG("[single_step] PTE value after re-arm: 0x%lx\n", pte_val(new_pte));
-                } else {
-                    // If the page is not present (e.g., swapped out), we need to be very careful.
-                    // We should not overwrite our original valid PTE with a swapped-out one.
-                    // Instead, we'll restore the original PTE to maintain the breakpoint.
-                    pte_t invalid_pte = __pte(pte_val(bp->original_pte) & ~PTE_TYPE_MASK);
-                    khack_set_pte_at(bp->task->mm, bp->addr, ptep, invalid_pte);
-                    flush_tlb_page(bp->vma, bp->addr);
-                    PRINT_DEBUG("[single_step] Page was swapped, restored invalid PTE for TID %d.\n", current_task->pid);
-                    PRINT_DEBUG("[single_step] Invalid PTE value: 0x%lx\n", pte_val(invalid_pte));
-                }
+                // CRITICAL FIX: Clear the type bits to re-arm the breakpoint properly
+                new_pte = __pte(pte_val(new_pte) & ~PTE_TYPE_MASK);
+                
+                // Set the PTE with the merged state but now invalid
+                khack_set_pte_at(bp->task->mm, bp->addr, ptep, new_pte);
+                
+                flush_tlb_page(bp->vma, bp->addr);
+                PRINT_DEBUG("[single_step] Re-armed MMU breakpoint with updated PTE for TID %d.\n", current_task->pid);
+                PRINT_DEBUG("[single_step] PTE value after re-arm: 0x%lx\n", pte_val(new_pte));
             } else {
-                PRINT_DEBUG("[single_step] Warning: Failed to get PTE or VMA for TID %d.\n", current_task->pid);
+                // If the page is not present (e.g., swapped out), we need to be very careful.
+                // We should not overwrite our original valid PTE with a swapped-out one.
+                // Instead, we'll restore the original PTE to maintain the breakpoint.
+                pte_t invalid_pte = __pte(pte_val(bp->original_pte) & ~PTE_TYPE_MASK);
+                khack_set_pte_at(bp->task->mm, bp->addr, ptep, invalid_pte);
+                flush_tlb_page(bp->vma, bp->addr);
+                PRINT_DEBUG("[single_step] Page was swapped, restored invalid PTE for TID %d.\n", current_task->pid);
+                PRINT_DEBUG("[single_step] Invalid PTE value: 0x%lx\n", pte_val(invalid_pte));
             }
-
-            return; // Handled
+        } else {
+            PRINT_DEBUG("[single_step] Warning: Failed to get PTE or VMA for TID %d.\n", current_task->pid);
         }
+
+        return; // Handled
+    }
     }
     // If it's not our target, we do nothing. hook_wrap will automatically call the original function.
 }

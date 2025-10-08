@@ -42,7 +42,7 @@ static inline void khack_set_pte_at(struct mm_struct *mm, unsigned long addr, pt
 // MMU断点结构体
 struct mmu_breakpoint {
     struct list_head list;        // 链表节点
-    pid_t pid;                    // 目标进程PID
+    pid_t tgid;                   // 目标进程TGID (线程组ID)
     unsigned long addr;           // 断点地址
     unsigned long size;           // 监控范围
     int access_type;              // 访问类型
@@ -55,7 +55,7 @@ struct mmu_breakpoint {
 
 // MMU断点信息（用于用户空间）
 typedef struct _MMU_BP_INFO {
-    pid_t pid;
+    pid_t pid;  // 实际存储的是TGID，用于兼容用户空间
     unsigned long addr;
     unsigned long size;
     int access_type;
@@ -76,14 +76,14 @@ typedef struct _MMU_BP_CTL {
 int mmu_breakpoint_init(void);
 void mmu_breakpoint_exit(void);
 int handle_mmu_breakpoint_control(PMMU_BP_CTL ctl);
-int handle_mmu_breakpoint_list(pid_t pid, PMMU_BP_INFO buffer, size_t *count);
-bool is_mmu_breakpoint_active(pid_t pid, unsigned long addr);
+int handle_mmu_breakpoint_list(pid_t tgid, PMMU_BP_INFO buffer, size_t *count);
+bool is_mmu_breakpoint_active(pid_t tgid, unsigned long addr);
 
 #include <linux/threads.h>
 
 // For sharing with single_step.c
 pte_t *virt_to_pte(struct task_struct *task, unsigned long addr);
-struct mmu_breakpoint *find_breakpoint_by_pid(pid_t pid, unsigned long addr);
+struct mmu_breakpoint *find_breakpoint_by_pid(pid_t tgid, unsigned long addr);
 
 #else
 
@@ -91,8 +91,8 @@ struct mmu_breakpoint *find_breakpoint_by_pid(pid_t pid, unsigned long addr);
 static inline int mmu_breakpoint_init(void) { return 0; }
 static inline void mmu_breakpoint_exit(void) { }
 static inline int handle_mmu_breakpoint_control(void *ctl) { return 0; }
-static inline int handle_mmu_breakpoint_list(pid_t pid, void *buffer, size_t *count) { return 0; }
-static inline bool is_mmu_breakpoint_active(pid_t pid, unsigned long addr) { return false; }
+static inline int handle_mmu_breakpoint_list(pid_t tgid, void *buffer, size_t *count) { return 0; }
+static inline bool is_mmu_breakpoint_active(pid_t tgid, unsigned long addr) { return false; }
 
 #endif
 
