@@ -34,11 +34,84 @@ static void (*user_enable_single_step_)(struct task_struct *);
 static void (*user_disable_single_step_)(struct task_struct *);
 
 // 钩子函数声明
-static void hooked_handle_pte_fault(hook_fargs1_t *fargs, void *udata);
+static void before_handle_pte_fault(hook_fargs1_t *fargs, void *udata);
+static void after_handle_pte_fault(hook_fargs1_t *fargs, void *udata);
 
 // 当前正在处理的断点 (per-CPU)
 struct mmu_breakpoint *current_bp_per_cpu[NR_CPUS] = {NULL};
 EXPORT_SYMBOL(current_bp_per_cpu);
+
+// 钩子函数：处理页面错误 - Before
+static void before_handle_pte_fault(hook_fargs1_t *fargs, void *udata) {
+    struct vm_fault *vmf = (struct vm_fault *)fargs->arg0;
+    struct mmu_breakpoint *bp;
+    unsigned long addr = vmf->address;
+    bool is_hit = false;
+    
+    // 检查是否是我们的断点
+    bp = find_breakpoint(current->pid, addr);
+    if (!bp) {
+        // Not our breakpoint, let original function run with its normal return value
+        return;
+    }
+    
+    // It's a fault on our monitored page. We MUST handle it to prevent the kernel from replacing the page.
+    // First, determine if it's a "hit" we care about.
+    if (vmf->flags & FAULT_FLAG_INSTRUCTION) {
+        if (bp->access_type & BP_ACCESS_EXECUTE) {
+            is_hit = true;
+            PRINT_DEBUG("[+] mmu_bp: EXECUTE fault at 0x%lx, IP: 0x%lx\n", addr, task_pt_regs(current)->pc);
+        }
+    } else if (vmf->flags & FAULT_FLAG_WRITE) {
+        if (bp->access_type & BP_ACCESS_WRITE) {
+            is_hit = true;
+            PRINT_DEBUG("[+] mmu_bp: WRITE fault at 0x%lx\n", addr);
+        }
+    } else { // Read fault
+        if (bp->access_type & BP_ACCESS_READ) {
+            is_hit = true;
+            PRINT_DEBUG("[+] mmu_bp: READ fault at 0x%lx\n", addr);
+        }
+    }
+
+    // Now, handle the fault. We do this for ALL accesses on the page.
+    // First, restore the page to its original state so the original handler can process it.
+    pte_t *ptep = pte_offset_map(vmf->pmd, vmf->address);
+    if (!ptep) {
+        // Cannot resolve PTE, something is wrong. Let the original handler deal with it.
+        return;
+    }
+    khack_set_pte_at(vmf->vma->vm_mm, vmf->address, ptep, bp->original_pte);
+    pte_unmap(ptep);
+    flush_page(vmf->vma, vmf->address);
+
+    // Store information for the 'after' hook
+    fargs->local.data[0] = (uintptr_t)bp;  // Store breakpoint pointer
+    fargs->local.data[1] = is_hit ? 1 : 0; // Store if it was a hit
+
+    if (is_hit) {
+        bp->hit_count++;
+    }
+}
+
+// 钩子函数：处理页面错误 - After
+static void after_handle_pte_fault(hook_fargs1_t *fargs, void *udata) {
+    struct vm_fault *vmf = (struct vm_fault *)fargs->arg0;
+    struct mmu_breakpoint *bp = (struct mmu_breakpoint *)fargs->local.data[0];
+    bool was_hit = fargs->local.data[1] != 0;
+
+    // If this was our breakpoint and it was a hit, enable single-step now
+    if (bp && was_hit) {
+        // Store the current breakpoint for the single-step handler
+        current_bp_per_cpu[raw_smp_processor_id()] = bp;
+        
+        // 启用单步调试
+        if (user_enable_single_step_) {
+            user_enable_single_step_(current);
+        }
+        PRINT_DEBUG("[+] mmu_bp: Single-step enabled after handling fault for TID %d at 0x%lx\n", current->pid, vmf->address);
+    }
+}
 
 // 刷新特定页的TLB
 static void flush_page(struct vm_area_struct *vma, unsigned long addr) {
@@ -155,68 +228,6 @@ static int clear_breakpoint(struct mmu_breakpoint *bp) {
     return 0;
 }
 
-// 钩子函数：处理页面错误
-static void hooked_handle_pte_fault(hook_fargs1_t *fargs, void *udata) {
-    struct vm_fault *vmf = (struct vm_fault *)fargs->arg0;
-    struct mmu_breakpoint *bp;
-    unsigned long addr = vmf->address;
-    bool is_hit = false;
-    
-    // 检查是否是我们的断点
-    bp = find_breakpoint(current->pid, addr);
-    if (!bp) {
-        return; // Not our breakpoint, let original function run
-    }
-    
-    // It's a fault on our monitored page. We MUST handle it to prevent the kernel from replacing the page.
-    // First, determine if it's a "hit" we care about.
-    if (vmf->flags & FAULT_FLAG_INSTRUCTION) {
-        if (bp->access_type & BP_ACCESS_EXECUTE) {
-            is_hit = true;
-            PRINT_DEBUG("[+] mmu_bp: EXECUTE fault at 0x%lx, IP: 0x%lx\n", addr, task_pt_regs(current)->pc);
-        }
-    } else if (vmf->flags & FAULT_FLAG_WRITE) {
-        if (bp->access_type & BP_ACCESS_WRITE) {
-            is_hit = true;
-            PRINT_DEBUG("[+] mmu_bp: WRITE fault at 0x%lx\n", addr);
-        }
-    } else { // Read fault
-        if (bp->access_type & BP_ACCESS_READ) {
-            is_hit = true;
-            PRINT_DEBUG("[+] mmu_bp: READ fault at 0x%lx\n", addr);
-        }
-    }
-
-    // Now, handle the fault. We do this for ALL accesses on the page.
-    // First, restore the page to its original state so the original handler can process it.
-    pte_t *ptep = pte_offset_map(vmf->pmd, vmf->address);
-    if (!ptep) {
-        // Cannot resolve PTE, something is wrong. Let the original handler deal with it.
-        return;
-    }
-    khack_set_pte_at(vmf->vma->vm_mm, vmf->address, ptep, bp->original_pte);
-    pte_unmap(ptep);
-    flush_page(vmf->vma, vmf->address);
-
-    // Let the original handler run to correctly resolve the fault and update kernel states.
-    // We will re-arm the breakpoint after the single step.
-    fargs->skip_origin = 0; 
-    
-    // If it was a "hit", increment the counter and prepare for single-stepping.
-    if (is_hit) {
-        bp->hit_count++;
-        // Store the current breakpoint for the single-step handler
-        current_bp_per_cpu[raw_smp_processor_id()] = bp;
-        
-        // 启用单步调试
-        if (user_enable_single_step_) {
-            user_enable_single_step_(current);
-        }
-    }
-    // We no longer need to enable single step here for non-hits, 
-    // as the original handler will now run.
-    // The breakpoint will be re-armed in the single-step handler only on a true hit.
-}
 
 // 添加断点
 static int add_breakpoint(pid_t pid, unsigned long addr, unsigned long size, int access_type) {
@@ -409,7 +420,7 @@ int mmu_breakpoint_init(void) {
     }
     
     // 设置钩子
-    if (hook_wrap(handle_pte_fault_addr, 1, hooked_handle_pte_fault, NULL, NULL) != HOOK_NO_ERR) {
+    if (hook_wrap(handle_pte_fault_addr, 1, before_handle_pte_fault, after_handle_pte_fault, NULL) != HOOK_NO_ERR) {
         PRINT_DEBUG("[-] mmu_bp: Failed to wrap handle_pte_fault()\n");
         return -1;
     }
@@ -430,7 +441,7 @@ void mmu_breakpoint_exit(void) {
     // 移除钩子
     handle_pte_fault_addr = (void *)kallsyms_lookup_name("handle_pte_fault");
     if (handle_pte_fault_addr) {
-        hook_unwrap(handle_pte_fault_addr, hooked_handle_pte_fault, NULL);
+        hook_unwrap(handle_pte_fault_addr, before_handle_pte_fault, after_handle_pte_fault);
     }
     
     PRINT_DEBUG("[+] mmu_bp: MMU breakpoint system shutdown complete\n");
