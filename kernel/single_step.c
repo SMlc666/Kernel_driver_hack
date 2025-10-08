@@ -114,10 +114,10 @@ static void before_do_debug_exception(hook_fargs3_t *fargs, void *udata)
                     unsigned long pfn = pte_pfn(bp->original_pte);
                     
                     // Get the new state bits from the current PTE
-                    unsigned long new_state_bits = pte_val(current_pte) & (PTE_DIRTY | PTE_YOUNG | PTE_WRITE);
+                    unsigned long new_state_bits = pte_val(current_pte) & (PTE_DIRTY | PTE_AF | PTE_WRITE);
                     
                     // Clear the old state bits and set the new ones, keeping the original PFN and other permissions
-                    new_pte = __pte((pte_val(new_pte) & ~(PTE_DIRTY | PTE_YOUNG | PTE_WRITE)) | new_state_bits);
+                    new_pte = __pte((pte_val(new_pte) & ~(PTE_DIRTY | PTE_AF | PTE_WRITE)) | new_state_bits);
                     
                     // Set the PTE with the merged state
                     khack_set_pte_at(bp->task->mm, bp->addr, ptep, new_pte);
