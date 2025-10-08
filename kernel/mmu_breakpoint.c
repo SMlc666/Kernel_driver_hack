@@ -187,29 +187,35 @@ static void hooked_handle_pte_fault(hook_fargs1_t *fargs, void *udata) {
         }
     }
 
-    // Now, handle the fault. We do this for ALL accesses on the page, hit or not,
-    // to prevent the kernel's default handler from running and replacing the page.
-    fargs->skip_origin = 1;
-    fargs->ret = 0; // Original function returns 0 on success for this path
-
-    // 恢复页面权限 - 直接使用原始PTE，让硬件处理标志位更新
-    vmf->pte = pte_offset_map(vmf->pmd, vmf->address);
-    khack_set_pte_at(vmf->vma->vm_mm, vmf->address, vmf->pte, bp->original_pte);
-    pte_unmap(vmf->pte);
+    // Now, handle the fault. We do this for ALL accesses on the page.
+    // First, restore the page to its original state so the original handler can process it.
+    pte_t *ptep = pte_offset_map(vmf->pmd, vmf->address);
+    if (!ptep) {
+        // Cannot resolve PTE, something is wrong. Let the original handler deal with it.
+        return;
+    }
+    khack_set_pte_at(vmf->vma->vm_mm, vmf->address, ptep, bp->original_pte);
+    pte_unmap(ptep);
     flush_page(vmf->vma, vmf->address);
+
+    // Let the original handler run to correctly resolve the fault and update kernel states.
+    // We will re-arm the breakpoint after the single step.
+    fargs->skip_origin = 0; 
     
-    // If it was a "hit", increment the counter.
+    // If it was a "hit", increment the counter and prepare for single-stepping.
     if (is_hit) {
         bp->hit_count++;
+        // Store the current breakpoint for the single-step handler
+        current_bp_per_cpu[raw_smp_processor_id()] = bp;
+        
+        // 启用单步调试
+        if (user_enable_single_step_) {
+            user_enable_single_step_(current);
+        }
     }
-    
-    // Store the current breakpoint for the single-step handler
-    current_bp_per_cpu[raw_smp_processor_id()] = bp;
-    
-    // 启用单步调试
-    if (user_enable_single_step_) {
-        user_enable_single_step_(current);
-    }
+    // We no longer need to enable single step here for non-hits, 
+    // as the original handler will now run.
+    // The breakpoint will be re-armed in the single-step handler only on a true hit.
 }
 
 // 添加断点
