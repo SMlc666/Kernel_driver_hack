@@ -231,6 +231,12 @@ static int clear_breakpoint(struct mmu_breakpoint *bp) {
     khack_set_pte_at(bp->task->mm, bp->addr, ptep, bp->original_pte);
     flush_page(bp->vma, bp->addr);
     
+    // Unlock the VMA to restore original state
+    if (bp->vma) {
+        bp->vma->vm_flags &= ~VM_LOCKED;
+        PRINT_DEBUG("[+] mmu_bp: Removed VM_LOCKED for VMA\n");
+    }
+    
     bp->is_active = false;
     PRINT_DEBUG("[+] mmu_bp: Breakpoint cleared for PID %d at 0x%lx\n", bp->pid, bp->addr);
     return 0;
