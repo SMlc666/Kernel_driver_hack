@@ -142,14 +142,14 @@ int touch_input_init(void)
     }
 
     // Allocate shared buffer page
-    g_shared_buffer = (TOUCH_SHARED_BUFFER *)vmalloc_user(sizeof(TOUCH_SHARED_BUFFER));
+    g_shared_buffer = (TOUCH_SHARED_BUFFER *)vmalloc_user(PAGE_ALIGN(sizeof(TOUCH_SHARED_BUFFER)));
     if (!g_shared_buffer) {
         PRINT_DEBUG("[-] touch_input: Failed to allocate shared buffer\n");
         return -ENOMEM;
     }
     
     // Zero out the buffer to ensure physical pages are allocated.
-    memset(g_shared_buffer, 0, sizeof(TOUCH_SHARED_BUFFER));
+    memset(g_shared_buffer, 0, PAGE_ALIGN(sizeof(TOUCH_SHARED_BUFFER)));
     
     // Initialize buffer state
     g_shared_buffer->head = 0;
@@ -230,7 +230,7 @@ int touch_input_mmap(struct file *filp, struct vm_area_struct *vma)
     // Placeholder for mmap logic
     unsigned long size = vma->vm_end - vma->vm_start;
     
-    if (size != sizeof(TOUCH_SHARED_BUFFER)) {
+    if (size != PAGE_ALIGN(sizeof(TOUCH_SHARED_BUFFER))) {
         return -EINVAL;
     }
     
