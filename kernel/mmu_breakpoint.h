@@ -82,8 +82,8 @@ bool is_mmu_breakpoint_active(pid_t pid, unsigned long addr);
 #include <linux/threads.h>
 
 // For sharing with single_step.c
-extern struct mmu_breakpoint *current_bp_per_cpu[NR_CPUS];
 pte_t *virt_to_pte(struct task_struct *task, unsigned long addr);
+struct mmu_breakpoint *find_breakpoint_by_pid(pid_t pid, unsigned long addr);
 
 #else
 

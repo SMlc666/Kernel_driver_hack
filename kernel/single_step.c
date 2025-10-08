@@ -88,7 +88,8 @@ static void before_do_debug_exception(hook_fargs3_t *fargs, void *udata)
         }
 
         // Case 2: It's a step from an MMU breakpoint
-        bp = current_bp_per_cpu[raw_smp_processor_id()];
+        // 在单步异常处理中，直接查找当前任务的断点
+        bp = find_breakpoint_by_pid(current_task->pid, 0); // addr参数为0表示只查找PID
         if (bp && current_task == bp->task) {
             PRINT_DEBUG("[single_step] MMU breakpoint step trap for TID %d.\n", current_task->pid);
 
@@ -145,7 +146,6 @@ static void before_do_debug_exception(hook_fargs3_t *fargs, void *udata)
                 PRINT_DEBUG("[single_step] Warning: Failed to get PTE or VMA for TID %d.\n", current_task->pid);
             }
 
-            current_bp_per_cpu[raw_smp_processor_id()] = NULL;
             return; // Handled
         }
     }
