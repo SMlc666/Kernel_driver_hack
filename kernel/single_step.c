@@ -99,7 +99,7 @@ static void before_do_debug_exception(hook_fargs3_t *fargs, void *udata)
     // Case 2: It's a step from an MMU breakpoint
     // 在单步异常处理中，直接查找当前任务的断点 - 使用TGID而不是PID
     bp = find_breakpoint_by_pid(current_task->tgid, 0); // addr参数为0表示只查找TGID
-    if (bp && current_task == bp->task) {
+    if (bp) {
         PRINT_DEBUG("[single_step] MMU breakpoint step trap for TID %d.\n", current_task->pid);
 
         fargs->skip_origin = 1;
@@ -140,7 +140,7 @@ static void before_do_debug_exception(hook_fargs3_t *fargs, void *udata)
                 
                 flush_tlb_page(bp->vma, bp->addr);
                 PRINT_DEBUG("[single_step] Re-armed MMU breakpoint with updated PTE for TID %d.\n", current_task->pid);
-                PRINT_DEBUG("[single_step] PTE value after re-arm: 0x%lx\n", pte_val(new_pte));
+                PRINT_DEBUG("[single_step] PTE value after re-arm: 0xe%lx\n", pte_val(new_pte));
             } else {
                 // If the page is not present (e.g., swapped out), we need to be very careful.
                 // We should not overwrite our original valid PTE with a swapped-out one.
