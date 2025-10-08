@@ -5,6 +5,7 @@
 #include <linux/uaccess.h>
 #include <linux/pid_namespace.h> // For task_active_pid_ns
 #include <linux/slab.h> // For kmalloc/kfree
+#include <linux/kallsyms.h> // For kallsyms_lookup_name
 #include "thread.h"
 #include "single_step.h"
 #include "version_control.h"
