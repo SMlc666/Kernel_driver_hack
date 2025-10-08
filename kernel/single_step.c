@@ -100,12 +100,23 @@ static void before_do_debug_exception(hook_fargs3_t *fargs, void *udata)
             // Re-arm the breakpoint
             ptep = virt_to_pte(bp->task, bp->addr);
             if (ptep && bp->vma) {
-                // Re-arm by clearing the valid bit, not the whole PTE.
-                if (pte_present(bp->original_pte)) {
-                    pte_t pte = __pte(pte_val(bp->original_pte) & ~PTE_VALID);
+                // Read the current PTE which may have been updated by hardware (e.g., dirty bit set)
+                pte_t current_pte = *ptep;
+
+                // Update the original_pte in the breakpoint structure to reflect hardware changes
+                bp->original_pte = current_pte;
+
+                // Re-arm by clearing the valid bit, but preserve other hardware-updated bits
+                if (pte_present(current_pte)) {
+                    pte_t pte = __pte(pte_val(current_pte) & ~PTE_VALID);
                     khack_set_pte_at(bp->task->mm, bp->addr, ptep, pte);
                     flush_tlb_page(bp->vma, bp->addr);
+                    PRINT_DEBUG("[single_step] Re-armed MMU breakpoint with updated PTE for TID %d.\n", current_task->pid);
+                } else {
+                    PRINT_DEBUG("[single_step] Warning: Current PTE not present for TID %d.\n", current_task->pid);
                 }
+            } else {
+                PRINT_DEBUG("[single_step] Warning: Failed to get PTE or VMA for TID %d.\n", current_task->pid);
             }
 
             current_bp_per_cpu[raw_smp_processor_id()] = NULL;
