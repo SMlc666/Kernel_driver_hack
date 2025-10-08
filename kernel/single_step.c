@@ -145,7 +145,7 @@ static void before_do_debug_exception(hook_fargs3_t *fargs, void *udata)
                     // If the page is not present (e.g., swapped out), we need to be very careful.
                     // We should not overwrite our original valid PTE with a swapped-out one.
                     // Instead, we'll restore the original PTE to maintain the breakpoint.
-                    pte_t invalid_pte = __pte(pte_val(bp->original_pte) & ~PTE_VALID);
+                    pte_t invalid_pte = __pte(pte_val(bp->original_pte) & ~PTE_TYPE_MASK);
                     khack_set_pte_at(bp->task->mm, bp->addr, ptep, invalid_pte);
                     flush_tlb_page(bp->vma, bp->addr);
                     PRINT_DEBUG("[single_step] Page was swapped, restored invalid PTE for TID %d.\n", current_task->pid);
