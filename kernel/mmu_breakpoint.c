@@ -15,6 +15,15 @@
 #include <asm/io.h>
 #include <asm/pgtable.h>
 
+// Define PTE_TYPE_FAULT if not already defined
+#ifndef PTE_TYPE_FAULT
+#define PTE_TYPE_FAULT 0x0
+#endif
+
+#ifndef PTE_TYPE_MASK
+#define PTE_TYPE_MASK 0x3  // Lowest 2 bits for type
+#endif
+
 #include "mmu_breakpoint.h"
 #include "single_step.h"
 #include "inline_hook/p_lkrg_main.h"
@@ -187,8 +196,9 @@ static int set_breakpoint(struct mmu_breakpoint *bp) {
             return -EINVAL;
         }
 
-        // Create a new PTE with the 'valid' bit cleared, which causes a fault
-        pte = __pte(pte_val(pte) & ~PTE_VALID);
+        // Create a new PTE with the 'valid' and 'table' bits cleared, which causes a fault
+        // This prevents the kernel from interpreting it as a swap entry
+        pte = __pte(pte_val(pte) & ~PTE_TYPE_MASK);
         khack_set_pte_at(bp->task->mm, bp->addr, ptep, pte);
         flush_tlb_page(bp->vma, bp->addr);
     } while (0);

@@ -7,6 +7,15 @@
 #include <asm/debug-monitors.h>
 #include <asm/tlbflush.h>
 
+// Define PTE_TYPE_FAULT if not already defined
+#ifndef PTE_TYPE_FAULT
+#define PTE_TYPE_FAULT 0x0
+#endif
+
+#ifndef PTE_TYPE_MASK
+#define PTE_TYPE_MASK 0x3  // Lowest 2 bits for type
+#endif
+
 #include "single_step.h"
 #include "inline_hook/p_lkrg_main.h"
 #include "inline_hook/p_hook.h"
@@ -123,8 +132,8 @@ static void before_do_debug_exception(hook_fargs3_t *fargs, void *udata)
                     // Update our saved original_pte with the merged state for future re-arming
                     bp->original_pte = new_pte;
 
-                    // CRITICAL FIX: Clear the valid bit again to re-arm the breakpoint
-                    new_pte = __pte(pte_val(new_pte) & ~PTE_VALID);
+                    // CRITICAL FIX: Clear the type bits to re-arm the breakpoint properly
+                    new_pte = __pte(pte_val(new_pte) & ~PTE_TYPE_MASK);
                     
                     // Set the PTE with the merged state but now invalid
                     khack_set_pte_at(bp->task->mm, bp->addr, ptep, new_pte);
