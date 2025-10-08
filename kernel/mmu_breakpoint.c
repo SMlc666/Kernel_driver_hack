@@ -214,7 +214,7 @@ static int set_breakpoint(struct mmu_breakpoint *bp) {
     }
     
     bp->is_active = true;
-    PRINT_DEBUG("[+] mmu_bp: Breakpoint set for PID %d at 0x%lx\n", bp->pid, bp->addr);
+    PRINT_DEBUG("[+] mmu_bp: Breakpoint set for PID %d at 0x%lx\n", bp->tgid, bp->addr);
     return 0;
 }
 
@@ -242,7 +242,7 @@ static int clear_breakpoint(struct mmu_breakpoint *bp) {
     }
     
     bp->is_active = false;
-    PRINT_DEBUG("[+] mmu_bp: Breakpoint cleared for PID %d at 0x%lx\n", bp->pid, bp->addr);
+    PRINT_DEBUG("[+] mmu_bp: Breakpoint cleared for PID %d at 0x%lx\n", bp->tgid, bp->addr);
     return 0;
 }
 
