@@ -176,18 +176,19 @@ static void before_handle_pte_fault(hook_fargs1_t *fargs, void *udata) {
             user_enable_single_step_(current);
         }
         PRINT_DEBUG("[+] mmu_bp: Single-step enabled for self-inflicted fault in TID %d at 0x%lx\n", current->pid, vmf->address);
+        
+        // For target process faults, skip the original handler to ensure single-step works correctly
+        fargs->skip_origin = 1;
+        fargs->ret = 0;
     } else {
         // This fault was from an external process (like process_vm_readv).
         // We have restored the PTE. The original handler will now succeed.
         // The breakpoint is temporarily disarmed until the next single-step trap in the target process.
         PRINT_DEBUG("[+] mmu_bp: Handled external fault for TGID %d at 0x%lx. BP temporarily disarmed.\n", bp->tgid, vmf->address);
+        
+        // For external process faults, let the original handler run to avoid crashes
+        fargs->skip_origin = 0;
     }
-    
-    // CRITICAL FIX: Always let the original handler run.
-    // By restoring the PTE above, the original handler will now see a valid
-    // page table entry and can correctly resolve the fault for both the
-    // target process and external readers like process_vm_readv, avoiding the panic.
-    fargs->skip_origin = 0;
 }
 
 // 设置断点（移除页面存在位）
