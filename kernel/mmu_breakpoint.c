@@ -47,41 +47,6 @@ static void flush_page(struct vm_area_struct *vma, unsigned long addr) {
     flush_tlb_page(vma, addr);
 }
 
-// 虚拟地址到页表项的转换 (non-static)
-pte_t *virt_to_pte(struct task_struct *task, unsigned long addr) {
-    struct mm_struct *mm = task->mm;
-    pgd_t *pgd;
-    p4d_t *p4d;
-    pud_t *pud;
-    pmd_t *pmd;
-    pte_t *ptep;
-
-    if (!mm)
-        return NULL;
-
-    pgd = pgd_offset(mm, addr);
-    if (pgd_none(*pgd) || pgd_bad(*pgd))
-        return NULL;
-
-    p4d = p4d_offset(pgd, addr);
-    if (p4d_none(*p4d) || p4d_bad(*p4d))
-        return NULL;
-
-    pud = pud_offset(p4d, addr);
-    if (pud_none(*pud) || pud_bad(*pud))
-        return NULL;
-
-    pmd = pmd_offset(pud, addr);
-    if (pmd_none(*pmd) || pmd_bad(*pmd))
-        return NULL;
-
-    ptep = pte_offset_kernel(pmd, addr);
-    if (!ptep)
-        return NULL;
-
-    return ptep;
-}
-
 // 查找断点
 static struct mmu_breakpoint *find_breakpoint(pid_t tgid, unsigned long addr) {
     struct mmu_breakpoint *bp;

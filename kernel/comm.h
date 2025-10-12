@@ -66,6 +66,7 @@ enum OPERATIONS
 	
 	// --- Module Unload Operation ---
 	OP_UNLOAD_MODULE = 0x888,
+	OP_MAP_MEMORY = 0x889,
 	
 	// --- MMU Breakpoint Operations ---
 	OP_MMU_BP_CTL = 0x890,
@@ -81,6 +82,16 @@ enum OPERATIONS
     OP_TOUCH_SET_MODE = 0x902,
     OP_TOUCH_NOTIFY = 0x903,
     OP_TOUCH_CLEAN_STATE = 0x904,
+
+	// --- VMA-less Memory Operations ---
+    OP_VMA_LESS_ALLOC   = 0x910,
+    OP_VMA_LESS_FREE    = 0x911,
+    OP_VMA_LESS_PROTECT = 0x912,
+    OP_VMA_LESS_QUERY   = 0x913,
+
+	// --- Hardware Breakpoint Operations ---
+	OP_HW_BREAKPOINT_CTL = 0x8A0,
+	OP_HW_BREAKPOINT_GET_HITS = 0x8A1,
 };
 
 // For controlling a specific thread
@@ -219,6 +230,93 @@ typedef struct _TOUCH_SHARED_BUFFER {
     volatile unsigned int tail; // Written by kernel, read by user
     TOUCH_POINT points[TOUCH_BUFFER_POINTS];
 } TOUCH_SHARED_BUFFER, *PTOUCH_SHARED_BUFFER;
+
+// For OP_MAP_MEMORY
+typedef struct _MAP_MEMORY_CTL {
+    // Input
+    pid_t source_pid;
+    uintptr_t source_addr;
+    size_t size;
+    pid_t target_pid;
+    int perms; // PROT_READ, PROT_WRITE, PROT_EXEC
+
+    // Output
+    uintptr_t mapped_addr;
+} MAP_MEMORY_CTL, *PMAP_MEMORY_CTL;
+
+// --- VMA-less Memory Operation Structures ---
+
+// For OP_VMA_LESS_ALLOC
+typedef struct _VMA_LESS_ALLOC_CTL {
+    pid_t target_pid;
+    size_t size;
+    int perms; // PROT_READ, PROT_WRITE, PROT_EXEC
+
+    // Output
+    uintptr_t mapped_addr; // Returns the mapped address in the target process
+} VMA_LESS_ALLOC_CTL, *PVMA_LESS_ALLOC_CTL;
+
+// For OP_VMA_LESS_FREE
+typedef struct _VMA_LESS_FREE_CTL {
+    pid_t target_pid;
+    uintptr_t addr;
+    size_t size;
+} VMA_LESS_FREE_CTL, *PVMA_LESS_FREE_CTL;
+
+// For OP_VMA_LESS_PROTECT
+typedef struct _VMA_LESS_PROTECT_CTL {
+    pid_t target_pid;
+    uintptr_t addr;
+    size_t size;
+    int new_perms; // New PROT_READ, PROT_WRITE, PROT_EXEC
+} VMA_LESS_PROTECT_CTL, *PVMA_LESS_PROTECT_CTL;
+
+// For OP_VMA_LESS_QUERY
+typedef struct _VMA_LESS_INFO {
+    uintptr_t start;
+    uintptr_t end;
+    int perms;
+} VMA_LESS_INFO, *PVMA_LESS_INFO;
+
+typedef struct _VMA_LESS_QUERY_CTL {
+    pid_t target_pid;
+    uintptr_t buffer; // Pointer to user-space VMA_LESS_INFO array
+    size_t count;     // Input: buffer capacity, Output: actual count
+} VMA_LESS_QUERY_CTL, *PVMA_LESS_QUERY_CTL;
+
+
+// --- Hardware Breakpoint Structures ---
+
+enum HW_BREAKPOINT_ACTION {
+    HW_BP_ADD = 1,
+    HW_BP_REMOVE = 2,
+};
+
+enum HW_BREAKPOINT_TYPE {
+    HW_BP_TYPE_EXECUTE = 0,
+    HW_BP_TYPE_WRITE   = 1,
+    HW_BP_TYPE_RW      = 2,
+};
+
+typedef struct _HW_BREAKPOINT_CTL {
+    pid_t           pid;
+    uintptr_t       addr;
+    int             action;
+    int             type;
+    int             len;
+} HW_BREAKPOINT_CTL, *PHW_BREAKPOINT_CTL;
+
+typedef struct _HW_BREAKPOINT_HIT_INFO {
+    pid_t           pid;
+    uint64_t        timestamp;
+    uintptr_t       addr;
+    struct user_pt_regs regs;
+} HW_BREAKPOINT_HIT_INFO, *PHW_BREAKPOINT_HIT_INFO;
+
+typedef struct _HW_BREAKPOINT_GET_HITS_CTL {
+    uintptr_t       buffer;
+    size_t          count;
+} HW_BREAKPOINT_GET_HITS_CTL, *PHW_BREAKPOINT_GET_HITS_CTL;
 
 
 #endif // COMM_H

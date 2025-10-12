@@ -25,6 +25,9 @@
 #include "register.h"
 #include "mmu_breakpoint.h"
 #include "syscall_trace.h"
+#include "mmap_hijack.h"
+#include "vma_less.h"
+#include "hw_breakpoint.h"
 #include "inline_hook/p_lkrg_main.h"
 #include "inline_hook/utils/p_memory.h"
 #include "version_control.h"
@@ -50,13 +53,17 @@ static bool is_hijacked = false;
 // Module unload control
 static bool g_module_unloading = false;
 
+// --- Global pointers for non-exported symbols ---
+struct kmem_cache *vm_area_cachep = NULL;
+int (*insert_vm_struct)(struct mm_struct *mm, struct vm_area_struct *vma) = NULL;
+
+
 // --- End of Hijack Logic ---
 
 int dispatch_open(struct inode *node, struct file *file)
 {
 	return 0;
 }
-
 int dispatch_close(struct inode *node, struct file *file)
 {
 	return 0;
@@ -93,6 +100,13 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     REG_ACCESS *reg_access = NULL;
     MMU_BP_CTL *mbp = NULL;
     void *bp_list = NULL;
+    MAP_MEMORY_CTL *map_ctl = NULL;
+    VMA_LESS_ALLOC_CTL *vla_ctl = NULL;
+    VMA_LESS_FREE_CTL *vlf_ctl = NULL;
+    VMA_LESS_PROTECT_CTL *vlp_ctl = NULL;
+    VMA_LESS_QUERY_CTL *vlq_ctl = NULL;
+    HW_BREAKPOINT_CTL *hw_bp_ctl = NULL;
+    HW_BREAKPOINT_GET_HITS_CTL *hw_bp_get_hits_ctl = NULL;
     
     PRINT_DEBUG("[+] dispatch_ioctl called by PID %d with cmd: 0x%x\n", current->pid, cmd);
 
@@ -561,6 +575,30 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
         // Return success - the actual unload will happen through normal module mechanism
         return 0;
     }
+    case OP_MAP_MEMORY:
+    {
+#ifdef CONFIG_MEMORY_ACCESS_MODE
+        map_ctl = kmalloc(sizeof(MAP_MEMORY_CTL), GFP_KERNEL);
+        if (!map_ctl)
+            return -ENOMEM;
+
+        if (copy_from_user(map_ctl, (void __user *)arg, sizeof(MAP_MEMORY_CTL))) {
+            kfree(map_ctl);
+            return -EFAULT;
+        }
+
+        ret = handle_map_memory(map_ctl);
+
+        if (copy_to_user((void __user *)arg, map_ctl, sizeof(MAP_MEMORY_CTL))) {
+            ret = -EFAULT;
+        }
+
+        kfree(map_ctl);
+        return ret;
+#else
+        return -ENOTTY;
+#endif
+    }
     case OP_SYSCALL_TRACE_CTL:
     {
 #ifdef CONFIG_SYSCALL_TRACE_MODE
@@ -587,8 +625,109 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
         // TODO: 实现事件列表获取
         return -ENOSYS;
     }
-	default:
-		return -EINVAL; // Unrecognized command for our driver
+    case OP_VMA_LESS_ALLOC:
+    {
+#ifdef CONFIG_MEMORY_ACCESS_MODE
+        vla_ctl = kmalloc(sizeof(VMA_LESS_ALLOC_CTL), GFP_KERNEL);
+        if (!vla_ctl) return -ENOMEM;
+        if (copy_from_user(vla_ctl, (void __user *)arg, sizeof(VMA_LESS_ALLOC_CTL))) {
+            kfree(vla_ctl);
+            return -EFAULT;
+        }
+        ret = handle_vma_less_alloc(vla_ctl);
+        if (copy_to_user((void __user *)arg, vla_ctl, sizeof(VMA_LESS_ALLOC_CTL))) {
+            ret = -EFAULT;
+        }
+        kfree(vla_ctl);
+        return ret;
+#else
+        return -ENOTTY;
+#endif
+    }
+    case OP_VMA_LESS_FREE:
+    {
+#ifdef CONFIG_MEMORY_ACCESS_MODE
+        vlf_ctl = kmalloc(sizeof(VMA_LESS_FREE_CTL), GFP_KERNEL);
+        if (!vlf_ctl) return -ENOMEM;
+        if (copy_from_user(vlf_ctl, (void __user *)arg, sizeof(VMA_LESS_FREE_CTL))) {
+            kfree(vlf_ctl);
+            return -EFAULT;
+        }
+        ret = handle_vma_less_free(vlf_ctl);
+        kfree(vlf_ctl);
+        return ret;
+#else
+        return -ENOTTY;
+#endif
+    }
+    case OP_VMA_LESS_PROTECT:
+    {
+#ifdef CONFIG_MEMORY_ACCESS_MODE
+        vlp_ctl = kmalloc(sizeof(VMA_LESS_PROTECT_CTL), GFP_KERNEL);
+        if (!vlp_ctl) return -ENOMEM;
+        if (copy_from_user(vlp_ctl, (void __user *)arg, sizeof(VMA_LESS_PROTECT_CTL))) {
+            kfree(vlp_ctl);
+            return -EFAULT;
+        }
+        ret = handle_vma_less_protect(vlp_ctl);
+        kfree(vlp_ctl);
+        return ret;
+#else
+        return -ENOTTY;
+#endif
+    }
+    	case OP_VMA_LESS_QUERY:
+        {
+    #ifdef CONFIG_MEMORY_ACCESS_MODE
+            vlq_ctl = kmalloc(sizeof(VMA_LESS_QUERY_CTL), GFP_KERNEL);
+            if (!vlq_ctl) return -ENOMEM;
+            if (copy_from_user(vlq_ctl, (void __user *)arg, sizeof(VMA_LESS_QUERY_CTL))) {
+                kfree(vlq_ctl);
+                return -EFAULT;
+            }
+            ret = handle_vma_less_query(vlq_ctl);
+            if (copy_to_user((void __user *)arg, vlq_ctl, sizeof(VMA_LESS_QUERY_CTL))) {
+                ret = -EFAULT;
+            }
+            kfree(vlq_ctl);
+            return ret;
+    #else
+            return -ENOTTY;
+    #endif
+        }
+        case OP_HW_BREAKPOINT_CTL:
+        {
+    #ifdef CONFIG_HW_BREAKPOINT_MODE
+            hw_bp_ctl = kmalloc(sizeof(HW_BREAKPOINT_CTL), GFP_KERNEL);
+            if (!hw_bp_ctl) return -ENOMEM;
+            if (copy_from_user(hw_bp_ctl, (void __user *)arg, sizeof(HW_BREAKPOINT_CTL))) {
+                kfree(hw_bp_ctl);
+                return -EFAULT;
+            }
+            ret = handle_hw_breakpoint_control(hw_bp_ctl);
+            kfree(hw_bp_ctl);
+            return ret;
+    #else
+            return -ENOTTY;
+    #endif
+        }
+        case OP_HW_BREAKPOINT_GET_HITS:
+        {
+    #ifdef CONFIG_HW_BREAKPOINT_MODE
+            hw_bp_get_hits_ctl = kmalloc(sizeof(HW_BREAKPOINT_GET_HITS_CTL), GFP_KERNEL);
+            if (!hw_bp_get_hits_ctl) return -ENOMEM;
+            if (copy_from_user(hw_bp_get_hits_ctl, (void __user *)arg, sizeof(HW_BREAKPOINT_GET_HITS_CTL))) {
+                kfree(hw_bp_get_hits_ctl);
+                return -EFAULT;
+            }
+            ret = handle_hw_breakpoint_get_hits(hw_bp_get_hits_ctl, arg);
+            kfree(hw_bp_get_hits_ctl);
+            return ret;
+    #else
+            return -ENOTTY;
+    #endif
+        }
+    	default:		return -EINVAL; // Unrecognized command for our driver
 	}
 	return 0;
 }
@@ -624,6 +763,16 @@ int __init driver_entry(void)
 		PRINT_DEBUG("[-] kernel inline hook init failed\n");
 		return ret;
 	}
+
+    // Resolve non-exported symbols needed by mmap_hijack
+    vm_area_cachep = (struct kmem_cache *)kallsyms_lookup_name("vm_area_cachep");
+    insert_vm_struct = (void *)kallsyms_lookup_name("insert_vm_struct");
+
+    if (!vm_area_cachep || !insert_vm_struct) {
+        PRINT_DEBUG("[-] Failed to resolve vm_area_cachep or insert_vm_struct\n");
+        khook_exit();
+        return -EFAULT;
+    }
 
 	// --- Hijack Logic (Corrected) ---
 	PRINT_DEBUG("[+] Hijacking ioctl for %s\n", TARGET_FILE);
@@ -733,6 +882,24 @@ int __init driver_entry(void)
     }
 #endif
 
+#ifdef CONFIG_MEMORY_ACCESS_MODE
+    ret = vma_less_init();
+    if (ret)
+    {
+        _driver_cleanup();
+        return ret;
+    }
+#endif
+
+#ifdef CONFIG_HW_BREAKPOINT_MODE
+    ret = hw_breakpoint_init();
+    if (ret)
+    {
+        _driver_cleanup();
+        return ret;
+    }
+#endif
+
 	mutex_lock(&module_mutex);
 	list_del_init(&THIS_MODULE->list);
 	mutex_unlock(&module_mutex);
@@ -789,6 +956,12 @@ static void _driver_cleanup(void)
 #endif
 #ifdef CONFIG_TOUCH_INPUT_MODE
     touch_input_exit();
+#endif
+#ifdef CONFIG_MEMORY_ACCESS_MODE
+    vma_less_exit();
+#endif
+#ifdef CONFIG_HW_BREAKPOINT_MODE
+    hw_breakpoint_exit();
 #endif
 	khook_exit();
     

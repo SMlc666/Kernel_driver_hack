@@ -6,10 +6,15 @@
 
 #ifdef CONFIG_SINGLE_STEP_MODE
 
-extern pid_t g_target_tid; // Make accessible to other files
-extern struct user_pt_regs g_last_regs; // Make accessible to other files
-extern bool g_regs_valid; // Make accessible to other files
-extern bool g_is_general_suspend; // Make accessible to other files - indicates general suspend mode
+// For single-step debugger
+extern pid_t g_target_tid;
+extern struct user_pt_regs g_last_regs;
+extern bool g_regs_valid;
+
+// For multi-thread suspend/resume
+void add_tid_to_suspend_list(pid_t tid);
+void remove_tid_from_suspend_list(pid_t tid);
+bool is_tid_in_suspend_list(pid_t tid);
 
 int handle_single_step_control(PSINGLE_STEP_CTL ctl);
 int single_step_init(void);
@@ -21,6 +26,10 @@ void single_step_exit(void);
 static inline int handle_single_step_control(PSINGLE_STEP_CTL ctl) { return 0; }
 static inline int single_step_init(void) { return 0; }
 static inline void single_step_exit(void) { }
+static inline void add_tid_to_suspend_list(pid_t tid) { }
+static inline void remove_tid_from_suspend_list(pid_t tid) { }
+static inline bool is_tid_in_suspend_list(pid_t tid) { return false; }
+
 
 // Define dummy variables
 static inline pid_t get_g_target_tid(void) { return 0; }

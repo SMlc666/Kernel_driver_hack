@@ -57,27 +57,19 @@ int handle_thread_control(PTHREAD_CTL ctl)
     switch (ctl->action) {
         case THREAD_ACTION_SUSPEND:
             PRINT_DEBUG("[+] Stealth Suspend: Using single-step mechanism for TID %d.\n", ctl->tid);
-            // Use single-step mechanism for reliable suspension
-            // Set the general suspend flag and enable single-step
-            g_is_general_suspend = true;
+            add_tid_to_suspend_list(ctl->tid);
             _user_enable_single_step(task);
             break;
 
         case THREAD_ACTION_RESUME:
             PRINT_DEBUG("[+] Stealth Resume: Waking up TID %d.\n", ctl->tid);
-            // Use the kernel's standard wakeup function. This correctly sets the
-            // state to TASK_RUNNING and places it on the runqueue. No signals.
+            remove_tid_from_suspend_list(ctl->tid);
             ret = wake_up_process(task);
-            // wake_up_process returns 1 on success (if the task was woken), 0 otherwise.
-            // We can normalize this to 0 for success for our ioctl.
             ret = (ret == 1) ? 0 : -EAGAIN;
             break;
 
         case THREAD_ACTION_KILL:
             PRINT_DEBUG("[+] Terminate: Using safe kernel mechanism (SIGKILL) for TID %d.\n", ctl->tid);
-            // This is a deliberate design choice. Bypassing the kernel's safe
-            // exit path is extremely dangerous and risks kernel panic.
-            // Using send_sig_info is the only reliable way to terminate a task.
             ret = send_sig_info(SIGKILL, SEND_SIG_FORCED, task);
             break;
 

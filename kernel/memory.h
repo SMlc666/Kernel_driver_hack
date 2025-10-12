@@ -18,6 +18,8 @@ bool read_physical_address_safe(phys_addr_t pa, void *buffer, size_t size);
 
 bool read_process_memory_safe(pid_t pid, uintptr_t addr, void *buffer, size_t size);
 
+pte_t *virt_to_pte(struct task_struct *task, unsigned long addr);
+
 #else
 
 // If the mode is disabled, define the functions as empty inlines that return safe defaults

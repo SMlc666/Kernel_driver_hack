@@ -51,4 +51,7 @@
 // Modify hit next mode (if needed)
 #define CONFIG_MODIFY_HIT_NEXT_MODE
 
+// Hardware breakpoint module
+#define CONFIG_HW_BREAKPOINT_MODE
+
 #endif // VERSION_CONTROL_H
