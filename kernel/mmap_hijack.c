@@ -5,6 +5,7 @@
 #include <linux/version.h>
 #include <linux/mman.h>
 #include <linux/gfp.h>
+#include <linux/mmap_lock.h>
 
 #include "mmap_hijack.h"
 #include "memory.h" // for translate_linear_address
