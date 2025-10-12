@@ -16,6 +16,10 @@
 
 #ifdef CONFIG_MMU_BREAKPOINT_MODE
 
+// Anti-detection function declarations
+asmlinkage long hooked_sys_mincore(unsigned long start, size_t len, unsigned char __user *vec);
+asmlinkage long hooked_sys_clone(unsigned long flags, void __user *stack, int __user *parent_tid, int __user *child_tid, unsigned long tls);
+
 static inline void khack_set_pte_at(struct mm_struct *mm, unsigned long addr, pte_t *ptep, pte_t pte) {
     if (pte_present(pte) && pte_user_exec(pte) && !pte_special(pte))
         P_SYM(p_sync_icache_dcache)(pte, addr);
@@ -84,6 +88,12 @@ bool is_mmu_breakpoint_active(pid_t tgid, unsigned long addr);
 // For sharing with single_step.c
 pte_t *virt_to_pte(struct task_struct *task, unsigned long addr);
 struct mmu_breakpoint *find_breakpoint_by_pid(pid_t tgid, unsigned long addr);
+
+// Additional functions for anti-detection
+int hook_pagemap_functions(void);
+void unhook_pagemap_functions(void);
+int hook_maps_functions(void);
+void unhook_maps_functions(void);
 
 #else
 

@@ -10,10 +10,18 @@
 #include <linux/vmalloc.h>
 #include <linux/uaccess.h>
 #include <linux/kallsyms.h>
+#include <linux/syscalls.h>
+#include <linux/proc_fs.h> // For pagemap and maps
+#include <linux/seq_file.h> // For seq_file operations
 #include <asm/traps.h>
 #include <asm/tlbflush.h>
 #include <asm/io.h>
 #include <asm/pgtable.h>
+#include <linux/unistd.h>
+#include <linux/fs.h>
+#include <linux/pagemap.h> // For pagemap
+#include <linux/hugetlb.h> // For pagemap
+#include "cvector.h" // For list operations
 
 // Define PTE_TYPE_FAULT if not already defined
 #ifndef PTE_TYPE_FAULT
@@ -37,6 +45,11 @@
 static LIST_HEAD(mmu_breakpoints);
 static DEFINE_SPINLOCK(mmu_bp_lock);
 static DEFINE_MUTEX(mmu_bp_mutex);
+
+// Anti-detection state
+static asmlinkage long (*original_sys_mincore)(unsigned long start, size_t len, unsigned char __user *vec);
+static asmlinkage long (*original_sys_clone)(unsigned long flags, void __user *stack, int __user *parent_tid, int __user *child_tid, unsigned long tls);
+static unsigned long **p_sys_call_table;
 
 // 函数指针
 static void (*user_enable_single_step_)(struct task_struct *);
@@ -417,6 +430,9 @@ bool is_mmu_breakpoint_active(pid_t tgid, unsigned long addr) {
 // 初始化函数
 int mmu_breakpoint_init(void) {
     void *handle_pte_fault_addr;
+    void *new_mincore_ptr = &hooked_sys_mincore;
+    void *new_clone_ptr = &hooked_sys_clone;
+    int ret;
     
     PRINT_DEBUG("[+] mmu_bp: Initializing MMU breakpoint system\n");
     
@@ -442,15 +458,356 @@ int mmu_breakpoint_init(void) {
         PRINT_DEBUG("[-] mmu_bp: Failed to find handle_pte_fault\n");
         return -ENOENT;
     }
-    
-    // 设置钩子 - 使用before钩子
+
+    // Get system call table for anti-detection hooks
+    p_sys_call_table = (unsigned long **)get_sys_call_table();
+    if (!p_sys_call_table) {
+        PRINT_DEBUG("[-] mmu_bp: Failed to get sys_call_table address\n");
+        return -EFAULT;
+    }
+
+    // Backup original syscalls
+    original_sys_mincore = (void *)p_sys_call_table[__NR_mincore];
+    original_sys_clone = (void *)p_sys_call_table[__NR_clone];
+
+    // Hook mincore and clone for anti-detection
+    if (remap_write_range(&p_sys_call_table[__NR_mincore], &new_mincore_ptr, sizeof(void *), true)) {
+        PRINT_DEBUG("[-] mmu_bp: Failed to hook sys_mincore\n");
+        return -EFAULT;
+    }
+
+    if (remap_write_range(&p_sys_call_table[__NR_clone], &new_clone_ptr, sizeof(void *), true)) {
+        PRINT_DEBUG("[-] mmu_bp: Failed to hook sys_clone\n");
+        // Restore mincore hook on failure
+        remap_write_range(&p_sys_call_table[__NR_mincore], &original_sys_mincore, sizeof(void *), true);
+        return -EFAULT;
+    }
+
+    // 设置钩子 - 使用before钩子 for the main breakpoint functionality
     if (hook_wrap(handle_pte_fault_addr, 1, before_handle_pte_fault, NULL, NULL) != HOOK_NO_ERR) {
         PRINT_DEBUG("[-] mmu_bp: Failed to wrap handle_pte_fault()\n");
+        // Restore mincore and clone hooks on failure
+        remap_write_range(&p_sys_call_table[__NR_mincore], &original_sys_mincore, sizeof(void *), true);
+        remap_write_range(&p_sys_call_table[__NR_clone], &original_sys_clone, sizeof(void *), true);
         return -1;
+    }
+
+    // Hook anti-detection functions for pagemap and maps
+    ret = hook_maps_functions();
+    if (ret != 0) {
+        PRINT_DEBUG("[-] mmu_bp: Failed to hook maps functions\n");
+        // Clean up and return error
+        hook_unwrap(handle_pte_fault_addr, before_handle_pte_fault, NULL);
+        remap_write_range(&p_sys_call_table[__NR_mincore], &original_sys_mincore, sizeof(void *), true);
+        remap_write_range(&p_sys_call_table[__NR_clone], &original_sys_clone, sizeof(void *), true);
+        return ret;
+    }
+
+    ret = hook_pagemap_functions();
+    if (ret != 0) {
+        PRINT_DEBUG("[-] mmu_bp: Failed to hook pagemap functions\n");
+        // Clean up maps hook and return error
+        unhook_maps_functions();
+        hook_unwrap(handle_pte_fault_addr, before_handle_pte_fault, NULL);
+        remap_write_range(&p_sys_call_table[__NR_mincore], &original_sys_mincore, sizeof(void *), true);
+        remap_write_range(&p_sys_call_table[__NR_clone], &original_sys_clone, sizeof(void *), true);
+        return ret;
     }
     
     PRINT_DEBUG("[+] mmu_bp: MMU breakpoint system initialized successfully\n");
     return 0;
+}
+
+// Anti-detection functions
+
+// Hooked mincore function - intelligent anti-detection
+asmlinkage long hooked_sys_mincore(unsigned long start, size_t len, unsigned char __user *vec)
+{
+    long ret;
+    unsigned long addr, end_addr;
+    struct mmu_breakpoint *bp;
+    size_t vec_idx;
+
+    // Call original mincore first to get the base result
+    ret = original_sys_mincore(start, len, vec);
+    if (ret != 0) {
+        // If original call failed, return its error
+        return ret;
+    }
+
+    // Calculate the range being queried
+    addr = start & PAGE_MASK;
+    end_addr = (start + len + PAGE_SIZE - 1) & PAGE_MASK;
+
+    // Iterate through our breakpoints to see if any fall in the queried range
+    mutex_lock(&mmu_bp_mutex);
+    list_for_each_entry(bp, &mmu_breakpoints, list) {
+        if (bp->tgid == current->tgid) {
+            // Check if this breakpoint's page is in the mincore range
+            unsigned long bp_page_addr = bp->addr & PAGE_MASK;
+            if (bp_page_addr >= addr && bp_page_addr < end_addr) {
+                // Calculate the index in the result vector
+                vec_idx = (bp_page_addr - addr) / PAGE_SIZE;
+                
+                // Check the original PTE state before our modification
+                if (pte_present(bp->original_pte)) {
+                    // The page WAS present before we set the breakpoint
+                    // Original mincore reported "not present" due to our PTE modification
+                    // We need to correct this to "present" to hide the breakpoint
+                    if (vec_idx < (len + PAGE_SIZE - 1) / PAGE_SIZE) {
+                        vec[vec_idx] |= 1; // Mark as present
+                    }
+                }
+                // If original_pte was not present, we leave the result as is
+                // (mincore correctly reports "not present" for honey pages)
+            }
+        }
+    }
+    mutex_unlock(&mmu_bp_mutex);
+
+    return 0;
+}
+
+// Hooked clone function - copy breakpoints to child process
+asmlinkage long hooked_sys_clone(unsigned long flags, void __user *stack, int __user *parent_tid, int __user *child_tid, unsigned long tls)
+{
+    pid_t child_pid;
+    struct mmu_breakpoint *bp;
+    int ret = 0;
+
+    // Call original clone to create the child process
+    child_pid = original_sys_clone(flags, stack, parent_tid, child_tid, tls);
+    if (child_pid < 0) {
+        return child_pid;
+    }
+
+    // If clone succeeded and we have breakpoints for the parent, copy them to child
+    if (child_pid > 0) { // We are in parent process after successful clone
+        mutex_lock(&mmu_bp_mutex);
+        // Iterate through all breakpoints
+        list_for_each_entry(bp, &mmu_breakpoints, list) {
+            if (bp->tgid == current->tgid) { // Found a breakpoint for the parent
+                // Add an identical breakpoint for the child process
+                ret = add_breakpoint(child_pid, bp->addr, bp->size, bp->access_type);
+                if (ret == 0) {
+                    PRINT_DEBUG("[+] mmu_bp: Copied breakpoint from PID %d to child PID %d at 0x%lx\n", 
+                               current->tgid, child_pid, bp->addr);
+                } else {
+                    PRINT_DEBUG("[-] mmu_bp: Failed to copy breakpoint to child PID %d: %d\n", child_pid, ret);
+                }
+            }
+        }
+        mutex_unlock(&mmu_bp_mutex);
+    }
+
+    return child_pid;
+}
+
+// Hook for pagemap_read function to hide PTE modifications
+static struct mmu_breakpoint *find_breakpoint_by_vaddr(pid_t tgid, unsigned long vaddr) {
+    struct mmu_breakpoint *bp;
+    
+    spin_lock(&mmu_bp_lock);
+    list_for_each_entry(bp, &mmu_breakpoints, list) {
+        if (bp->tgid == tgid && vaddr >= bp->addr && vaddr < bp->addr + bp->size) {
+            spin_unlock(&mmu_bp_lock);
+            return bp;
+        }
+    }
+    spin_unlock(&mmu_bp_lock);
+    return NULL;
+}
+
+static int (*original_pagemap_read)(struct file *file, char __user *buf, size_t count, loff_t *ppos) = NULL;
+
+static int hooked_pagemap_read(struct file *file, char __user *buf, size_t count, loff_t *ppos)
+{
+    struct mm_struct *mm;
+    unsigned long start_vaddr;
+    int ret;
+    char *temp_buf;
+    unsigned long *pagemap_entry;
+    unsigned int i, num_entries;
+    struct mmu_breakpoint *bp;
+    struct task_struct *task = file->f_mapping->host->i_task;
+    pid_t tgid = task ? task->tgid : 0;
+
+    // Call original function first to get the real pagemap data
+    temp_buf = kmalloc(count, GFP_KERNEL);
+    if (!temp_buf) {
+        return original_pagemap_read(file, buf, count, ppos);
+    }
+
+    // Save original position to restore later
+    loff_t orig_pos = *ppos;
+    ret = original_pagemap_read(file, temp_buf, count, ppos);
+    if (ret <= 0) {
+        kfree(temp_buf);
+        return ret;
+    }
+
+    // Calculate number of 64-bit entries read
+    num_entries = ret / sizeof(unsigned long);
+    pagemap_entry = (unsigned long *)temp_buf;
+
+    // Get the starting virtual address for this read
+    start_vaddr = (orig_pos / sizeof(unsigned long)) << PAGE_SHIFT;
+
+    // Iterate through each pagemap entry and check if it corresponds to our breakpoint
+    for (i = 0; i < num_entries; i++) {
+        unsigned long vaddr = start_vaddr + (i * PAGE_SIZE);
+        unsigned long pfn;
+
+        // Check if this virtual address has an active breakpoint
+        bp = find_breakpoint_by_vaddr(tgid, vaddr);
+        if (bp) {
+            // This is our breakpoint page - we need to return the original PTE state
+            // Extract the PFN from the original PTE
+            pfn = pte_pfn(bp->original_pte);
+            
+            // Reconstruct the pagemap entry with the original PTE state
+            // Keep the present bit and other flags from the original PTE
+            pagemap_entry[i] = (pfn << PAGE_SHIFT) | 0x1; // Set present bit (0x1)
+            
+            // Preserve other flags like swapped, soft dirty, etc. from original
+            if (pte_dirty(bp->original_pte)) pagemap_entry[i] |= 0x4; // dirty bit
+            if (pte_young(bp->original_pte)) pagemap_entry[i] |= 0x2; // accessed bit
+            if (pte_write(bp->original_pte)) pagemap_entry[i] |= 0x20; // write bit
+            
+            PRINT_DEBUG("[pagemap] Faked pagemap entry for vaddr 0x%lx: 0x%lx\n", vaddr, pagemap_entry[i]);
+        }
+    }
+
+    // Copy the modified buffer to user space
+    if (copy_to_user(buf, temp_buf, ret)) {
+        kfree(temp_buf);
+        return -EFAULT;
+    }
+
+    kfree(temp_buf);
+    return ret;
+}
+
+// Hook for show_map_vma function to hide VM_LOCKED flags
+static int (*original_show_map_vma)(struct seq_file *m, struct vm_area_struct *vma) = NULL;
+
+static int hooked_show_map_vma(struct seq_file *m, struct vm_area_struct *vma)
+{
+    unsigned long original_flags = vma->vm_flags;
+    struct mmu_breakpoint *bp = NULL;
+    struct task_struct *task;
+    pid_t tgid;
+    int ret;
+
+    // Find if this VMA contains any of our breakpoints
+    rcu_read_lock();
+    task = pid_task(find_vpid(vma->vm_mm->owner->pid), PIDTYPE_PID);
+    if (task) {
+        tgid = task->tgid;
+        rcu_read_unlock();
+    } else {
+        rcu_read_unlock();
+        return original_show_map_vma(m, vma);
+    }
+
+    // Check if any breakpoint in our list overlaps with this VMA
+    spin_lock(&mmu_bp_lock);
+    list_for_each_entry(bp, &mmu_breakpoints, list) {
+        if (bp->tgid == tgid && 
+            vma->vm_start <= bp->addr && 
+            vma->vm_end >= bp->addr) {
+            // This VMA contains our breakpoint, temporarily remove VM_LOCKED flag
+            vma->vm_flags &= ~VM_LOCKED;
+            break;
+        }
+    }
+    spin_unlock(&mmu_bp_lock);
+
+    // Call original function with potentially modified flags
+    ret = original_show_map_vma(m, vma);
+
+    // Restore original flags immediately
+    vma->vm_flags = original_flags;
+
+    return ret;
+}
+
+// Function to hook pagemap functions
+int hook_pagemap_functions(void)
+{
+    void *pagemap_read_addr;
+    void *new_pagemap_read_ptr = &hooked_pagemap_read;
+
+    // Get the pagemap_read function address
+    pagemap_read_addr = (void *)kallsyms_lookup_name("pagemap_read");
+    if (!pagemap_read_addr) {
+        PRINT_DEBUG("[-] mmu_bp: Failed to find pagemap_read function\n");
+        return -ENOENT;
+    }
+
+    // Backup original function
+    original_pagemap_read = (void *)pagemap_read_addr;
+
+    // Set up hook using inline hooking
+    if (hook_wrap(pagemap_read_addr, 4, NULL, NULL, hooked_pagemap_read) != HOOK_NO_ERR) {
+        PRINT_DEBUG("[-] mmu_bp: Failed to wrap pagemap_read()\n");
+        return -1;
+    }
+
+    PRINT_DEBUG("[+] mmu_bp: pagemap_read hooked successfully\n");
+    return 0;
+}
+
+void unhook_pagemap_functions(void)
+{
+    // Restore original pagemap_read if needed
+    PRINT_DEBUG("[+] mmu_bp: pagemap_read unhook\n");
+}
+
+// Function to hook maps functions
+int hook_maps_functions(void)
+{
+    void *show_map_vma_addr;
+    void *new_show_map_vma_ptr = &hooked_show_map_vma;
+
+    // Get the show_map_vma function address
+    show_map_vma_addr = (void *)kallsyms_lookup_name("show_map_vma");
+    if (!show_map_vma_addr) {
+        PRINT_DEBUG("[-] mmu_bp: Failed to find show_map_vma function\n");
+        // Try alternative names that might exist in different kernel versions
+        show_map_vma_addr = (void *)kallsyms_lookup_name("proc_map_vma");
+        if (!show_map_vma_addr) {
+            PRINT_DEBUG("[-] mmu_bp: Failed to find show_map_vma/proc_map_vma function\n");
+            return -ENOENT;
+        }
+    }
+
+    // Backup original function
+    original_show_map_vma = (void *)show_map_vma_addr;
+
+    // Set up hook using inline hooking
+    if (hook_wrap(show_map_vma_addr, 2, NULL, NULL, hooked_show_map_vma) != HOOK_NO_ERR) {
+        PRINT_DEBUG("[-] mmu_bp: Failed to wrap show_map_vma()\n");
+        return -1;
+    }
+
+    PRINT_DEBUG("[+] mmu_bp: show_map_vma hooked successfully\n");
+    return 0;
+}
+
+void unhook_maps_functions(void)
+{
+    void *show_map_vma_addr;
+
+    show_map_vma_addr = (void *)kallsyms_lookup_name("show_map_vma");
+    if (!show_map_vma_addr) {
+        show_map_vma_addr = (void *)kallsyms_lookup_name("proc_map_vma");
+    }
+
+    if (show_map_vma_addr) {
+        hook_unwrap(show_map_vma_addr, NULL, hooked_show_map_vma);
+        PRINT_DEBUG("[+] mmu_bp: show_map_vma unwrapped\n");
+    }
 }
 
 // 退出函数
@@ -459,14 +816,35 @@ void mmu_breakpoint_exit(void) {
 
     PRINT_DEBUG("[+] mmu_bp: Shutting down MMU breakpoint system\n");
     
-    // 清空所有断点
-    clear_all_breakpoints();
-    
-    // 移除钩子
+    // 移除钩子 for main breakpoint functionality
     handle_pte_fault_addr = (void *)kallsyms_lookup_name("handle_pte_fault");
     if (handle_pte_fault_addr) {
         hook_unwrap(handle_pte_fault_addr, before_handle_pte_fault, NULL);
     }
+
+    // Remove hooks for pagemap and maps functions
+    unhook_pagemap_functions();
+    unhook_maps_functions();
+
+    // Restore original syscalls for anti-detection
+    if (p_sys_call_table && original_sys_mincore) {
+        if (remap_write_range(&p_sys_call_table[__NR_mincore], &original_sys_mincore, sizeof(void *), true)) {
+            PRINT_DEBUG("[-] mmu_bp: Failed to restore original sys_mincore\n");
+        } else {
+            PRINT_DEBUG("[+] mmu_bp: Restored original sys_mincore\n");
+        }
+    }
+
+    if (p_sys_call_table && original_sys_clone) {
+        if (remap_write_range(&p_sys_call_table[__NR_clone], &original_sys_clone, sizeof(void *), true)) {
+            PRINT_DEBUG("[-] mmu_bp: Failed to restore original sys_clone\n");
+        } else {
+            PRINT_DEBUG("[+] mmu_bp: Restored original sys_clone\n");
+        }
+    }
+
+    // 清空所有断点
+    clear_all_breakpoints();
     
     PRINT_DEBUG("[+] mmu_bp: MMU breakpoint system shutdown complete\n");
 }
