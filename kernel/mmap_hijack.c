@@ -13,7 +13,7 @@
 
 // External symbols we need
 extern struct kmem_cache *vm_area_cachep;
-extern int insert_vm_struct(struct mm_struct *mm, struct vm_area_struct *vma);
+extern int khack_insert_vm_struct(struct mm_struct *mm, struct vm_area_struct *vma);
 
 int handle_map_memory(PMAP_MEMORY_CTL ctl)
 {
@@ -117,7 +117,7 @@ int handle_map_memory(PMAP_MEMORY_CTL ctl)
     }
 
     // 6. Insert the new VMA into the target's address space
-    if (insert_vm_struct(target_mm, target_vma)) {
+    if (khack_insert_vm_struct(target_mm, target_vma)) {
         kmem_cache_free(vm_area_cachep, target_vma);
         ret = -ENOMEM;
         goto out_unlock_target_and_release_pages;
