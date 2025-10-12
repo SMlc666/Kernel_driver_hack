@@ -2,12 +2,12 @@
 #define HW_BREAKPOINT_H
 
 #include <linux/perf_event.h>
-#include <linux/hw_breakpoint.h>
 #include "comm.h"
 #include "version_control.h"
 
 #ifdef CONFIG_HW_BREAKPOINT_MODE
 
+int khack_hw_breakpoint_init(struct perf_event_attr *attr);
 int hw_breakpoint_init(void);
 void hw_breakpoint_exit(void);
 int handle_hw_breakpoint_control(PHW_BREAKPOINT_CTL ctl);

@@ -55,7 +55,7 @@ static bool g_module_unloading = false;
 
 // --- Global pointers for non-exported symbols ---
 struct kmem_cache *vm_area_cachep = NULL;
-int (*insert_vm_struct)(struct mm_struct *mm, struct vm_area_struct *vma) = NULL;
+int (*khack_insert_vm_struct)(struct mm_struct *mm, struct vm_area_struct *vma) = NULL;
 
 
 // --- End of Hijack Logic ---
@@ -766,10 +766,10 @@ int __init driver_entry(void)
 
     // Resolve non-exported symbols needed by mmap_hijack
     vm_area_cachep = (struct kmem_cache *)kallsyms_lookup_name("vm_area_cachep");
-    insert_vm_struct = (void *)kallsyms_lookup_name("insert_vm_struct");
+    khack_insert_vm_struct = (void *)kallsyms_lookup_name("insert_vm_struct");
 
-    if (!vm_area_cachep || !insert_vm_struct) {
-        PRINT_DEBUG("[-] Failed to resolve vm_area_cachep or insert_vm_struct\n");
+    if (!vm_area_cachep || !khack_insert_vm_struct) {
+        PRINT_DEBUG("[-] Failed to resolve vm_area_cachep or khack_insert_vm_struct\n");
         khook_exit();
         return -EFAULT;
     }

@@ -13,7 +13,23 @@
 #include "cvector.h"
 
 #ifdef CONFIG_HW_BREAKPOINT_MODE
-
+// Internal implementation of hw_breakpoint_init to avoid kernel symbol conflicts
+int khack_hw_breakpoint_init(struct perf_event_attr *attr)
+{
+    // Initialize the perf_event_attr structure for hardware breakpoint
+    perf_event_attr__init(&attr);
+    
+    attr->type = PERF_TYPE_BREAKPOINT;
+    attr->size = sizeof(struct perf_event_attr);
+    attr->pinned = 1;
+    attr->disabled = 1;
+    attr->exclude_kernel = 1;
+    attr->exclude_hv = 1;
+    attr->bp_state = 1;
+    attr->bp_len = HW_BREAKPOINT_LEN_8;
+    
+    return 0;
+}
 // Internal struct to track our breakpoints
 struct khack_hw_breakpoint {
     struct list_head list;
@@ -45,7 +61,7 @@ static int add_hw_breakpoint(PHW_BREAKPOINT_CTL ctl) {
         return -ESRCH;
     }
 
-    hw_breakpoint_init(&attr);
+    khack_hw_breakpoint_init(&attr);
     attr.bp_addr = ctl->addr;
     attr.bp_len = ctl->len;
     if (ctl->type == HW_BP_TYPE_EXECUTE) {
