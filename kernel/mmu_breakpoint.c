@@ -134,7 +134,8 @@ static void before_handle_pte_fault(hook_fargs1_t *fargs, void *udata) {
     }
 
     // Restore the page to its original state so the original handler can process it
-    pte_t *ptep = pte_offset_map(vmf->pmd, vmf->address);
+    pte_t *ptep;
+    ptep = pte_offset_map(vmf->pmd, vmf->address);
     if (!ptep) {
         // Cannot resolve PTE, something is wrong. Do nothing and let original handle it.
         return;
@@ -629,7 +630,7 @@ static int hooked_pagemap_read(struct file *file, char __user *buf, size_t count
     unsigned long *pagemap_entry;
     unsigned int i, num_entries;
     struct mmu_breakpoint *bp;
-    struct task_struct *task = file->f_mapping->host->i_task;
+    struct task_struct *task = current;  // Use current task instead of trying to get from inode
     pid_t tgid = task ? task->tgid : 0;
 
     // Call original function first to get the real pagemap data
