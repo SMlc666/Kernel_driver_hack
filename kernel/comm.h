@@ -4,6 +4,10 @@
 // No longer need linux/input.h
 // #include <linux/input.h> // For struct input_event
 
+// Include necessary headers for user_pt_regs
+#include <linux/types.h>
+#include <asm/ptrace.h>
+
 typedef struct _COPY_MEMORY
 {
 	pid_t pid;
