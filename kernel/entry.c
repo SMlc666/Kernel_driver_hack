@@ -98,20 +98,28 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     ANTI_PTRACE_CTL *apc = NULL;
     ENUM_THREADS *et = NULL;
     THREAD_CTL *tc = NULL;
+#ifdef CONFIG_SINGLE_STEP_MODE
     SINGLE_STEP_CTL *ssc = NULL;
+#endif
     SPAWN_SUSPEND_CTL *spawn_ctl = NULL;
     RESUME_PROCESS_CTL *resume_ctl = NULL;
     struct task_struct *task = NULL;
     REG_ACCESS *reg_access = NULL;
+#ifdef CONFIG_MMU_BREAKPOINT_MODE
     MMU_BP_CTL *mbp = NULL;
     void *bp_list = NULL;
+#endif
+#ifdef CONFIG_MEMORY_ACCESS_MODE
     MAP_MEMORY_CTL *map_ctl = NULL;
     VMA_LESS_ALLOC_CTL *vla_ctl = NULL;
     VMA_LESS_FREE_CTL *vlf_ctl = NULL;
     VMA_LESS_PROTECT_CTL *vlp_ctl = NULL;
     VMA_LESS_QUERY_CTL *vlq_ctl = NULL;
+#endif
+#ifdef CONFIG_HW_BREAKPOINT_MODE
     HW_BREAKPOINT_CTL *hw_bp_ctl = NULL;
     HW_BREAKPOINT_GET_HITS_CTL *hw_bp_get_hits_ctl = NULL;
+#endif
     
     PRINT_DEBUG("[+] dispatch_ioctl called by PID %d with cmd: 0x%x\n", current->pid, cmd);
 
@@ -134,11 +142,13 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
         // Set new client's thread group ID
         client_pid = current->tgid;
 
+#ifdef CONFIG_SINGLE_STEP_MODE
         // Force-cleanup any stale single-step session from a previous client
-        if (g_target_tid != 0) {
-            PRINT_DEBUG("[+] Forcibly cleaning up stale single-step session for TID %d\n", g_target_tid);
-            single_step_exit(); 
+        if (get_g_target_tid() != 0) {
+            PRINT_DEBUG("[+] Forcibly cleaning up stale single-step session for TID %d\n", get_g_target_tid());
+            single_step_exit();
         }
+#endif
 
         mutex_unlock(&auth_mutex);
         PRINT_DEBUG("[+] Client authenticated with PID: %d\n", client_pid);
