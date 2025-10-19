@@ -22,8 +22,11 @@
 #define CONFIG_HIDE_PROC_MODE
 
 // Memory access module (read/write process memory - base functionality)
+#define CONFIG_MEMORY_ACCESS_MODE
+
 // VMA-less memory mapping - DEBUGGER MODULE (DISABLED)
-//#define CONFIG_MEMORY_ACCESS_MODE
+// Requires CONFIG_MEMORY_ACCESS_MODE to be enabled
+//#define CONFIG_VMA_LESS_MODE
 
 // Thread control module (suspend/resume/kill threads) - DEBUGGER MODULE (DISABLED)
 //#define CONFIG_THREAD_CONTROL_MODE

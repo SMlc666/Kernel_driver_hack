@@ -20,7 +20,7 @@ extern int (*khack_pmd_alloc)(struct mm_struct *mm, pud_t *pud, unsigned long ad
 extern int (*khack_pte_alloc)(struct mm_struct *mm, pmd_t *pmd);
 extern void (*khack_sync_icache_dcache)(pte_t pteval);
 
-#ifdef CONFIG_MEMORY_ACCESS_MODE
+#ifdef CONFIG_VMA_LESS_MODE
 
 // Data structure to track VMA-less mappings
 struct vma_less_mapping {
@@ -423,4 +423,4 @@ static void unmap_pages_from_proc(struct mm_struct *mm, uintptr_t addr, size_t s
     flush_tlb_mm_range(mm, addr, end);
     up_write(&mm->mmap_sem);
 }
-#endif // CONFIG_MEMORY_ACCESS_MODE
+#endif // CONFIG_VMA_LESS_MODE

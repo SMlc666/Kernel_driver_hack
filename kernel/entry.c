@@ -115,6 +115,8 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 #endif
 #ifdef CONFIG_MEMORY_ACCESS_MODE
     MAP_MEMORY_CTL *map_ctl = NULL;
+#endif
+#ifdef CONFIG_VMA_LESS_MODE
     VMA_LESS_ALLOC_CTL *vla_ctl = NULL;
     VMA_LESS_FREE_CTL *vlf_ctl = NULL;
     VMA_LESS_PROTECT_CTL *vlp_ctl = NULL;
@@ -658,7 +660,7 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     }
     case OP_VMA_LESS_ALLOC:
     {
-#ifdef CONFIG_MEMORY_ACCESS_MODE
+#ifdef CONFIG_VMA_LESS_MODE
         vla_ctl = kmalloc(sizeof(VMA_LESS_ALLOC_CTL), GFP_KERNEL);
         if (!vla_ctl) return -ENOMEM;
         if (copy_from_user(vla_ctl, (void __user *)arg, sizeof(VMA_LESS_ALLOC_CTL))) {
@@ -677,7 +679,7 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     }
     case OP_VMA_LESS_FREE:
     {
-#ifdef CONFIG_MEMORY_ACCESS_MODE
+#ifdef CONFIG_VMA_LESS_MODE
         vlf_ctl = kmalloc(sizeof(VMA_LESS_FREE_CTL), GFP_KERNEL);
         if (!vlf_ctl) return -ENOMEM;
         if (copy_from_user(vlf_ctl, (void __user *)arg, sizeof(VMA_LESS_FREE_CTL))) {
@@ -693,7 +695,7 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     }
     case OP_VMA_LESS_PROTECT:
     {
-#ifdef CONFIG_MEMORY_ACCESS_MODE
+#ifdef CONFIG_VMA_LESS_MODE
         vlp_ctl = kmalloc(sizeof(VMA_LESS_PROTECT_CTL), GFP_KERNEL);
         if (!vlp_ctl) return -ENOMEM;
         if (copy_from_user(vlp_ctl, (void __user *)arg, sizeof(VMA_LESS_PROTECT_CTL))) {
@@ -709,7 +711,7 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     }
     	case OP_VMA_LESS_QUERY:
         {
-    #ifdef CONFIG_MEMORY_ACCESS_MODE
+    #ifdef CONFIG_VMA_LESS_MODE
             vlq_ctl = kmalloc(sizeof(VMA_LESS_QUERY_CTL), GFP_KERNEL);
             if (!vlq_ctl) return -ENOMEM;
             if (copy_from_user(vlq_ctl, (void __user *)arg, sizeof(VMA_LESS_QUERY_CTL))) {
