@@ -40,13 +40,13 @@ static int resolve_manual_ioremap_symbols(void)
 
 	get_vm_area_caller_ptr = (get_vm_area_caller_t)kallsyms_lookup_name("get_vm_area_caller");
 	if (!get_vm_area_caller_ptr) {
-		printk(KERN_ERR "[KHACK] Failed to resolve get_vm_area_caller\n");
+		PRINT_DEBUG("Failed to resolve get_vm_area_caller\n");
 		return -ENOENT;
 	}
 
 	ioremap_page_range_ptr = (ioremap_page_range_t)kallsyms_lookup_name("ioremap_page_range");
 	if (!ioremap_page_range_ptr) {
-		printk(KERN_ERR "[KHACK] Failed to resolve ioremap_page_range\n");
+		PRINT_DEBUG("Failed to resolve ioremap_page_range\n");
 		return -ENOENT;
 	}
     
@@ -65,7 +65,7 @@ static void __iomem *my_ioremap_ram_nocache(phys_addr_t phys_addr, size_t size)
     void *caller = __builtin_return_address(0);
 
     if (resolve_manual_ioremap_symbols() != 0) {
-        printk(KERN_ERR "[KHACK] Cannot perform manual ioremap, symbols not found.\n");
+        PRINT_DEBUG("Cannot perform manual ioremap, symbols not found.\n");
         return NULL;
     }
 
@@ -76,25 +76,25 @@ static void __iomem *my_ioremap_ram_nocache(phys_addr_t phys_addr, size_t size)
 	if (!size || last_addr < phys_addr || (last_addr & ~PHYS_MASK))
 		return NULL;
 
-	printk(KERN_INFO "[KHACK_DEBUG] Calling get_vm_area_caller_ptr for size %zu\n", size);
+	PRINT_DEBUG("Calling get_vm_area_caller_ptr for size %zu\n", size);
 	area = get_vm_area_caller_ptr(size, VM_IOREMAP, caller);
 	if (!area) {
-		printk(KERN_ERR "[KHACK_DEBUG] get_vm_area_caller_ptr FAILED and returned NULL!\n");
+		PRINT_DEBUG("get_vm_area_caller_ptr FAILED and returned NULL!\n");
 		return NULL;
 	}
 	addr = (unsigned long)area->addr;
 	area->phys_addr = phys_addr;
-	printk(KERN_INFO "[KHACK_DEBUG] get_vm_area_caller_ptr OK. addr = 0x%lx\n", addr);
+	PRINT_DEBUG("get_vm_area_caller_ptr OK. addr = 0x%lx\n", addr);
 
-	printk(KERN_INFO "[KHACK_DEBUG] Calling ioremap_page_range_ptr for pa=0x%llx, va=0x%lx\n", (unsigned long long)phys_addr, addr);
+	PRINT_DEBUG("Calling ioremap_page_range_ptr for pa=0x%llx, va=0x%lx\n", (unsigned long long)phys_addr, addr);
 	err = ioremap_page_range_ptr(addr, addr + size, phys_addr, pgprot_noncached(PAGE_KERNEL));
 	if (err) {
-		printk(KERN_ERR "[KHACK_DEBUG] ioremap_page_range_ptr FAILED with error code %d\n", err);
+		PRINT_DEBUG("ioremap_page_range_ptr FAILED with error code %d\n", err);
 		vunmap((void *)addr);
 		return NULL;
 	}
 
-	printk(KERN_INFO "[KHACK_DEBUG] ioremap_page_range_ptr OK.\n");
+	PRINT_DEBUG("ioremap_page_range_ptr OK.\n");
 	return (void __iomem *)(offset + addr);
 }
 

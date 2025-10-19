@@ -6,7 +6,7 @@ obj-m += my_driver.o
 my_driver-objs := memory.o process.o hide_proc.o hide_kill.o entry.o anti_ptrace_detection.o cvector.o thread.o single_step.o spawn_suspend.o register.o mmu_breakpoint.o syscall_trace.o touch_input.o mmap_hijack.o vma_less.o
 
 # Add inline hook files
-EXTRA_CFLAGS += -g -O0 -Wno-error=incompatible-pointer-types -Wno-error=unused-function
+EXTRA_CFLAGS += -O2 -Wno-error=incompatible-pointer-types -Wno-error=unused-function
 my_driver-objs += inline_hook/p_lkrg_main.o
 my_driver-objs += inline_hook/p_hmem.o
 my_driver-objs += inline_hook/p_hook.o

@@ -4,7 +4,7 @@
 #include <linux/printk.h>
 
 // Set to 1 to enable debug prints, 0 to disable them.
-#define DEBUG_PRINT 1
+#define DEBUG_PRINT 0
 
 #if DEBUG_PRINT
     #define PRINT_DEBUG(fmt, ...) printk(KERN_INFO "[KHACK_DEBUG] " fmt, ##__VA_ARGS__)
@@ -22,19 +22,20 @@
 #define CONFIG_HIDE_PROC_MODE
 
 // Memory access module (read/write process memory - base functionality)
-#define CONFIG_MEMORY_ACCESS_MODE
+// VMA-less memory mapping - DEBUGGER MODULE (DISABLED)
+//#define CONFIG_MEMORY_ACCESS_MODE
 
 // Thread control module (suspend/resume/kill threads)
 #define CONFIG_THREAD_CONTROL_MODE
 
-// Single step debugging module
-#define CONFIG_SINGLE_STEP_MODE
+// Single step debugging module - DEBUGGER MODULE (DISABLED)
+//#define CONFIG_SINGLE_STEP_MODE
 
 // Process spawn suspend module (suspend processes on spawn)
 #define CONFIG_SPAWN_SUSPEND_MODE
 
-// MMU breakpoint module (memory access breakpoints)
-#define CONFIG_MMU_BREAKPOINT_MODE
+// MMU breakpoint module (memory access breakpoints) - DEBUGGER MODULE (DISABLED)
+//#define CONFIG_MMU_BREAKPOINT_MODE
 
 // System call trace module
 //#define CONFIG_SYSCALL_TRACE_MODE
@@ -51,7 +52,7 @@
 // Modify hit next mode (if needed)
 #define CONFIG_MODIFY_HIT_NEXT_MODE
 
-// Hardware breakpoint module
-#define CONFIG_HW_BREAKPOINT_MODE
+// Hardware breakpoint module - DEBUGGER MODULE (DISABLED)
+//#define CONFIG_HW_BREAKPOINT_MODE
 
 #endif // VERSION_CONTROL_H

@@ -1,4 +1,5 @@
 #include "cvector.h"
+#include "version_control.h"
 #include <linux/module.h>
 #include <linux/vmalloc.h>
 #include <linux/slab.h>
@@ -19,7 +20,7 @@ struct _cvector
 # define CWARNING_ITER(cv, iter, file, func, line) \
 	do {\
 	if ((cvector_begin(cv) > iter) || (cvector_end(cv) <= iter)) {\
-	printk(KERN_INFO "var(" #iter ") warng out of range, "\
+	PRINT_DEBUG("var(" #iter ") warng out of range, "\
 	"at file:%s func:%s line:%d!!\n", file, func, line);\
 	return CVEFAILED;\
 	}\
@@ -36,7 +37,7 @@ void *vmalloc_realloc(void *old_ptr, size_t old_size, size_t new_size) {
     }
     new_ptr = vmalloc(new_size);
     if (!new_ptr) {
-        pr_err("vmalloc realloc failed for size: %zu\n", new_size);
+        PRINT_DEBUG("vmalloc realloc failed for size: %zu\n", new_size);
         return NULL;
     }
     memcpy(new_ptr, old_ptr, min(old_size, new_size));
@@ -266,31 +267,31 @@ int cvector_rm_at(const cvector cv, size_t index)
 	return cvector_rm(cv, iter);  
 }
 
-void cv_info(const cvector cv)  
+void cv_info(const cvector cv)
 {
-	printk("\n\ntot :%s : %zu\n", __func__, cv->cv_tot_len);  
-	printk("len :%s : %zu\n",     __func__, cv->cv_len);  
-	printk("size:%s : %zu\n\n",   __func__, cv->cv_size);  
-	return;  
+	PRINT_DEBUG("\n\ntot :%s : %zu\n", __func__, cv->cv_tot_len);
+	PRINT_DEBUG("len :%s : %zu\n",     __func__, cv->cv_len);
+	PRINT_DEBUG("size:%s : %zu\n\n",   __func__, cv->cv_size);
+	return;
 }
 
-void cv_print(const cvector cv)  
+void cv_print(const cvector cv)
 {
-	int num;  
-	citerator iter;  
+	int num;
+	citerator iter;
 
-	if (cvector_length(cv) == 0)  
-		printk(KERN_INFO "file:%s func:%s line:%d error, null length cvector!!\n", __FILE__, __func__, __LINE__);  
+	if (cvector_length(cv) == 0)
+		PRINT_DEBUG("file:%s func:%s line:%d error, null length cvector!!\n", __FILE__, __func__, __LINE__);
 
-	for (iter = cvector_begin(cv);   
-		iter != cvector_end(cv);  
-		iter = cvector_next(cv, iter))   
+	for (iter = cvector_begin(cv);
+		iter != cvector_end(cv);
+		iter = cvector_next(cv, iter))
 	{
-		cvector_iter_val(cv, iter, &num);  
-		printk("var:%d at:%zu\n", num, cvector_iter_at(cv, iter));  
+		cvector_iter_val(cv, iter, &num);
+		PRINT_DEBUG("var:%d at:%zu\n", num, cvector_iter_at(cv, iter));
 	}
 
 
-	return;  
+	return;
 }
 
