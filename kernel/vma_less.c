@@ -13,6 +13,7 @@
 
 #include "vma_less.h"
 #include "memory.h" // for translate_linear_address
+#include "mmu_breakpoint.h" // for khack_set_pte_at
 
 // External symbols resolved via kallsyms_lookup_name
 extern int (*khack_pmd_alloc)(struct mm_struct *mm, pud_t *pud, unsigned long address);
@@ -371,7 +372,7 @@ static int map_pages_to_proc(struct mm_struct *mm, uintptr_t addr, struct page *
             }
         }
 
-        set_pte_at(mm, current_addr, ptep, mk_pte(pages[i], prot));
+        khack_set_pte_at(mm, current_addr, ptep, mk_pte(pages[i], prot));
         pte_unmap(ptep);
     }
 
