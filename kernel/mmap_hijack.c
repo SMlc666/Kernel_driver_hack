@@ -5,7 +5,6 @@
 #include <linux/version.h>
 #include <linux/mman.h>
 #include <linux/gfp.h>
-#include <linux/mmap_lock.h>
 
 #include "mmap_hijack.h"
 #include "memory.h" // for translate_linear_address
@@ -44,14 +43,14 @@ int handle_map_memory(PMAP_MEMORY_CTL ctl)
     }
 
     // 2. Validate source address range
-    mmap_read_lock(source_mm);
+    down_read(&source_mm->mmap_sem);
     source_vma = find_vma(source_mm, ctl->source_addr);
     if (!source_vma || (ctl->source_addr + ctl->size) > source_vma->vm_end) {
-        mmap_read_unlock(source_mm);
+        up_read(&source_mm->mmap_sem);
         ret = -EFAULT; // Invalid address range or crosses VMA boundaries
         goto out_put_mm;
     }
-    mmap_read_unlock(source_mm);
+    up_read(&source_mm->mmap_sem);
 
     // Allocate memory for page pointers
     pages = vmalloc(num_pages * sizeof(struct page *));
@@ -61,9 +60,9 @@ int handle_map_memory(PMAP_MEMORY_CTL ctl)
     }
 
     // 3. Pin the source pages in memory
-    mmap_read_lock(source_mm);
+    down_read(&source_mm->mmap_sem);
     ret = get_user_pages(ctl->source_addr, num_pages, FOLL_WRITE, pages, NULL);
-    mmap_read_unlock(source_mm);
+    up_read(&source_mm->mmap_sem);
 
     if (ret < num_pages) {
         // Failed to get all pages, release the ones we got
@@ -78,7 +77,7 @@ int handle_map_memory(PMAP_MEMORY_CTL ctl)
     // At this point, ret == num_pages
 
     // 4. Allocate and prepare a new VMA for the target process
-    mmap_write_lock(target_mm);
+    down_write(&target_mm->mmap_sem);
 
     target_vma = kmem_cache_zalloc(vm_area_cachep, GFP_KERNEL);
     if (!target_vma) {
@@ -129,7 +128,7 @@ int handle_map_memory(PMAP_MEMORY_CTL ctl)
     ret = 0;
 
 out_unlock_target_and_release_pages:
-    mmap_write_unlock(target_mm);
+    up_write(&target_mm->mmap_sem);
 
     // Release the pages acquired by get_user_pages
     for (i = 0; i < num_pages; i++) {
