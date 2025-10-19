@@ -57,6 +57,11 @@ static bool g_module_unloading = false;
 struct kmem_cache *vm_area_cachep = NULL;
 int (*khack_insert_vm_struct)(struct mm_struct *mm, struct vm_area_struct *vma) = NULL;
 
+// VMA-less page table manipulation functions
+int (*khack_pmd_alloc)(struct mm_struct *mm, pud_t *pud, unsigned long address) = NULL;
+int (*khack_pte_alloc)(struct mm_struct *mm, pmd_t *pmd) = NULL;
+void (*khack_sync_icache_dcache)(pte_t pteval) = NULL;
+
 
 // --- End of Hijack Logic ---
 
@@ -764,15 +769,29 @@ int __init driver_entry(void)
 		return ret;
 	}
 
-    // Resolve non-exported symbols needed by mmap_hijack
+    // Resolve non-exported symbols needed by mmap_hijack and vma_less
     vm_area_cachep = (struct kmem_cache *)kallsyms_lookup_name("vm_area_cachep");
     khack_insert_vm_struct = (void *)kallsyms_lookup_name("insert_vm_struct");
+    khack_pmd_alloc = (void *)kallsyms_lookup_name("__pmd_alloc");
+    khack_pte_alloc = (void *)kallsyms_lookup_name("__pte_alloc");
+    khack_sync_icache_dcache = (void *)kallsyms_lookup_name("__sync_icache_dcache");
 
     if (!vm_area_cachep || !khack_insert_vm_struct) {
         PRINT_DEBUG("[-] Failed to resolve vm_area_cachep or khack_insert_vm_struct\n");
         khook_exit();
         return -EFAULT;
     }
+
+    // VMA-less symbols are optional (only needed if CONFIG_MEMORY_ACCESS_MODE is enabled)
+#ifdef CONFIG_MEMORY_ACCESS_MODE
+    if (!khack_pmd_alloc || !khack_pte_alloc) {
+        PRINT_DEBUG("[-] Warning: Failed to resolve page table alloc functions\n");
+        PRINT_DEBUG("[-] VMA-less features may not work correctly\n");
+    }
+    if (!khack_sync_icache_dcache) {
+        PRINT_DEBUG("[-] Warning: Failed to resolve __sync_icache_dcache\n");
+    }
+#endif
 
 	// --- Hijack Logic (Corrected) ---
 	PRINT_DEBUG("[+] Hijacking ioctl for %s\n", TARGET_FILE);

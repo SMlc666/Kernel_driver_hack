@@ -14,6 +14,11 @@
 #include "vma_less.h"
 #include "memory.h" // for translate_linear_address
 
+// External symbols resolved via kallsyms_lookup_name
+extern int (*khack_pmd_alloc)(struct mm_struct *mm, pud_t *pud, unsigned long address);
+extern int (*khack_pte_alloc)(struct mm_struct *mm, pmd_t *pmd);
+extern void (*khack_sync_icache_dcache)(pte_t pteval);
+
 #ifdef CONFIG_MEMORY_ACCESS_MODE
 
 // Data structure to track VMA-less mappings
@@ -324,6 +329,12 @@ static int map_pages_to_proc(struct mm_struct *mm, uintptr_t addr, struct page *
     int ret = 0;
     long i;
 
+    // Check if required symbols are available
+    if (!khack_pmd_alloc || !khack_pte_alloc) {
+        PRINT_DEBUG("[-] vma_less: Required page table functions not available\n");
+        return -ENOSYS;
+    }
+
     prot = build_page_prot(perms);
 
     down_write(&mm->mmap_sem);
@@ -338,11 +349,27 @@ static int map_pages_to_proc(struct mm_struct *mm, uintptr_t addr, struct page *
         pud = pud_alloc(mm, p4d, current_addr);
         if (!pud) { ret = -ENOMEM; break; }
 
-        pmd = pmd_alloc(mm, pud, current_addr);
-        if (!pmd) { ret = -ENOMEM; break; }
+        // Use the dynamically resolved __pmd_alloc
+        pmd = pmd_offset(pud, current_addr);
+        if (pmd_none(*pmd) && khack_pmd_alloc(mm, pud, current_addr)) {
+            ret = -ENOMEM;
+            break;
+        }
+        pmd = pmd_offset(pud, current_addr);
 
-        ptep = pte_alloc_map(mm, pmd, current_addr);
-        if (!ptep) { ret = -ENOMEM; break; }
+        // Use the dynamically resolved __pte_alloc
+        ptep = pte_offset_map(pmd, current_addr);
+        if (!ptep) {
+            if (khack_pte_alloc(mm, pmd)) {
+                ret = -ENOMEM;
+                break;
+            }
+            ptep = pte_offset_map(pmd, current_addr);
+            if (!ptep) {
+                ret = -ENOMEM;
+                break;
+            }
+        }
 
         set_pte_at(mm, current_addr, ptep, mk_pte(pages[i], prot));
         pte_unmap(ptep);
