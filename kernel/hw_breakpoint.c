@@ -17,17 +17,16 @@
 int khack_hw_breakpoint_init(struct perf_event_attr *attr)
 {
     // Initialize the perf_event_attr structure for hardware breakpoint
-    perf_event_attr__init(&attr);
-    
+    memset(attr, 0, sizeof(*attr));
+
     attr->type = PERF_TYPE_BREAKPOINT;
     attr->size = sizeof(struct perf_event_attr);
     attr->pinned = 1;
     attr->disabled = 1;
     attr->exclude_kernel = 1;
     attr->exclude_hv = 1;
-    attr->bp_state = 1;
     attr->bp_len = HW_BREAKPOINT_LEN_8;
-    
+
     return 0;
 }
 // Internal struct to track our breakpoints
@@ -81,7 +80,7 @@ static int add_hw_breakpoint(PHW_BREAKPOINT_CTL ctl) {
         return -ENOMEM;
     }
 
-    bp_event = register_wide_hw_breakpoint(&attr, breakpoint_handler, task);
+    bp_event = *register_wide_hw_breakpoint(&attr, breakpoint_handler, task);
     if (IS_ERR_OR_NULL(bp_event)) {
         kfree(khack_bp);
         put_task_struct(task);
@@ -207,7 +206,7 @@ out:
     return ret;
 }
 
-int hw_breakpoint_init(void) {
+int khack_hw_bp_module_init(void) {
     unsigned long flags;
     spin_lock_irqsave(&g_hit_buffer_lock, flags);
     if (!g_hit_buffer) {
@@ -221,7 +220,7 @@ int hw_breakpoint_init(void) {
     return 0;
 }
 
-void hw_breakpoint_exit(void) {
+void khack_hw_bp_module_exit(void) {
     struct khack_hw_breakpoint *khack_bp, *tmp;
     unsigned long flags;
 
