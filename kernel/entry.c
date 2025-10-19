@@ -96,15 +96,19 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     HIDE_PROC *hp = NULL;
     GET_MEM_SEGMENTS *gms = NULL;
     ANTI_PTRACE_CTL *apc = NULL;
+#ifdef CONFIG_THREAD_CONTROL_MODE
     ENUM_THREADS *et = NULL;
     THREAD_CTL *tc = NULL;
+#endif
 #ifdef CONFIG_SINGLE_STEP_MODE
     SINGLE_STEP_CTL *ssc = NULL;
 #endif
     SPAWN_SUSPEND_CTL *spawn_ctl = NULL;
     RESUME_PROCESS_CTL *resume_ctl = NULL;
     struct task_struct *task = NULL;
+#ifdef CONFIG_REGISTER_ACCESS_MODE
     REG_ACCESS *reg_access = NULL;
+#endif
 #ifdef CONFIG_MMU_BREAKPOINT_MODE
     MMU_BP_CTL *mbp = NULL;
     void *bp_list = NULL;
@@ -357,17 +361,18 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     }
     case OP_ENUM_THREADS:
     {
+#ifdef CONFIG_THREAD_CONTROL_MODE
         et = kmalloc(sizeof(ENUM_THREADS), GFP_KERNEL);
         ret = -EFAULT;
         if (!et)
             return -ENOMEM;
-        
+
         if (copy_from_user(et, (void __user *)arg, sizeof(ENUM_THREADS)) != 0)
         {
             kfree(et);
             return -EFAULT;
         }
-        
+
         if (handle_enum_threads(et) == 0)
         {
             if (copy_to_user((void __user *)arg, et, sizeof(ENUM_THREADS)) == 0)
@@ -375,30 +380,37 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
                 ret = 0;
             }
         }
-        
+
         kfree(et);
         return ret;
+#else
+        return -ENOTTY; // Operation not supported when module is disabled
+#endif
     }
     case OP_THREAD_CTL:
     {
+#ifdef CONFIG_THREAD_CONTROL_MODE
         tc = kmalloc(sizeof(THREAD_CTL), GFP_KERNEL);
         ret = -EFAULT;
         if (!tc)
             return -ENOMEM;
-        
+
         if (copy_from_user(tc, (void __user *)arg, sizeof(THREAD_CTL)) != 0)
         {
             kfree(tc);
             return -EFAULT;
         }
-        
+
         if (handle_thread_control(tc) == 0)
         {
             ret = 0;
         }
-        
+
         kfree(tc);
         return ret;
+#else
+        return -ENOTTY; // Operation not supported when module is disabled
+#endif
     }
     case OP_SINGLE_STEP_CTL:
     {

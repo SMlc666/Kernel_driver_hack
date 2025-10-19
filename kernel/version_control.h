@@ -25,8 +25,8 @@
 // VMA-less memory mapping - DEBUGGER MODULE (DISABLED)
 //#define CONFIG_MEMORY_ACCESS_MODE
 
-// Thread control module (suspend/resume/kill threads)
-#define CONFIG_THREAD_CONTROL_MODE
+// Thread control module (suspend/resume/kill threads) - DEBUGGER MODULE (DISABLED)
+//#define CONFIG_THREAD_CONTROL_MODE
 
 // Single step debugging module - DEBUGGER MODULE (DISABLED)
 //#define CONFIG_SINGLE_STEP_MODE
@@ -43,8 +43,8 @@
 // Touch input control module
 #define CONFIG_TOUCH_INPUT_MODE
 
-// Register access module (read/write CPU registers)
-#define CONFIG_REGISTER_ACCESS_MODE
+// Register access module (read/write CPU registers) - DEBUGGER MODULE (DISABLED)
+//#define CONFIG_REGISTER_ACCESS_MODE
 
 // Kallsyms lookup support (required for some modules)
 #define CONFIG_KALLSYMS_LOOKUP_NAME
