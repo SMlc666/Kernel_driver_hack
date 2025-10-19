@@ -892,7 +892,7 @@ int __init driver_entry(void)
 #endif
 
 #ifdef CONFIG_HW_BREAKPOINT_MODE
-    ret = hw_breakpoint_init();
+    ret = khack_hw_bp_module_init();
     if (ret)
     {
         _driver_cleanup();
@@ -961,7 +961,7 @@ static void _driver_cleanup(void)
     vma_less_exit();
 #endif
 #ifdef CONFIG_HW_BREAKPOINT_MODE
-    hw_breakpoint_exit();
+    khack_hw_bp_module_exit();
 #endif
 	khook_exit();
     
