@@ -37,6 +37,28 @@ static int map_pages_to_proc(struct mm_struct *mm, uintptr_t addr, struct page *
 static void unmap_pages_from_proc(struct mm_struct *mm, uintptr_t addr, size_t size);
 static uintptr_t find_free_gap(struct mm_struct *mm, size_t size);
 
+// Helper function to build pgprot_t from permissions
+static inline pgprot_t build_page_prot(int perms) {
+    pgprot_t prot = PAGE_KERNEL;
+
+    // Set write protection
+    if (!(perms & PROT_WRITE)) {
+        prot = __pgprot(pgprot_val(prot) | PTE_RDONLY);
+    }
+
+    // Set execute protection (PXN = Privileged Execute Never)
+    if (!(perms & PROT_EXEC)) {
+        prot = __pgprot(pgprot_val(prot) | PTE_PXN);
+    }
+
+    return prot;
+}
+
+// Helper function to flush TLB for a range
+static inline void flush_tlb_mm_range(struct mm_struct *mm, unsigned long start, unsigned long end) {
+    flush_tlb_mm(mm);
+}
+
 int vma_less_init(void) {
     PRINT_DEBUG("[+] vma_less: Initialized.\n");
     return 0;
@@ -196,7 +218,7 @@ int handle_vma_less_protect(PVMA_LESS_PROTECT_CTL ctl)
     struct vma_less_mapping *mapping;
     int ret = 0;
     long i;
-    pgprot_t new_prot = PAGE_KERNEL;
+    pgprot_t new_prot;
 
     mapping = find_mapping(ctl->target_pid, ctl->addr);
     if (!mapping || mapping->size != PAGE_ALIGN(ctl->size)) {
@@ -211,18 +233,17 @@ int handle_vma_less_protect(PVMA_LESS_PROTECT_CTL ctl)
         return -ESRCH;
     }
 
-    if (ctl->new_perms & PROT_EXEC) new_prot = pgprot_exec(new_prot);
-    if (!(ctl->new_perms & PROT_WRITE)) new_prot = pgprot_wrprotect(new_prot);
+    new_prot = build_page_prot(ctl->new_perms);
 
     down_write(&mm->mmap_sem);
     for (i = 0; i < mapping->num_pages; i++) {
         uintptr_t current_addr = mapping->start + (i * PAGE_SIZE);
         pte_t *ptep = virt_to_pte(task, current_addr); // Assuming virt_to_pte is available
         if (ptep) {
-            set_pte_at(mm, current_addr, ptep, pte_modify(ptep_get(ptep), new_prot));
+            set_pte_at(mm, current_addr, ptep, pte_modify(*ptep, new_prot));
         }
     }
-    flush_tlb_range(mm, mapping->start, mapping->start + mapping->size);
+    flush_tlb_mm_range(mm, mapping->start, mapping->start + mapping->size);
     up_write(&mm->mmap_sem);
 
     mapping->perms = ctl->new_perms;
@@ -299,12 +320,11 @@ static int map_pages_to_proc(struct mm_struct *mm, uintptr_t addr, struct page *
     pud_t *pud;
     pmd_t *pmd;
     pte_t *ptep;
-    pgprot_t prot = PAGE_KERNEL;
+    pgprot_t prot;
     int ret = 0;
     long i;
 
-    if (perms & PROT_EXEC) prot = pgprot_exec(prot);
-    if (!(perms & PROT_WRITE)) prot = pgprot_wrprotect(prot);
+    prot = build_page_prot(perms);
 
     down_write(&mm->mmap_sem);
 
@@ -332,7 +352,7 @@ static int map_pages_to_proc(struct mm_struct *mm, uintptr_t addr, struct page *
         // Rollback on failure
         unmap_pages_from_proc(mm, addr, (i * PAGE_SIZE));
     } else {
-        flush_tlb_range(mm, addr, addr + (num_pages * PAGE_SIZE));
+        flush_tlb_mm_range(mm, addr, addr + (num_pages * PAGE_SIZE));
     }
 
     up_write(&mm->mmap_sem);
@@ -365,14 +385,14 @@ static void unmap_pages_from_proc(struct mm_struct *mm, uintptr_t addr, size_t s
         pmd = pmd_offset(pud, current_addr);
         if (pmd_none(*pmd)) continue;
 
-        ptep = pte_offset_map(mm, pmd, current_addr);
+        ptep = pte_offset_map(pmd, current_addr);
         if (ptep) {
             pte_clear(mm, current_addr, ptep);
             pte_unmap(ptep);
         }
     }
 
-    flush_tlb_range(mm, addr, end);
+    flush_tlb_mm_range(mm, addr, end);
     up_write(&mm->mmap_sem);
 }
 #endif // CONFIG_MEMORY_ACCESS_MODE
