@@ -402,11 +402,12 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
     }
     case OP_SINGLE_STEP_CTL:
     {
+#ifdef CONFIG_SINGLE_STEP_MODE
         ssc = kmalloc(sizeof(SINGLE_STEP_CTL), GFP_KERNEL);
         ret = -EFAULT;
         if (!ssc)
             return -ENOMEM;
-        
+
         if (copy_from_user(ssc, (void __user *)arg, sizeof(SINGLE_STEP_CTL)) != 0)
         {
             kfree(ssc);
@@ -428,9 +429,12 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
         {
             ret = 0;
         }
-        
+
         kfree(ssc);
         return ret;
+#else
+        return -ENOTTY; // Operation not supported when module is disabled
+#endif
     }
     case OP_SET_SPAWN_SUSPEND:
     {
