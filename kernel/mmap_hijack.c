@@ -1,4 +1,5 @@
 #include <linux/sched/mm.h>
+#include <linux/sched/task.h>
 #include <linux/mm.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
