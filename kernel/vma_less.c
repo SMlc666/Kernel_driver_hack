@@ -1,4 +1,5 @@
 #include <linux/sched/mm.h>
+#include <linux/sched/task.h>
 #include <linux/mm.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
@@ -7,7 +8,8 @@
 #include <linux/gfp.h>
 #include <linux/list.h>
 #include <linux/spinlock.h>
-#include <linux/pgtable.h>
+#include <asm/pgtable.h>
+#include <asm/tlbflush.h>
 
 #include "vma_less.h"
 #include "memory.h" // for translate_linear_address
@@ -212,7 +214,7 @@ int handle_vma_less_protect(PVMA_LESS_PROTECT_CTL ctl)
     if (ctl->new_perms & PROT_EXEC) new_prot = pgprot_exec(new_prot);
     if (!(ctl->new_perms & PROT_WRITE)) new_prot = pgprot_wrprotect(new_prot);
 
-    mmap_write_lock(mm);
+    down_write(&mm->mmap_sem);
     for (i = 0; i < mapping->num_pages; i++) {
         uintptr_t current_addr = mapping->start + (i * PAGE_SIZE);
         pte_t *ptep = virt_to_pte(task, current_addr); // Assuming virt_to_pte is available
@@ -221,7 +223,7 @@ int handle_vma_less_protect(PVMA_LESS_PROTECT_CTL ctl)
         }
     }
     flush_tlb_range(mm, mapping->start, mapping->start + mapping->size);
-    mmap_write_unlock(mm);
+    up_write(&mm->mmap_sem);
 
     mapping->perms = ctl->new_perms;
 
@@ -304,15 +306,15 @@ static int map_pages_to_proc(struct mm_struct *mm, uintptr_t addr, struct page *
     if (perms & PROT_EXEC) prot = pgprot_exec(prot);
     if (!(perms & PROT_WRITE)) prot = pgprot_wrprotect(prot);
 
-    mmap_write_lock(mm);
+    down_write(&mm->mmap_sem);
 
     for (i = 0; i < num_pages; i++) {
         uintptr_t current_addr = addr + (i * PAGE_SIZE);
-        
+
         pgd = pgd_offset(mm, current_addr);
         p4d = p4d_alloc(mm, pgd, current_addr);
         if (!p4d) { ret = -ENOMEM; break; }
-        
+
         pud = pud_alloc(mm, p4d, current_addr);
         if (!pud) { ret = -ENOMEM; break; }
 
@@ -333,7 +335,7 @@ static int map_pages_to_proc(struct mm_struct *mm, uintptr_t addr, struct page *
         flush_tlb_range(mm, addr, addr + (num_pages * PAGE_SIZE));
     }
 
-    mmap_write_unlock(mm);
+    up_write(&mm->mmap_sem);
     return ret;
 }
 
@@ -342,7 +344,7 @@ static void unmap_pages_from_proc(struct mm_struct *mm, uintptr_t addr, size_t s
     uintptr_t end = addr + size;
     uintptr_t current_addr;
 
-    mmap_write_lock(mm);
+    down_write(&mm->mmap_sem);
 
     for (current_addr = addr; current_addr < end; current_addr += PAGE_SIZE) {
         pgd_t *pgd;
@@ -371,6 +373,6 @@ static void unmap_pages_from_proc(struct mm_struct *mm, uintptr_t addr, size_t s
     }
 
     flush_tlb_range(mm, addr, end);
-    mmap_write_unlock(mm);
+    up_write(&mm->mmap_sem);
 }
 #endif // CONFIG_MEMORY_ACCESS_MODE
