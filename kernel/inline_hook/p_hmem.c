@@ -1,8 +1,9 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-/* 
+/*
  * Copyright (C) 2023 bmax121. All Rights Reserved.
  */
 
+#include <linux/string.h>
 #include "p_hmem.h"
 
 static u64 mem_region_start = 0;
@@ -46,9 +47,8 @@ void *hook_mem_zalloc(uintptr_t origin_addr, enum hook_type type)
         wrap->addr = origin_addr;
         wrap->type = type;
 
-        for (i = (uintptr_t)&wrap->chain; i < (uintptr_t)&wrap->chain + sizeof(wrap->chain); i += 8) {
-            *(u64 *)i = 0;
-        }
+        // Use memset to safely zero the chain union - prevents out-of-bounds write
+        memset(&wrap->chain, 0, sizeof(wrap->chain));
 
         // todo: assert
         if (((uintptr_t)&wrap->chain) & 0b111) {
