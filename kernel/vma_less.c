@@ -246,7 +246,7 @@ int handle_vma_less_protect(PVMA_LESS_PROTECT_CTL ctl)
         uintptr_t current_addr = mapping->start + (i * PAGE_SIZE);
         pte_t *ptep = virt_to_pte(task, current_addr); // Assuming virt_to_pte is available
         if (ptep) {
-            set_pte_at(mm, current_addr, ptep, pte_modify(*ptep, new_prot));
+            khack_set_pte_at(mm, current_addr, ptep, pte_modify(*ptep, new_prot));
         }
     }
     flush_tlb_mm_range(mm, mapping->start, mapping->start + mapping->size);
