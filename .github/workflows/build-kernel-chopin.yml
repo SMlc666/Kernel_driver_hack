@@ -38,13 +38,23 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-kernel-chopin-
 
-    - name: Clone Kernel Source
-      if: steps.cache.outputs.cache-hit != 'true'
-      run: git clone --depth=1 https://github.com/SMlc666/android_kernel_chopin_android_T -b T kernel_source
+    - name: Ensure Kernel Source
+      run: |
+        if [ -d kernel_source/.git ]; then
+          echo "kernel_source already prepared"
+        else
+          rm -rf kernel_source
+          git clone --depth=1 https://github.com/SMlc666/android_kernel_chopin_android_T -b T kernel_source
+        fi
 
-    - name: Clone Toolchain
-      if: steps.cache.outputs.cache-hit != 'true'
-      run: git clone --depth=1 https://gitlab.com/LeCmnGend/proton-clang.git -b clang-13 clang
+    - name: Ensure Toolchain
+      run: |
+        if [ -d clang/.git ]; then
+          echo "clang already prepared"
+        else
+          rm -rf clang
+          git clone --depth=1 https://gitlab.com/LeCmnGend/proton-clang.git -b clang-13 clang
+        fi
 
     - name: Set up Environment
       run: |
