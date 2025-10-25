@@ -9,7 +9,9 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:20.04
 
     env:
       PYTHON_VERSION: "3"
@@ -21,33 +23,29 @@ jobs:
     - name: Install necessary packages
       shell: bash
       run: |
-        sudo apt-get update
+        apt-get update
 
         # Set locale
-        sudo ln -fs /usr/share/zoneinfo/America/New_York /etc/localtime
+        ln -fs /usr/share/zoneinfo/America/New_York /etc/localtime
         export DEBIAN_FRONTEND=noninteractive
-        sudo apt-get install tzdata lsb-release -y
-        sudo dpkg-reconfigure --frontend noninteractive tzdata
+        apt-get install tzdata lsb-release -y
+        dpkg-reconfigure --frontend noninteractive tzdata
 
         lsb_release -a
         UBUNTU_VERSION=$(lsb_release -sr)
 
-        if [ $UBUNTU_VERSION == "22.04" ] || [ $UBUNTU_VERSION == "20.04" ]; then
-          sudo apt-get install git ccache automake flex lzop bison gperf build-essential zip curl zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make optipng maven libssl-dev pwgen libswitch-perl policycoreutils minicom libxml-sax-base-perl libxml-simple-perl bc libc6-dev-i386 lib32ncurses5-dev libx11-dev lib32z-dev libgl1-mesa-dev xsltproc unzip device-tree-compiler wget curl -y
-          sudo apt-get install p7zip p7zip-full -y
-          if [ "${{ env.PYTHON_VERSION }}" == "3" ]; then
-              sudo apt install python2 python3 -y
-          elif [ "${{ env.PYTHON_VERSION }}" == "2" ]; then
-              sudo apt install python2 -y
-              sudo rm -f /usr/bin/python
-              sudo ln -s /usr/bin/python2.7 /usr/bin/python
-          else
-              echo "You need choose a python version."
-              false
-          fi
+        # Since we are in a 20.04 container, we can simplify the logic
+        apt-get install git ccache automake flex lzop bison gperf build-essential zip curl zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make optipng maven libssl-dev pwgen libswitch-perl policycoreutils minicom libxml-sax-base-perl libxml-simple-perl bc libc6-dev-i386 lib32ncurses5-dev libx11-dev lib32z-dev libgl1-mesa-dev xsltproc unzip device-tree-compiler wget curl -y
+        apt-get install p7zip p7zip-full -y
+        if [ "${{ env.PYTHON_VERSION }}" == "3" ]; then
+            apt install python2 python3 -y
+        elif [ "${{ env.PYTHON_VERSION }}" == "2" ]; then
+            apt install python2 -y
+            rm -f /usr/bin/python
+            ln -s /usr/bin/python2.7 /usr/bin/python
         else
-          sudo apt-get install git ccache automake flex lzop bison gperf build-essential zip curl zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev squashfs-tools pngcrush schedtool dpkg-dev make optipng maven libssl-dev pwgen libswitch-perl policycoreutils minicom libxml-sax-base-perl libxml-simple-perl bc libc6-dev-i386 libx11-dev lib32z-dev libgl1-mesa-dev xsltproc unzip device-tree-compiler python3 -y
-          sudo apt-get install zstd libc6 binutils libc6-dev-i386 gcc g++ p7zip p7zip-full wget curl -y
+            echo "You need choose a python version."
+            false
         fi
 
     - name: Cache Dependencies
