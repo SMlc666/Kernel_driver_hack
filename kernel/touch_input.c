@@ -84,6 +84,10 @@ static atomic_t g_cleanup_requested = ATOMIC_INIT(0);
 static atomic_t g_pending_disable = ATOMIC_INIT(0); // defer disable until cleanup emitted
 static atomic_t g_unhooking = ATOMIC_INIT(0); // avoid races in hook_read during unhook
 
+// Synchronous cleanup coordination (for uninstall/disable)
+static wait_queue_head_t g_cleanup_wait;
+static atomic_t g_cleanup_in_progress = ATOMIC_INIT(0);
+
 // --- Evdev Structures (version dependent) ---
 #if(LINUX_VERSION_CODE >= KERNEL_VERSION(5, 5, 0))
 struct evdev {
@@ -180,6 +184,9 @@ int touch_input_init(void)
     g_next_tracking_id = 1;
     mutex_unlock(&g_slot_lock);
 
+    // init cleanup waitqueue
+    init_waitqueue_head(&g_cleanup_wait);
+
     PRINT_DEBUG("[+] touch_input: Module initialized.\n");
     return 0;
 }
@@ -206,8 +213,33 @@ long handle_touch_ioctl(unsigned int cmd, unsigned long arg)
             return install_hook_internal();
 
         case OP_TOUCH_HOOK_UNINSTALL:
+        {
+            // Ensure any active touches are fully released before unhooking,
+            // so UI state is not left in long-press or stuck gestures.
+            int timeout_ok = 1;
+            if (g_active_touches > 0) {
+                atomic_set(&g_cleanup_requested, 1);
+                atomic_set(&g_cleanup_in_progress, 1);
+            #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 5, 0))
+                if (g_myclient) wake_up_interruptible(&g_myclient->wait);
+            #else
+                if (g_myclient && g_myclient->evdev) wake_up_interruptible(&g_myclient->evdev->wait);
+            #endif
+                // wait at most 300ms for cleanup to be emitted and observed
+                if (wait_event_interruptible_timeout(g_cleanup_wait,
+                        (g_active_touches == 0) || (atomic_read(&g_cleanup_in_progress) == 0),
+                        msecs_to_jiffies(300)) <= 0) {
+                    // timeout or interrupted: proceed but warn
+                    PRINT_DEBUG("[-] touch_input: uninstall cleanup wait timeout/interrupted (active=%d)\n", g_active_touches);
+                    timeout_ok = 0;
+                }
+            }
             unhook_device();
+            if (!timeout_ok) {
+                // best-effort: nothing else to do, we already unhooked
+            }
             return 0;
+        }
 
         case OP_TOUCH_SET_MODE: {
             TOUCH_MODE_CTL ctl;
@@ -551,19 +583,7 @@ static void unhook_device(void)
         g_active_touches = 0;
         mutex_unlock(&g_slot_lock);
 
-        if (g_myclient) {
-        #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 5, 0))
-            spin_lock(&g_myclient->buffer_lock);
-            g_myclient->head = g_myclient->tail;
-            g_myclient->packet_head = g_myclient->tail;
-            spin_unlock(&g_myclient->buffer_lock);
-        #else
-            spin_lock(&g_myclient->buffer_lock);
-            g_myclient->head = g_myclient->tail;
-            g_myclient->packet_head = g_myclient->tail;
-            spin_unlock(&g_myclient->buffer_lock);
-        #endif
-        }
+        /* do not flush evdev client backlog on unhook: preserve reader state */
 
         g_target_file->f_op = g_original_fops;
         fput(g_target_file);
@@ -670,6 +690,20 @@ static inline bool has_abs(struct input_dev *dev, int code) {
     return dev && test_bit(code, dev->absbit);
 }
 
+// Map user-space input coord to device coord:
+// - If device max > 1000 and incoming v is within [0,1000], treat it as normalized 0..1000 and scale.
+// - Otherwise clamp to device bounds.
+static inline int map_coord_input_to_device(int v, int minv, int maxv) {
+    if (maxv > 1000 && v >= 0 && v <= 1000) {
+        // scale linearly, avoid overflow
+        int span = maxv - minv;
+        int scaled = minv + (v * span) / 1000;
+        // clamp in case of rounding
+        return clampi(scaled, minv, maxv);
+    }
+    return clampi(v, minv, maxv);
+}
+
 static inline void evdev_flush_client_buffer(struct evdev_client *client) {
     if (!client) return;
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 5, 0))
@@ -725,10 +759,8 @@ static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff
 
         if (!g_shared_buffer) return -EIO;
 
-        /* drop any backlog from real evdev so it不会在退出后“冒出” */
-        if (client) {
-            evdev_flush_client_buffer(client);
-        }
+        /* preserve client state; do not flush evdev backlog here */
+        (void)client;
 
         // If ring buffer currently empty, emulate evdev blocking read semantics (无超时，避免UI空转)
         if (g_shared_buffer->head == g_shared_buffer->tail && atomic_read(&g_cleanup_requested) == 0) {
@@ -799,6 +831,10 @@ static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff
                 }
                 mutex_unlock(&g_slot_lock);
 
+                // signal cleanup completion to any waiter (e.g., uninstall)
+                atomic_set(&g_cleanup_in_progress, 0);
+                wake_up_all(&g_cleanup_wait);
+
                 /* finalize deferred disable after cleanup */
                 if (atomic_read(&g_pending_disable) == 1 && g_active_touches == 0) {
                     if (g_shared_buffer->head == g_shared_buffer->tail) {
@@ -821,8 +857,8 @@ static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff
             return -EAGAIN;
         }
 
-        // Process points until empty or buffer nearly full
-        while (g_shared_buffer->head != g_shared_buffer->tail && g_inject_count < MAX_INJECT_EVENTS - 8) {
+        // Process only one point per read to improve pacing and avoid UI long-press/latency
+        if (g_shared_buffer->head != g_shared_buffer->tail) {
             point = g_shared_buffer->points[g_shared_buffer->tail];
             g_shared_buffer->tail = (g_shared_buffer->tail + 1) % TOUCH_BUFFER_POINTS;
 
@@ -850,30 +886,21 @@ static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff
                         if (g_next_tracking_id <= 0) g_next_tracking_id = 1;
                         g_active_touches++;
                     }
-                    s->x = clampi(point.x, xmin, xmax);
-                    s->y = clampi(point.y, ymin, ymax);
+                    s->x = map_coord_input_to_device(point.x, xmin, xmax);
+                    s->y = map_coord_input_to_device(point.y, ymin, ymax);
 
                     append_event(EV_ABS, ABS_MT_SLOT, point.slot);
                     append_event(EV_ABS, ABS_MT_TRACKING_ID, s->tracking_id);
                     append_event(EV_ABS, ABS_MT_POSITION_X, s->x);
                     append_event(EV_ABS, ABS_MT_POSITION_Y, s->y);
-                    if (has_abs(dev_local, ABS_MT_TOOL_TYPE)) {
-                        append_event(EV_ABS, ABS_MT_TOOL_TYPE, MT_TOOL_FINGER);
-                    }
-                    if (has_abs(dev_local, ABS_MT_PRESSURE)) {
-                        append_event(EV_ABS, ABS_MT_PRESSURE, 50);
-                    }
-                    if (has_abs(dev_local, ABS_MT_TOUCH_MAJOR)) {
-                        append_event(EV_ABS, ABS_MT_TOUCH_MAJOR, 6);
-                    }
-                    /* 兼容部分栈：同步单点 ABS_X/ABS_Y */
+                    /* Mirror to single-touch axes if present to help UI consumers */
                     if (has_abs(dev_local, ABS_X)) {
                         append_event(EV_ABS, ABS_X, s->x);
                     }
                     if (has_abs(dev_local, ABS_Y)) {
                         append_event(EV_ABS, ABS_Y, s->y);
                     }
-
+                    
                     if (need_keys_down) {
                         append_event(EV_KEY, BTN_TOOL_FINGER, 1);
                         append_event(EV_KEY, BTN_TOUCH, 1);
@@ -882,21 +909,13 @@ static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff
                 }
                 case TOUCH_ACTION_MOVE: {
                     if (s->active) {
-                        int nx = clampi(point.x, xmin, xmax);
-                        int ny = clampi(point.y, ymin, ymax);
+                        int nx = map_coord_input_to_device(point.x, xmin, xmax);
+                        int ny = map_coord_input_to_device(point.y, ymin, ymax);
                         s->x = nx; s->y = ny;
                         append_event(EV_ABS, ABS_MT_SLOT, point.slot);
                         append_event(EV_ABS, ABS_MT_POSITION_X, s->x);
                         append_event(EV_ABS, ABS_MT_POSITION_Y, s->y);
-                        if (has_abs(dev_local, ABS_MT_TOOL_TYPE)) {
-                            append_event(EV_ABS, ABS_MT_TOOL_TYPE, MT_TOOL_FINGER);
-                        }
-                        if (has_abs(dev_local, ABS_MT_PRESSURE)) {
-                            append_event(EV_ABS, ABS_MT_PRESSURE, 50);
-                        }
-                        if (has_abs(dev_local, ABS_MT_TOUCH_MAJOR)) {
-                            append_event(EV_ABS, ABS_MT_TOUCH_MAJOR, 6);
-                        }
+                        // Mirror to single-touch axes if present to help UI consumers
                         if (has_abs(dev_local, ABS_X)) {
                             append_event(EV_ABS, ABS_X, s->x);
                         }
@@ -909,12 +928,6 @@ static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff
                 case TOUCH_ACTION_UP: {
                     if (s->active) {
                         append_event(EV_ABS, ABS_MT_SLOT, point.slot);
-                        if (has_abs(dev_local, ABS_MT_PRESSURE)) {
-                            append_event(EV_ABS, ABS_MT_PRESSURE, 0);
-                        }
-                        if (has_abs(dev_local, ABS_MT_TOUCH_MAJOR)) {
-                            append_event(EV_ABS, ABS_MT_TOUCH_MAJOR, 0);
-                        }
                         append_event(EV_ABS, ABS_MT_TRACKING_ID, -1);
                         s->active = false;
                         s->tracking_id = -1;
@@ -955,6 +968,12 @@ static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff
                     atomic_set(&g_pending_disable, 0);
                     PRINT_DEBUG("[+] touch_input: Pending disable applied after frame\n");
                 }
+            }
+
+            // signal cleanup completion (no active touches)
+            if (g_active_touches == 0) {
+                atomic_set(&g_cleanup_in_progress, 0);
+                wake_up_all(&g_cleanup_wait);
             }
 
             return bytes_to_copy;
