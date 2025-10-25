@@ -91,7 +91,7 @@ jobs:
         make O=out chopin_user_defconfig
 
         # Enable the module config
-        scripts/config --file out/.config --set-str CONFIG_KERNEL_HACK m
+        scripts/config --file out/.config --enable CONFIG_KERNEL_HACK
         
     - name: Build Kernel Module
       working-directory: ./kernel_source
