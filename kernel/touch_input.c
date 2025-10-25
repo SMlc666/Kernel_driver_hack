@@ -82,6 +82,7 @@ static int g_active_touches = 0;
 static int g_next_tracking_id = 1; // monotonically increasing, avoid -1
 static atomic_t g_cleanup_requested = ATOMIC_INIT(0);
 static atomic_t g_pending_disable = ATOMIC_INIT(0); // defer disable until cleanup emitted
+static atomic_t g_unhooking = ATOMIC_INIT(0); // avoid races in hook_read during unhook
 
 // --- Evdev Structures (version dependent) ---
 #if(LINUX_VERSION_CODE >= KERNEL_VERSION(5, 5, 0))
@@ -538,6 +539,7 @@ static int hook_fops(int pid, int fd) {
 static void unhook_device(void)
 {
     mutex_lock(&g_hook_lock);
+    atomic_set(&g_unhooking, 1);
     if (g_target_file && g_original_fops) {
         // best-effort: reset internal slots and drop any pending evdev client backlog
         mutex_lock(&g_slot_lock);
@@ -572,6 +574,7 @@ static void unhook_device(void)
         g_current_mode = TOUCH_MODE_DISABLED;
         PRINT_DEBUG("[+] touch_input: Unhooked input device (state reset).\n");
     }
+    atomic_set(&g_unhooking, 0);
     mutex_unlock(&g_hook_lock);
 }
 
@@ -667,18 +670,18 @@ static inline bool has_abs(struct input_dev *dev, int code) {
     return dev && test_bit(code, dev->absbit);
 }
 
-static inline void evdev_flush_client_buffer(void) {
-    if (!g_myclient) return;
+static inline void evdev_flush_client_buffer(struct evdev_client *client) {
+    if (!client) return;
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 5, 0))
-    spin_lock(&g_myclient->buffer_lock);
-    g_myclient->head = g_myclient->tail;
-    g_myclient->packet_head = g_myclient->tail;
-    spin_unlock(&g_myclient->buffer_lock);
+    spin_lock(&client->buffer_lock);
+    client->head = client->tail;
+    client->packet_head = client->tail;
+    spin_unlock(&client->buffer_lock);
 #else
-    spin_lock(&g_myclient->buffer_lock);
-    g_myclient->head = g_myclient->tail;
-    g_myclient->packet_head = g_myclient->tail;
-    spin_unlock(&g_myclient->buffer_lock);
+    spin_lock(&client->buffer_lock);
+    client->head = client->tail;
+    client->packet_head = client->tail;
+    spin_unlock(&client->buffer_lock);
 #endif
 }
 
@@ -694,11 +697,25 @@ static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff
     current_mode = g_current_mode;
     mutex_unlock(&g_hook_lock);
 
+    // If unhooking in progress, fail-safe: pass-through to original
+    if (atomic_read(&g_unhooking)) {
+        return g_old_read(file, buf, count, pos);
+    }
+
+    // Snapshot client/dev pointers to avoid TOCTOU with unhook/disable
+    struct evdev_client *client = READ_ONCE(g_myclient);
+    struct input_dev *dev_local = READ_ONCE(g_real_dev);
+
     // Pass-through when disabled or filter mode
     if (current_mode == TOUCH_MODE_DISABLED) {
         return g_old_read(file, buf, count, pos);
     }
     if (current_mode == TOUCH_MODE_FILTER_MODIFY) {
+        return g_old_read(file, buf, count, pos);
+    }
+
+    // Defensive: if unhook/uninstall raced and internal pointers are gone, pass-through to original
+    if (!client || !dev_local) {
         return g_old_read(file, buf, count, pos);
     }
 
@@ -709,14 +726,24 @@ static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff
         if (!g_shared_buffer) return -EIO;
 
         /* drop any backlog from real evdev so it不会在退出后“冒出” */
-        evdev_flush_client_buffer();
+        if (client) {
+            evdev_flush_client_buffer(client);
+        }
 
         // If ring buffer currently empty, emulate evdev blocking read semantics (无超时，避免UI空转)
         if (g_shared_buffer->head == g_shared_buffer->tail && atomic_read(&g_cleanup_requested) == 0) {
+            // 防御：在等待前检查 client/dev 指针，避免卸载/切换模式期间 NULL 访问
+            if (!client || !dev_local
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0))
+                || !client->evdev
+#endif
+            ) {
+                return -EAGAIN;
+            }
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 5, 0))
-            if (g_myclient) {
+            {
                 int retw = wait_event_interruptible(
-                    g_myclient->wait,
+                    client->wait,
                     (g_shared_buffer->head != g_shared_buffer->tail) || atomic_read(&g_cleanup_requested)
                 );
                 if (retw < 0) {
@@ -727,14 +754,12 @@ static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff
                 return -EAGAIN;
             }
 #else
-            if (g_myclient && g_myclient->evdev) {
+            {
                 int retw = wait_event_interruptible(
-                    g_myclient->evdev->wait,
+                    client->evdev->wait,
                     (g_shared_buffer->head != g_shared_buffer->tail) || atomic_read(&g_cleanup_requested)
                 );
                 if (retw < 0) return -ERESTARTSYS;
-            } else {
-                return -EAGAIN;
             }
 #endif
         }
@@ -744,8 +769,9 @@ static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff
         g_inject_count = 0;
 
         // Bounds for clamping
-        get_abs_bounds(g_real_dev, ABS_MT_POSITION_X, &xmin, &xmax);
-        get_abs_bounds(g_real_dev, ABS_MT_POSITION_Y, &ymin, &ymax);
+        if (!dev_local) { mutex_unlock(&g_slot_lock); return -EAGAIN; }
+        get_abs_bounds(dev_local, ABS_MT_POSITION_X, &xmin, &xmax);
+        get_abs_bounds(dev_local, ABS_MT_POSITION_Y, &ymin, &ymax);
 
         // Handle cleanup request first: release all active slots
         if (atomic_xchg(&g_cleanup_requested, 0) == 1) {
@@ -831,20 +857,20 @@ static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff
                     append_event(EV_ABS, ABS_MT_TRACKING_ID, s->tracking_id);
                     append_event(EV_ABS, ABS_MT_POSITION_X, s->x);
                     append_event(EV_ABS, ABS_MT_POSITION_Y, s->y);
-                    if (has_abs(g_real_dev, ABS_MT_TOOL_TYPE)) {
+                    if (has_abs(dev_local, ABS_MT_TOOL_TYPE)) {
                         append_event(EV_ABS, ABS_MT_TOOL_TYPE, MT_TOOL_FINGER);
                     }
-                    if (has_abs(g_real_dev, ABS_MT_PRESSURE)) {
+                    if (has_abs(dev_local, ABS_MT_PRESSURE)) {
                         append_event(EV_ABS, ABS_MT_PRESSURE, 50);
                     }
-                    if (has_abs(g_real_dev, ABS_MT_TOUCH_MAJOR)) {
+                    if (has_abs(dev_local, ABS_MT_TOUCH_MAJOR)) {
                         append_event(EV_ABS, ABS_MT_TOUCH_MAJOR, 6);
                     }
                     /* 兼容部分栈：同步单点 ABS_X/ABS_Y */
-                    if (has_abs(g_real_dev, ABS_X)) {
+                    if (has_abs(dev_local, ABS_X)) {
                         append_event(EV_ABS, ABS_X, s->x);
                     }
-                    if (has_abs(g_real_dev, ABS_Y)) {
+                    if (has_abs(dev_local, ABS_Y)) {
                         append_event(EV_ABS, ABS_Y, s->y);
                     }
 
@@ -862,19 +888,19 @@ static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff
                         append_event(EV_ABS, ABS_MT_SLOT, point.slot);
                         append_event(EV_ABS, ABS_MT_POSITION_X, s->x);
                         append_event(EV_ABS, ABS_MT_POSITION_Y, s->y);
-                        if (has_abs(g_real_dev, ABS_MT_TOOL_TYPE)) {
+                        if (has_abs(dev_local, ABS_MT_TOOL_TYPE)) {
                             append_event(EV_ABS, ABS_MT_TOOL_TYPE, MT_TOOL_FINGER);
                         }
-                        if (has_abs(g_real_dev, ABS_MT_PRESSURE)) {
+                        if (has_abs(dev_local, ABS_MT_PRESSURE)) {
                             append_event(EV_ABS, ABS_MT_PRESSURE, 50);
                         }
-                        if (has_abs(g_real_dev, ABS_MT_TOUCH_MAJOR)) {
+                        if (has_abs(dev_local, ABS_MT_TOUCH_MAJOR)) {
                             append_event(EV_ABS, ABS_MT_TOUCH_MAJOR, 6);
                         }
-                        if (has_abs(g_real_dev, ABS_X)) {
+                        if (has_abs(dev_local, ABS_X)) {
                             append_event(EV_ABS, ABS_X, s->x);
                         }
-                        if (has_abs(g_real_dev, ABS_Y)) {
+                        if (has_abs(dev_local, ABS_Y)) {
                             append_event(EV_ABS, ABS_Y, s->y);
                         }
                     }
@@ -883,10 +909,10 @@ static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff
                 case TOUCH_ACTION_UP: {
                     if (s->active) {
                         append_event(EV_ABS, ABS_MT_SLOT, point.slot);
-                        if (has_abs(g_real_dev, ABS_MT_PRESSURE)) {
+                        if (has_abs(dev_local, ABS_MT_PRESSURE)) {
                             append_event(EV_ABS, ABS_MT_PRESSURE, 0);
                         }
-                        if (has_abs(g_real_dev, ABS_MT_TOUCH_MAJOR)) {
+                        if (has_abs(dev_local, ABS_MT_TOUCH_MAJOR)) {
                             append_event(EV_ABS, ABS_MT_TOUCH_MAJOR, 0);
                         }
                         append_event(EV_ABS, ABS_MT_TRACKING_ID, -1);
