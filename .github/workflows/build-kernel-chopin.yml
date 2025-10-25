@@ -80,4 +80,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: KernelModule
-        path: kernel_source/drivers/hack/my_driver.ko
+        path: kernel_source/out/drivers/hack/my_driver.ko
