@@ -34,7 +34,7 @@ jobs:
           kernel_source
           clang
           ~/.ccache
-        key: ${{ runner.os }}-kernel-chopin-${{ hashFiles('**/Makefile') }}
+        key: ${{ runner.os }}-kernel-chopin-${{ hashFiles('**/Makefile', 'kernel/**') }}
         restore-keys: |
           ${{ runner.os }}-kernel-chopin-
 
@@ -56,16 +56,18 @@ jobs:
     - name: Prepare Kernel Source for Module Build
       working-directory: ./kernel_source
       run: |
-        # Copy module source into kernel tree
-        cp -r ../kernel ./drivers/hack
+        # Reset module directory and sync latest code
+        rm -rf drivers/hack
+        mkdir -p drivers/hack
+        cp -a ../kernel/. drivers/hack/
 
-        # Add module to Kconfig and Makefile
-        echo 'source "drivers/hack/Kconfig"' >> drivers/Kconfig
-        echo 'obj-$(CONFIG_KERNEL_HACK) += hack/' >> drivers/Makefile
+        # Add module to Kconfig and Makefile (idempotent)
+        grep -q 'source "drivers/hack/Kconfig"' drivers/Kconfig || echo 'source "drivers/hack/Kconfig"' >> drivers/Kconfig
+        grep -q 'obj-$(CONFIG_KERNEL_HACK) += hack/' drivers/Makefile || echo 'obj-$(CONFIG_KERNEL_HACK) += hack/' >> drivers/Makefile
 
         # Configure the kernel
         make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- chopin_user_defconfig
-        
+
         # Enable the module config
         scripts/config --file out/.config --enable CONFIG_KERNEL_HACK
 
