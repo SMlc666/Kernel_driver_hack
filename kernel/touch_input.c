@@ -172,18 +172,20 @@ int touch_input_init(void)
     g_shared_buffer->head = 0;
     g_shared_buffer->tail = 0;
 
-    // Initialize slot states
-    int i;
-    mutex_lock(&g_slot_lock);
-    for (i = 0; i < MAX_SLOTS; ++i) {
-        g_slots[i].tracking_id = -1;
-        g_slots[i].x = 0;
-        g_slots[i].y = 0;
-        g_slots[i].active = false;
+     // Initialize slot states
+    {
+        int i;
+        mutex_lock(&g_slot_lock);
+        for (i = 0; i < MAX_SLOTS; ++i) {
+            g_slots[i].tracking_id = -1;
+            g_slots[i].x = 0;
+            g_slots[i].y = 0;
+            g_slots[i].active = false;
+        }
+        g_active_touches = 0;
+        g_next_tracking_id = 1;
+        mutex_unlock(&g_slot_lock);
     }
-    g_active_touches = 0;
-    g_next_tracking_id = 1;
-    mutex_unlock(&g_slot_lock);
 
     // init cleanup waitqueue
     init_waitqueue_head(&g_cleanup_wait);
@@ -728,6 +730,9 @@ static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff
     TOUCH_POINT point;
     struct slot_state *s;
     size_t bytes_to_copy;
+    struct evdev_client *client;
+    struct input_dev *dev_local;
+    int i;
 
     // Read current mode
     mutex_lock(&g_hook_lock);
@@ -740,8 +745,8 @@ static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff
     }
 
     // Snapshot client/dev pointers to avoid TOCTOU with unhook/disable
-    struct evdev_client *client = READ_ONCE(g_myclient);
-    struct input_dev *dev_local = READ_ONCE(g_real_dev);
+    client = READ_ONCE(g_myclient);
+    dev_local = READ_ONCE(g_real_dev);
 
     // Pass-through when disabled or filter mode
     if (current_mode == TOUCH_MODE_DISABLED) {
@@ -784,9 +789,6 @@ static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff
                 if (retw < 0) {
                     return -ERESTARTSYS;
                 }
-            } else {
-                // No wait queue available; degrade to EAGAIN
-                return -EAGAIN;
             }
 #else
             {
@@ -865,81 +867,80 @@ static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff
             point = g_shared_buffer->points[g_shared_buffer->tail];
             g_shared_buffer->tail = (g_shared_buffer->tail + 1) % TOUCH_BUFFER_POINTS;
 
-            if (point.slot >= MAX_SLOTS) {
-                continue;
-            }
+            /* ignore invalid slot if out of range */
+            if (point.slot < MAX_SLOTS) {
 
-            s = &g_slots[point.slot];
+                s = &g_slots[point.slot];
 
-            if (point.action == TOUCH_ACTION_MOVE && !s->active) {
-                point.action = TOUCH_ACTION_DOWN;
-            }
-
-            PRINT_DEBUG("[touch_input] pt: slot=%u action=%d x=%d y=%d active_touches=%d\n",
-                        point.slot, point.action, point.x, point.y, g_active_touches);
-
-            switch (point.action) {
-                case TOUCH_ACTION_DOWN: {
-                    bool need_keys_down = (g_active_touches == 0);
-
-                    if (!s->active) {
-                        s->active = true;
-                        if (g_next_tracking_id == -1) g_next_tracking_id = 1;
-                        s->tracking_id = g_next_tracking_id++;
-                        if (g_next_tracking_id <= 0) g_next_tracking_id = 1;
-                        g_active_touches++;
-                    }
-                    s->x = map_coord_input_to_device(point.x, xmin, xmax);
-                    s->y = map_coord_input_to_device(point.y, ymin, ymax);
-
-                    append_event(EV_ABS, ABS_MT_SLOT, point.slot);
-                    append_event(EV_ABS, ABS_MT_TRACKING_ID, s->tracking_id);
-                    append_event(EV_ABS, ABS_MT_POSITION_X, s->x);
-                    append_event(EV_ABS, ABS_MT_POSITION_Y, s->y);
-                    /* Mirror to single-touch axes if present to help UI consumers */
-                    if (has_abs(dev_local, ABS_X)) {
-                        append_event(EV_ABS, ABS_X, s->x);
-                    }
-                    if (has_abs(dev_local, ABS_Y)) {
-                        append_event(EV_ABS, ABS_Y, s->y);
-                    }
-                    
-                    /* For this device (NVTCapacitiveTouchScreen), rely on MT-B tracking only.
-                       Do not emit BTN_TOUCH/BTN_TOOL_FINGER to avoid UI long-press misclassification. */
-                    break;
+                if (point.action == TOUCH_ACTION_MOVE && !s->active) {
+                    point.action = TOUCH_ACTION_DOWN;
                 }
-                case TOUCH_ACTION_MOVE: {
-                    if (s->active) {
-                        int nx = map_coord_input_to_device(point.x, xmin, xmax);
-                        int ny = map_coord_input_to_device(point.y, ymin, ymax);
-                        s->x = nx; s->y = ny;
+
+                PRINT_DEBUG("[touch_input] pt: slot=%u action=%d x=%d y=%d active_touches=%d\n",
+                            point.slot, point.action, point.x, point.y, g_active_touches);
+
+                switch (point.action) {
+                    case TOUCH_ACTION_DOWN: {
+                        bool need_keys_down = (g_active_touches == 0);
+
+                        if (!s->active) {
+                            s->active = true;
+                            if (g_next_tracking_id == -1) g_next_tracking_id = 1;
+                            s->tracking_id = g_next_tracking_id++;
+                            if (g_next_tracking_id <= 0) g_next_tracking_id = 1;
+                            g_active_touches++;
+                        }
+                        s->x = map_coord_input_to_device(point.x, xmin, xmax);
+                        s->y = map_coord_input_to_device(point.y, ymin, ymax);
+
                         append_event(EV_ABS, ABS_MT_SLOT, point.slot);
+                        append_event(EV_ABS, ABS_MT_TRACKING_ID, s->tracking_id);
                         append_event(EV_ABS, ABS_MT_POSITION_X, s->x);
                         append_event(EV_ABS, ABS_MT_POSITION_Y, s->y);
-                        // Mirror to single-touch axes if present to help UI consumers
+                        /* Mirror to single-touch axes if present to help UI consumers */
                         if (has_abs(dev_local, ABS_X)) {
                             append_event(EV_ABS, ABS_X, s->x);
                         }
                         if (has_abs(dev_local, ABS_Y)) {
                             append_event(EV_ABS, ABS_Y, s->y);
                         }
+                        
+                        /* For this device (NVTCapacitiveTouchScreen), rely on MT-B tracking only.
+                           Do not emit BTN_TOUCH/BTN_TOOL_FINGER to avoid UI long-press misclassification. */
+                        break;
                     }
-                    break;
-                }
-                case TOUCH_ACTION_UP: {
-                    if (s->active) {
-                        append_event(EV_ABS, ABS_MT_SLOT, point.slot);
-                        append_event(EV_ABS, ABS_MT_TRACKING_ID, -1);
-                        s->active = false;
-                        s->tracking_id = -1;
-                        if (g_active_touches > 0) g_active_touches--;
-                        /* No BTN_TOUCH/BTN_TOOL_FINGER for this device; MT-B tracking is sufficient */
+                    case TOUCH_ACTION_MOVE: {
+                        if (s->active) {
+                            int nx = map_coord_input_to_device(point.x, xmin, xmax);
+                            int ny = map_coord_input_to_device(point.y, ymin, ymax);
+                            s->x = nx; s->y = ny;
+                            append_event(EV_ABS, ABS_MT_SLOT, point.slot);
+                            append_event(EV_ABS, ABS_MT_POSITION_X, s->x);
+                            append_event(EV_ABS, ABS_MT_POSITION_Y, s->y);
+                            // Mirror to single-touch axes if present to help UI consumers
+                            if (has_abs(dev_local, ABS_X)) {
+                                append_event(EV_ABS, ABS_X, s->x);
+                            }
+                            if (has_abs(dev_local, ABS_Y)) {
+                                append_event(EV_ABS, ABS_Y, s->y);
+                            }
+                        }
+                        break;
                     }
-                    break;
+                    case TOUCH_ACTION_UP: {
+                        if (s->active) {
+                            append_event(EV_ABS, ABS_MT_SLOT, point.slot);
+                            append_event(EV_ABS, ABS_MT_TRACKING_ID, -1);
+                            s->active = false;
+                            s->tracking_id = -1;
+                            if (g_active_touches > 0) g_active_touches--;
+                            /* No BTN_TOUCH/BTN_TOOL_FINGER for this device; MT-B tracking is sufficient */
+                        }
+                        break;
+                    }
+                    default:
+                        break;
                 }
-                default:
-                    break;
-            }
             }
         }
 
