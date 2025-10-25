@@ -13,43 +13,22 @@ jobs:
     container:
       image: ubuntu:20.04
 
-    env:
-      PYTHON_VERSION: "3"
-
     steps:
     - name: Checkout Module Source
       uses: actions/checkout@v4
 
     - name: Install necessary packages
-      shell: bash
       run: |
         apt-get update
-
-        # Set locale
-        ln -fs /usr/share/zoneinfo/America/New_York /etc/localtime
         export DEBIAN_FRONTEND=noninteractive
-        apt-get install tzdata lsb-release -y
+        ln -fs /usr/share/zoneinfo/America/New_York /etc/localtime
+        apt-get install -y tzdata lsb-release
         dpkg-reconfigure --frontend noninteractive tzdata
-
-        lsb_release -a
-        UBUNTU_VERSION=$(lsb_release -sr)
-
-        # Since we are in a 20.04 container, we can simplify the logic
-        apt-get install git ccache automake flex lzop bison gperf build-essential zip curl zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make optipng maven libssl-dev pwgen libswitch-perl policycoreutils minicom libxml-sax-base-perl libxml-simple-perl bc libc6-dev-i386 lib32ncurses5-dev libx11-dev lib32z-dev libgl1-mesa-dev xsltproc unzip device-tree-compiler wget curl -y
-        apt-get install p7zip p7zip-full -y
-        if [ "${{ env.PYTHON_VERSION }}" == "3" ]; then
-            apt install python2 python3 -y
-        elif [ "${{ env.PYTHON_VERSION }}" == "2" ]; then
-            apt install python2 -y
-            rm -f /usr/bin/python
-            ln -s /usr/bin/python2.7 /usr/bin/python
-        else
-            echo "You need choose a python version."
-            false
-        fi
+        apt-get install -y git ccache automake flex lzop bison gperf build-essential zip curl zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make optipng maven libssl-dev pwgen libswitch-perl policycoreutils minicom libxml-sax-base-perl libxml-simple-perl bc libc6-dev-i386 lib32ncurses5-dev libx11-dev lib32z-dev libgl1-mesa-dev xsltproc unzip device-tree-compiler python3 python2
 
     - name: Cache Dependencies
       uses: actions/cache@v4
+      id: cache
       with:
         path: |
           kernel_source
@@ -85,36 +64,17 @@ jobs:
         echo 'obj-$(CONFIG_KERNEL_HACK) += hack/' >> drivers/Makefile
 
         # Configure the kernel
-        export ARCH=arm64
-        export SUBARCH=arm64
-        make O=out mrproper
-        make O=out chopin_user_defconfig
-
+        make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- chopin_user_defconfig
+        
         # Enable the module config
         scripts/config --file out/.config --enable CONFIG_KERNEL_HACK
-        
+
     - name: Build Kernel Module
       working-directory: ./kernel_source
       run: |
-        # Export all necessary variables so they are used by all make commands
-        export ARCH=arm64
-        export SUBARCH=arm64
-        export KBUILD_BUILD_USER="GitHub"
-        export KBUILD_BUILD_HOST="Actions"
-        export CC="ccache clang"
-        export CLANG_TRIPLE=aarch64-linux-gnu-
-        export LD=ld.lld
-        export STRIP=llvm-strip
-        export AS=llvm-as
-        export AR=llvm-ar
-        export NM=llvm-nm
-        export OBJCOPY=llvm-objcopy
-        export OBJDUMP=llvm-objdump
-        export CONFIG_NO_ERROR_ON_MISMATCH=y
-
-        make -j$(nproc --all) O=out modules_prepare
+        make -j$(nproc --all) O=out ARCH=arm64 CC="ccache clang" CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- LD=ld.lld modules_prepare
         
-        make -j$(nproc --all) O=out M=drivers/hack
+        make -j$(nproc --all) O=out ARCH=arm64 CC="ccache clang" CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- LD=ld.lld M=drivers/hack
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
