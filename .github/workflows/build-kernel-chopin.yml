@@ -96,24 +96,25 @@ jobs:
     - name: Build Kernel Module
       working-directory: ./kernel_source
       run: |
+        # Export all necessary variables so they are used by all make commands
         export ARCH=arm64
         export SUBARCH=arm64
         export KBUILD_BUILD_USER="GitHub"
         export KBUILD_BUILD_HOST="Actions"
-        
+        export CC="ccache clang"
+        export CLANG_TRIPLE=aarch64-linux-gnu-
+        export LD=ld.lld
+        export STRIP=llvm-strip
+        export AS=llvm-as
+        export AR=llvm-ar
+        export NM=llvm-nm
+        export OBJCOPY=llvm-objcopy
+        export OBJDUMP=llvm-objdump
+        export CONFIG_NO_ERROR_ON_MISMATCH=y
+
         make -j$(nproc --all) O=out modules_prepare
         
-        make -j$(nproc --all) O=out M=drivers/hack \
-          CC="ccache clang" \
-          CLANG_TRIPLE=aarch64-linux-gnu- \
-          LD=ld.lld \
-          STRIP=llvm-strip \
-          AS=llvm-as \
-          AR=llvm-ar \
-          NM=llvm-nm \
-          OBJCOPY=llvm-objcopy \
-          OBJDUMP=llvm-objdump \
-          CONFIG_NO_ERROR_ON_MISMATCH=y
+        make -j$(nproc --all) O=out M=drivers/hack
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
