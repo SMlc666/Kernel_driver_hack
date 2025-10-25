@@ -580,7 +580,8 @@ static void unhook_device(void)
         for (i = 0; i < MAX_SLOTS; ++i) {
             g_slots[i].active = false;
             g_slots[i].tracking_id = -1;
-            g_slots[i].x = g_slots[i].y = 0;
+            g_slots[i].x = 0;
+            g_slots[i].y = 0;
         }
         g_active_touches = 0;
         mutex_unlock(&g_slot_lock);
@@ -865,7 +866,7 @@ static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff
             g_shared_buffer->tail = (g_shared_buffer->tail + 1) % TOUCH_BUFFER_POINTS;
 
             if (point.slot >= MAX_SLOTS) {
-                //continue;
+                continue;
             }
 
             s = &g_slots[point.slot];
