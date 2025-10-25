@@ -26,6 +26,7 @@
 #include <linux/mm.h>
 #include <linux/vmalloc.h>
 #include <linux/major.h>
+#include <linux/atomic.h>
 
 #include "touch_input.h"
 #include "process.h"
@@ -70,6 +71,11 @@ static struct input_dev *g_real_dev = NULL;
 
 // Module control state
 static enum TOUCH_MODE g_current_mode = TOUCH_MODE_DISABLED;
+
+// Active touches counter and tracking id allocator
+static int g_active_touches = 0;
+static int g_next_tracking_id = 1; // monotonically increasing, avoid -1
+static atomic_t g_cleanup_requested = ATOMIC_INIT(0);
 
 // --- Evdev Structures (version dependent) ---
 #if(LINUX_VERSION_CODE >= KERNEL_VERSION(5, 5, 0))
@@ -155,6 +161,18 @@ int touch_input_init(void)
     g_shared_buffer->head = 0;
     g_shared_buffer->tail = 0;
 
+    // Initialize slot states
+    mutex_lock(&g_slot_lock);
+    for (int i = 0; i < MAX_SLOTS; ++i) {
+        g_slots[i].tracking_id = -1;
+        g_slots[i].x = 0;
+        g_slots[i].y = 0;
+        g_slots[i].active = false;
+    }
+    g_active_touches = 0;
+    g_next_tracking_id = 1;
+    mutex_unlock(&g_slot_lock);
+
     PRINT_DEBUG("[+] touch_input: Module initialized.\n");
     return 0;
 }
@@ -214,11 +232,17 @@ long handle_touch_ioctl(unsigned int cmd, unsigned long arg)
         }
 
         case OP_TOUCH_CLEAN_STATE: {
-            // Force-release all fingers. This is a safety measure.
-            // Implementation will be in hook_read, triggered by a flag.
-            // For now, just acknowledge the command.
-            // TODO: Add a flag to trigger cleanup in hook_read/poll
-            PRINT_DEBUG("[+] touch_input: Clean state requested.\n");
+            // Request a full cleanup of all active slots; hook_read will emit releases.
+            atomic_set(&g_cleanup_requested, 1);
+            // Wake up reader so it can flush immediately
+            if (g_myclient) {
+            #if(LINUX_VERSION_CODE >= KERNEL_VERSION(5, 5, 0))
+                wake_up_interruptible(&g_myclient->wait);
+            #else
+                wake_up_interruptible(&g_myclient->evdev->wait);
+            #endif
+            }
+            PRINT_DEBUG("[+] touch_input: Clean state requested (flag set).\n");
             return 0;
         }
     }
@@ -554,6 +578,24 @@ static void append_event(u16 type, u16 code, s32 value) {
     g_inject_count++;
 }
 
+// Helpers
+static inline int clampi(int v, int lo, int hi) {
+    if (hi < lo) return v;
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+}
+
+static inline void get_abs_bounds(struct input_dev *dev, int code, int *minv, int *maxv) {
+    int min_default = 0, max_default = 4095;
+    if (!dev || !test_bit(code, dev->absbit) || !dev->absinfo) {
+        *minv = min_default; *maxv = max_default; return;
+    }
+    *minv = dev->absinfo[code].minimum;
+    *maxv = dev->absinfo[code].maximum;
+    if (*maxv <= *minv) { *minv = min_default; *maxv = max_default; }
+}
+
 static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
 {
     enum TOUCH_MODE current_mode;
@@ -576,53 +618,152 @@ static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff
     }
 
     if (current_mode == TOUCH_MODE_EXCLUSIVE_INJECT) {
-        if (!g_shared_buffer) return -EIO;
+        int xmin, xmax, ymin, ymax;
 
-        // Check if there is data in the ring buffer
-        if (g_shared_buffer->head == g_shared_buffer->tail) {
-            return -EAGAIN; // No data, try again
-        }
+        if (!g_shared_buffer) return -EIO;
 
         mutex_lock(&g_slot_lock);
         g_inject_count = 0;
 
-        // Process points from the ring buffer until it's empty or our event buffer is full
-        while (g_shared_buffer->head != g_shared_buffer->tail && g_inject_count < MAX_INJECT_EVENTS - 5) {
+        // Bounds for clamping
+        get_abs_bounds(g_real_dev, ABS_MT_POSITION_X, &xmin, &xmax);
+        get_abs_bounds(g_real_dev, ABS_MT_POSITION_Y, &ymin, &ymax);
+
+        // Handle cleanup request first: release all active slots
+        if (atomic_xchg(&g_cleanup_requested, 0) == 1) {
+            bool any_release = false;
+            for (int i = 0; i < MAX_SLOTS && g_inject_count < MAX_INJECT_EVENTS - 4; ++i) {
+                struct slot_state *st = &g_slots[i];
+                if (st->active) {
+                    append_event(EV_ABS, ABS_MT_SLOT, i);
+                    append_event(EV_ABS, ABS_MT_TRACKING_ID, -1);
+                    st->active = false;
+                    st->tracking_id = -1;
+                    any_release = true;
+                }
+            }
+            if (any_release) {
+                g_active_touches = 0;
+                // Keys up
+                append_event(EV_KEY, BTN_TOOL_FINGER, 0);
+                append_event(EV_KEY, BTN_TOUCH, 0);
+                append_event(EV_SYN, SYN_REPORT, 0);
+                bytes_to_copy = g_inject_count * sizeof(struct input_event);
+                if (bytes_to_copy > count) bytes_to_copy = count - (count % sizeof(struct input_event));
+                if (copy_to_user(buf, g_inject_events, bytes_to_copy)) {
+                    mutex_unlock(&g_slot_lock);
+                    return -EFAULT;
+                }
+                mutex_unlock(&g_slot_lock);
+                return bytes_to_copy;
+            }
+            // If no active touches, fall through to normal processing
+            g_inject_count = 0;
+        }
+
+        // If there is no data in the ring buffer, let reader retry
+        if (g_shared_buffer->head == g_shared_buffer->tail) {
+            mutex_unlock(&g_slot_lock);
+            return -EAGAIN; // No data now; poll will be woken by OP_TOUCH_NOTIFY
+        }
+
+        // Process points until empty or buffer nearly full
+        while (g_shared_buffer->head != g_shared_buffer->tail && g_inject_count < MAX_INJECT_EVENTS - 8) {
+            int was_active = g_active_touches;
             point = g_shared_buffer->points[g_shared_buffer->tail];
-            
-            if (point.slot >= MAX_SLOTS) { // Sanity check
-                g_shared_buffer->tail = (g_shared_buffer->tail + 1) % TOUCH_BUFFER_POINTS;
+
+            // advance tail now (consume)
+            g_shared_buffer->tail = (g_shared_buffer->tail + 1) % TOUCH_BUFFER_POINTS;
+
+            if (point.slot >= MAX_SLOTS) {
                 continue;
             }
 
             s = &g_slots[point.slot];
-            append_event(EV_ABS, ABS_MT_SLOT, point.slot);
+
+            // Normalize MOVE without active to DOWN
+            if (point.action == TOUCH_ACTION_MOVE && !s->active) {
+                point.action = TOUCH_ACTION_DOWN;
+            }
+
+            // Optional debug
+            PRINT_DEBUG("[touch_input] pt: slot=%u action=%d x=%d y=%d active_touches=%d\n",
+                        point.slot, point.action, point.x, point.y, g_active_touches);
 
             switch (point.action) {
-                case TOUCH_ACTION_DOWN:
-                case TOUCH_ACTION_MOVE:
-                    s->active = true;
-                    s->tracking_id = point.slot + 114514; // Unique tracking ID
-                    s->x = point.x;
-                    s->y = point.y;
+                case TOUCH_ACTION_DOWN: {
+                    // First finger transition: send keys 1 once
+                    bool need_keys_down = (g_active_touches == 0);
+
+                    if (!s->active) {
+                        s->active = true;
+                        // allocate new tracking id (avoid -1)
+                        if (g_next_tracking_id == -1) g_next_tracking_id = 1;
+                        s->tracking_id = g_next_tracking_id++;
+                        if (g_next_tracking_id <= 0) g_next_tracking_id = 1; // wrap around avoiding negative
+                        g_active_touches++;
+                    }
+                    // clamp coords
+                    s->x = clampi(point.x, xmin, xmax);
+                    s->y = clampi(point.y, ymin, ymax);
+
+                    append_event(EV_ABS, ABS_MT_SLOT, point.slot);
                     append_event(EV_ABS, ABS_MT_TRACKING_ID, s->tracking_id);
                     append_event(EV_ABS, ABS_MT_POSITION_X, s->x);
                     append_event(EV_ABS, ABS_MT_POSITION_Y, s->y);
+
+                    if (need_keys_down) {
+                        append_event(EV_KEY, BTN_TOOL_FINGER, 1);
+                        append_event(EV_KEY, BTN_TOUCH, 1);
+                    }
                     break;
-                case TOUCH_ACTION_UP:
-                    s->active = false;
-                    s->tracking_id = -1;
-                    append_event(EV_ABS, ABS_MT_TRACKING_ID, -1);
+                }
+                case TOUCH_ACTION_MOVE: {
+                    if (s->active) {
+                        int nx = clampi(point.x, xmin, xmax);
+                        int ny = clampi(point.y, ymin, ymax);
+                        // Only send if changed to reduce noise (optional)
+                        if (nx != s->x || ny != s->y) {
+                            s->x = nx; s->y = ny;
+                            append_event(EV_ABS, ABS_MT_SLOT, point.slot);
+                            append_event(EV_ABS, ABS_MT_POSITION_X, s->x);
+                            append_event(EV_ABS, ABS_MT_POSITION_Y, s->y);
+                        } else {
+                            // Still emit slot + positions to keep stream consistent
+                            append_event(EV_ABS, ABS_MT_SLOT, point.slot);
+                            append_event(EV_ABS, ABS_MT_POSITION_X, s->x);
+                            append_event(EV_ABS, ABS_MT_POSITION_Y, s->y);
+                        }
+                    }
+                    break;
+                }
+                case TOUCH_ACTION_UP: {
+                    if (s->active) {
+                        append_event(EV_ABS, ABS_MT_SLOT, point.slot);
+                        append_event(EV_ABS, ABS_MT_TRACKING_ID, -1);
+                        s->active = false;
+                        s->tracking_id = -1;
+                        if (g_active_touches > 0) g_active_touches--;
+                        if (g_active_touches == 0) {
+                            // All fingers up -> keys up
+                            append_event(EV_KEY, BTN_TOOL_FINGER, 0);
+                            append_event(EV_KEY, BTN_TOUCH, 0);
+                        }
+                    }
+                    break;
+                }
+                default:
                     break;
             }
-            // Move tail to the next position
-            g_shared_buffer->tail = (g_shared_buffer->tail + 1) % TOUCH_BUFFER_POINTS;
+
+            // Optionally insert SYN_REPORT per logical frame batch; we'll do one at the end
+            (void)was_active;
         }
 
         // If we processed any events, send a final SYN_REPORT
         if (g_inject_count > 0) {
             append_event(EV_SYN, SYN_REPORT, 0);
-            
+
             bytes_to_copy = g_inject_count * sizeof(struct input_event);
             if (bytes_to_copy > count) {
                 bytes_to_copy = count - (count % sizeof(struct input_event));
@@ -635,7 +776,7 @@ static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff
             mutex_unlock(&g_slot_lock);
             return bytes_to_copy;
         }
-        
+
         mutex_unlock(&g_slot_lock);
         return -EAGAIN;
     }
