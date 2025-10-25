@@ -901,10 +901,8 @@ static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff
                         append_event(EV_ABS, ABS_Y, s->y);
                     }
                     
-                    if (need_keys_down) {
-                        append_event(EV_KEY, BTN_TOOL_FINGER, 1);
-                        append_event(EV_KEY, BTN_TOUCH, 1);
-                    }
+                    /* For this device (NVTCapacitiveTouchScreen), rely on MT-B tracking only.
+                       Do not emit BTN_TOUCH/BTN_TOOL_FINGER to avoid UI long-press misclassification. */
                     break;
                 }
                 case TOUCH_ACTION_MOVE: {
@@ -932,10 +930,7 @@ static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff
                         s->active = false;
                         s->tracking_id = -1;
                         if (g_active_touches > 0) g_active_touches--;
-                        if (g_active_touches == 0) {
-                            append_event(EV_KEY, BTN_TOOL_FINGER, 0);
-                            append_event(EV_KEY, BTN_TOUCH, 0);
-                        }
+                        /* No BTN_TOUCH/BTN_TOOL_FINGER for this device; MT-B tracking is sufficient */
                     }
                     break;
                 }
