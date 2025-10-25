@@ -1,12 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
-/*
- * touch_injector.c
- * 真实设备注入 + 核心层最小钩子：
- * - 保持 deviceId 不变
- * - EXCLUSIVE 模式严格独占：源头丢弃真实触摸事件，仅注入合成帧
- * - 不新增设备，不动 read/poll
- */
-
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
@@ -21,7 +12,9 @@
 #include <linux/atomic.h>
 #include <linux/bitops.h>
 #include <linux/version.h>
+#include <linux/jiffies.h>
 
+#include "version_control.h"
 #include "comm.h"
 #include "touch_injector.h"
 #include "inline_hook/p_hook.h"
