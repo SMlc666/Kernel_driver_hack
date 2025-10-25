@@ -32,6 +32,7 @@
 #include "process.h"
 #include "version_control.h"
 #include <linux/jiffies.h>
+#include "touch_injector.h"
 
 #ifndef MT_TOOL_FINGER
 #define MT_TOOL_FINGER 0
@@ -190,17 +191,27 @@ int touch_input_init(void)
     // init cleanup waitqueue
     init_waitqueue_head(&g_cleanup_wait);
 
+    // init injector subsystem
+    injector_init();
+
     PRINT_DEBUG("[+] touch_input: Module initialized.\n");
     return 0;
 }
 
 void touch_input_exit(void)
 {
+    // ensure cleanup of injected touches before unhook
+    injector_force_cleanup();
+    injector_disable();
+
     unhook_device();
     if (g_shared_buffer) {
         vfree(g_shared_buffer);
         g_shared_buffer = NULL;
     }
+
+    injector_exit();
+
     PRINT_DEBUG("[+] touch_input: Module exited.\n");
 }
 
@@ -237,6 +248,11 @@ long handle_touch_ioctl(unsigned int cmd, unsigned long arg)
                     timeout_ok = 0;
                 }
             }
+
+            // force cleanup and disable injector before unhooking
+            injector_force_cleanup();
+            injector_disable();
+
             unhook_device();
             if (!timeout_ok) {
                 // best-effort: nothing else to do, we already unhooked
@@ -264,6 +280,8 @@ long handle_touch_ioctl(unsigned int cmd, unsigned long arg)
                     #endif
                     } else {
                         g_current_mode = TOUCH_MODE_DISABLED;
+                        // disable injector immediately
+                        injector_disable();
                         PRINT_DEBUG("[+] touch_input: Mode set to DISABLED immediately\n");
                     }
                     mutex_unlock(&g_hook_lock);
@@ -288,8 +306,14 @@ long handle_touch_ioctl(unsigned int cmd, unsigned long arg)
                         spin_unlock(&g_myclient->buffer_lock);
                     #endif
                     }
+                    // enable injector on target real device
+                    if (g_real_dev) {
+                        injector_enable(g_real_dev);
+                    } else {
+                        PRINT_DEBUG("[-] touch_input: EXCLUSIVE requested but g_real_dev is NULL\n");
+                    }
                     mutex_unlock(&g_hook_lock);
-                    PRINT_DEBUG("[+] touch_input: Mode set to %d (backlog flushed once)\n", ctl.mode);
+                    PRINT_DEBUG("[+] touch_input: Mode set to %d (backlog flushed once, injector enabled)\n", ctl.mode);
                     return 0;
                 }
             }
@@ -305,6 +329,8 @@ long handle_touch_ioctl(unsigned int cmd, unsigned long arg)
                 #else
                 wake_up_interruptible(&g_myclient->evdev->wait);
                 #endif
+                // also notify injector worker
+                injector_notify();
                 return 0;
             }
             return -EPIPE;
@@ -321,6 +347,8 @@ long handle_touch_ioctl(unsigned int cmd, unsigned long arg)
                 wake_up_interruptible(&g_myclient->evdev->wait);
             #endif
             }
+            // also notify injector to perform cleanup immediately
+            injector_notify();
             PRINT_DEBUG("[+] touch_input: Clean state requested (flag set).\n");
             return 0;
         }
@@ -733,6 +761,10 @@ static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff
     struct evdev_client *client;
     struct input_dev *dev_local;
     int i;
+// Bypass read-path injection in EXCLUSIVE mode: events are delivered via core injector (input_event hook)
+if (current_mode == TOUCH_MODE_EXCLUSIVE_INJECT) {
+    return g_old_read(file, buf, count, pos);
+}
 
     // Read current mode
     mutex_lock(&g_hook_lock);
@@ -1029,5 +1061,11 @@ static unsigned int hook_poll(struct file *file, struct poll_table_struct *wait)
     }
 
     return mask;
+}
+
+/* Export shared buffer accessor for injector subsystem (real-device injection worker) */
+TOUCH_SHARED_BUFFER *touch_get_shared_buffer(void)
+{
+    return g_shared_buffer;
 }
 #endif
