@@ -173,8 +173,9 @@ int touch_input_init(void)
     g_shared_buffer->tail = 0;
 
     // Initialize slot states
+    int i;
     mutex_lock(&g_slot_lock);
-    for (int i = 0; i < MAX_SLOTS; ++i) {
+    for (i = 0; i < MAX_SLOTS; ++i) {
         g_slots[i].tracking_id = -1;
         g_slots[i].x = 0;
         g_slots[i].y = 0;
@@ -574,8 +575,9 @@ static void unhook_device(void)
     atomic_set(&g_unhooking, 1);
     if (g_target_file && g_original_fops) {
         // best-effort: reset internal slots and drop any pending evdev client backlog
+        int i;
         mutex_lock(&g_slot_lock);
-        for (int i = 0; i < MAX_SLOTS; ++i) {
+        for (i = 0; i < MAX_SLOTS; ++i) {
             g_slots[i].active = false;
             g_slots[i].tracking_id = -1;
             g_slots[i].x = g_slots[i].y = 0;
@@ -808,7 +810,7 @@ static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff
         // Handle cleanup request first: release all active slots
         if (atomic_xchg(&g_cleanup_requested, 0) == 1) {
             bool any_release = false;
-            for (int i = 0; i < MAX_SLOTS && g_inject_count < MAX_INJECT_EVENTS - 4; ++i) {
+            for (i = 0; i < MAX_SLOTS && g_inject_count < MAX_INJECT_EVENTS - 4; ++i) {
                 struct slot_state *st = &g_slots[i];
                 if (st->active) {
                     append_event(EV_ABS, ABS_MT_SLOT, i);
@@ -863,7 +865,7 @@ static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff
             g_shared_buffer->tail = (g_shared_buffer->tail + 1) % TOUCH_BUFFER_POINTS;
 
             if (point.slot >= MAX_SLOTS) {
-                continue;
+                //continue;
             }
 
             s = &g_slots[point.slot];
@@ -936,6 +938,7 @@ static ssize_t hook_read(struct file *file, char __user *buf, size_t count, loff
                 }
                 default:
                     break;
+            }
             }
         }
 
